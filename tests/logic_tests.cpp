@@ -1,0 +1,266 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include "logic/confirm.hpp"
+#include "logic/display_layout.hpp"
+#include "logic/names.hpp"
+#include "logic/shortcuts.hpp"
+#include "logic/text.hpp"
+#include "logic/themes.hpp"
+#include "logic/volume.hpp"
+#include "logic/xkb_rules.hpp"
+
+#include <glib.h>
+
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+
+namespace fs = std::filesystem;
+
+namespace {
+
+int failures = 0;
+
+void expect(bool condition, const char* file, int line, const char* text) {
+  if (!condition) {
+    std::cerr << file << ":" << line << "  " << text << "\n";
+    ++failures;
+  }
+}
+
+#define EXPECT(cond) expect((cond), __FILE__, __LINE__, #cond)
+
+std::string fixture(const char* name) {
+  const char* root = g_getenv("LCOS_SOURCE_ROOT");
+  fs::path path = root != nullptr ? fs::path(root) / "tests" / "fixtures" / name
+                                  : fs::path("tests") / "fixtures" / name;
+  std::ifstream in(path);
+  if (!in) {
+    path = fs::path("..") / "tests" / "fixtures" / name;
+    in.open(path);
+  }
+  std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  return data;
+}
+
+void test_names() {
+  EXPECT(lcos::device_xfconf_name("SynPS/2 Synaptics TouchPad") ==
+         "SynPS2_Synaptics_TouchPad");
+  EXPECT(lcos::device_xfconf_name("Virtual core pointer") == "Virtual_core_pointer");
+  EXPECT(lcos::property_xfconf_token("libinput Tapping Enabled") ==
+         "libinput_Tapping_Enabled");
+  EXPECT(lcos::pointer_prop("Virtual_core_pointer", "RightHanded") ==
+         "/Virtual_core_pointer/RightHanded");
+  EXPECT(lcos::pointer_xinput_prop("Touchpad", "libinput Tapping Enabled") ==
+         "/Touchpad/Properties/libinput_Tapping_Enabled");
+  EXPECT(lcos::display_prop("Default", "HDMI-1", "Resolution") ==
+         "/Default/HDMI-1/Resolution");
+  EXPECT(lcos::display_prop("Temp", "eDP-1", "Scale/X") == "/Temp/eDP-1/Scale/X");
+  EXPECT(lcos::display_prop("Default", "HDMI-1", "") == "/Default/HDMI-1");
+  EXPECT(lcos::shortcut_prop("/commands/custom", "<Primary><Alt>t") ==
+         "/commands/custom/<Primary><Alt>t");
+  EXPECT(lcos::profile_id_from_label("Desk left") == "P_Desk_left");
+  EXPECT(lcos::acceleration_to_libinput(5.0) == 0.0);
+  EXPECT(lcos::acceleration_to_libinput(0.0) == -1.0);
+  EXPECT(lcos::acceleration_to_libinput(10.0) == 1.0);
+  EXPECT(lcos::libinput_to_acceleration(0.0) == 5.0);
+}
+
+void test_layout() {
+  int w = 0;
+  int h = 0;
+  EXPECT(lcos::parse_resolution("1920x1080", w, h));
+  EXPECT(w == 1920 && h == 1080);
+  EXPECT(!lcos::parse_resolution("1920", w, h));
+  EXPECT(!lcos::parse_resolution("x1080", w, h));
+  EXPECT(!lcos::refresh_matches(59.94, 60.00));
+  EXPECT(lcos::refresh_matches(59.994, 59.991));
+  EXPECT(lcos::mode_refresh_hz(138700000, 2080, 1111) > 59.0);
+
+  lcos::OutputConfig left;
+  left.name = "HDMI-1";
+  left.width = 1920;
+  left.height = 1080;
+  left.refresh = 60;
+  left.scale = 1;
+  left.modes.push_back({1920, 1080, 60, 1});
+  left.modes.push_back({1280, 720, 60, 2});
+  lcos::OutputConfig right = left;
+  right.name = "DP-1";
+  right.x = 50;
+  right.y = -20;
+  right.rotation = 90;
+  right.scale = 2;
+  EXPECT(lcos::rotated_width(right) == 1080);
+  EXPECT(lcos::footprint_width(right) == 2160);
+  EXPECT(lcos::footprint_height(right) == 3840);
+
+  std::vector<lcos::OutputConfig> outputs{left, right};
+  lcos::arrange_extend(outputs);
+  EXPECT(outputs[0].x == 0 && outputs[0].y == 0);
+  EXPECT(outputs[1].x == 1920 && outputs[1].y == 0);
+  lcos::normalize_positions(outputs);
+  EXPECT(outputs[0].x == 0);
+
+  outputs[0].x = 100;
+  outputs[0].y = 15;
+  outputs[1].x = 40;
+  outputs[1].y = 30;
+  lcos::normalize_positions(outputs);
+  EXPECT(outputs[1].x == 0 && outputs[1].y == 15);
+  EXPECT(outputs[0].x == 60 && outputs[0].y == 0);
+
+  lcos::arrange_mirror(outputs);
+  EXPECT(outputs[0].x == 0 && outputs[1].x == 0);
+  EXPECT(outputs[0].width == 1920 && outputs[1].width == 1920);
+
+  lcos::OutputConfig only_small = left;
+  only_small.modes = {{1280, 720, 60, 2}};
+  std::vector<lcos::OutputConfig> pair{left, only_small};
+  lcos::arrange_mirror(pair);
+  EXPECT(pair[0].width == 1280 && pair[1].width == 1280);
+
+  const lcos::ModeInfo* mode = lcos::find_mode(left.modes, 1920, 1080, 60);
+  EXPECT(mode != nullptr && mode->id == 1);
+  EXPECT(lcos::find_mode(left.modes, 800, 600, 60) == nullptr);
+  EXPECT(lcos::friendly_output_name("eDP-1", "") == "Laptop");
+  EXPECT(lcos::friendly_output_name("HDMI-1", "Dell") == "Dell");
+  EXPECT(lcos::millimeters_for_pixels(1920) == 508);
+  const auto bounds = lcos::screen_bounds(outputs);
+  EXPECT(bounds.width > 0 && bounds.height > 0);
+}
+
+void test_confirm_and_volume() {
+  lcos::ConfirmCountdown countdown;
+  EXPECT(countdown.seconds == 10);
+  for (int i = 0; i < 9; ++i) {
+    countdown.tick();
+  }
+  EXPECT(!countdown.decided && countdown.seconds == 1);
+  countdown.tick();
+  EXPECT(countdown.decided && !countdown.keep);
+
+  lcos::ConfirmCountdown kept;
+  kept.accept();
+  kept.tick();
+  EXPECT(kept.keep);
+
+  EXPECT(lcos::volume_to_percent(lcos::kPaVolumeNorm) == 100);
+  EXPECT(lcos::volume_to_percent(0) == 0);
+  EXPECT(lcos::percent_to_volume(100) == lcos::kPaVolumeNorm);
+  EXPECT(lcos::percent_to_volume(150) == lcos::kPaVolumeNorm / 2 * 3);
+  EXPECT(lcos::volume_to_percent(lcos::percent_to_volume(73)) == 73);
+  EXPECT(lcos::percent_to_volume(400) == lcos::percent_to_volume(150));
+}
+
+void test_shortcuts() {
+  std::map<std::string, std::string> values{
+      {"/commands/default/<Alt>F2", "xfce4-appfinder"},
+      {"/commands/default/<Alt>F2/startup-notify", "true"},
+      {"/commands/default/<Primary><Alt>t", "exo-open --launch TerminalEmulator"},
+      {"/commands/custom/<Alt>F2", "my-finder"},
+      {"/commands/custom/<Alt>F2/startup-notify", "false"},
+      {"/commands/custom/<Super>e", "thunar"},
+      {"/xfwm4/default/<Alt>F4", "close_window_key"},
+  };
+  const auto rows = lcos::merge_shortcuts(values);
+  EXPECT(rows.size() == 3);
+  const lcos::Shortcut* f2 = nullptr;
+  const lcos::Shortcut* term = nullptr;
+  const lcos::Shortcut* files = nullptr;
+  for (const auto& row : rows) {
+    if (row.accel == "<Alt>F2") {
+      f2 = &row;
+    } else if (row.accel == "<Primary><Alt>t") {
+      term = &row;
+    } else if (row.accel == "<Super>e") {
+      files = &row;
+    }
+  }
+  EXPECT(f2 != nullptr && f2->custom && f2->command == "my-finder" && !f2->startup_notify);
+  EXPECT(term != nullptr && !term->custom &&
+         term->command == "exo-open --launch TerminalEmulator");
+  EXPECT(files != nullptr && files->custom && files->command == "thunar");
+  EXPECT(lcos::shortcut_notify_path(true, "<Super>e") ==
+         "/commands/custom/<Super>e/startup-notify");
+}
+
+void test_themes_and_xkb() {
+  const std::string index = fixture("index.theme");
+  EXPECT(!index.empty());
+  const lcos::IndexTheme parsed = lcos::parse_index_theme(index);
+  EXPECT(parsed.name == "Sample Theme");
+  EXPECT(!parsed.hidden);
+  EXPECT(parsed.icon_theme);
+
+  const fs::path root = fs::temp_directory_path() / "lcos-theme-scan";
+  fs::remove_all(root);
+  fs::create_directories(root / "themes" / "Sample" / "gtk-3.0");
+  fs::create_directories(root / "themes" / "Sample" / "xfwm4");
+  fs::create_directories(root / "themes" / "Hidden" / "gtk-3.0");
+  fs::create_directories(root / "icons" / "Cursors" / "cursors");
+  {
+    std::ofstream((root / "themes" / "Sample" / "index.theme").string())
+        << "[X-GNOME-Metatheme]\nName=Sample Theme\n";
+    std::ofstream((root / "themes" / "Sample" / "xfwm4" / "themerc").string()) << "button_offset=0\n";
+    std::ofstream((root / "themes" / "Hidden" / "index.theme").string())
+        << "[Desktop Entry]\nName=Hidden\nHidden=true\n";
+    std::ofstream((root / "icons" / "Cursors" / "index.theme").string())
+        << "[Icon Theme]\nName=Cursors\n";
+    std::ofstream((root / "icons" / "Cursors" / "cursors" / "left_ptr").string()) << "x";
+  }
+  const auto gtk = lcos::scan_gtk_themes({(root / "themes").string()});
+  EXPECT(gtk.size() == 1 && gtk[0].id == "Sample");
+  const auto xfwm = lcos::scan_xfwm_themes({(root / "themes").string()});
+  EXPECT(xfwm.size() == 1 && xfwm[0].id == "Sample");
+  const auto cursors = lcos::scan_cursor_themes({(root / "icons").string()});
+  EXPECT(cursors.size() == 1 && cursors[0].id == "Cursors");
+  fs::remove_all(root);
+
+  std::string error;
+  lcos::XkbRules rules;
+  EXPECT(lcos::parse_xkb_rules(fixture("evdev-sample.xml"), rules, error));
+  EXPECT(error.empty());
+  EXPECT(rules.models.size() == 1 && rules.models[0].name == "pc105");
+  EXPECT(rules.layouts.size() == 2);
+  EXPECT(rules.layouts[0].name == "us");
+  EXPECT(rules.layouts[0].variants.size() == 1 &&
+         rules.layouts[0].variants[0].name == "dvorak");
+  const lcos::XkbOptionGroup* group = lcos::find_option_group(rules, "grp");
+  EXPECT(group != nullptr && group->options.size() == 1 &&
+         group->options[0].name == "grp:alt_shift_toggle");
+
+  const auto encoded = lcos::encode_layouts({{"us", ""}, {"de", "nodeadkeys"}});
+  EXPECT(encoded.first == "us,de");
+  EXPECT(encoded.second == ",nodeadkeys");
+  const auto decoded = lcos::decode_layouts(encoded.first, encoded.second);
+  EXPECT(decoded.size() == 2);
+  EXPECT(decoded[0].layout == "us" && decoded[0].variant.empty());
+  EXPECT(decoded[1].layout == "de" && decoded[1].variant == "nodeadkeys");
+
+  const std::string evdev = lcos::read_text_file("/usr/share/X11/xkb/rules/evdev.xml");
+  if (!evdev.empty()) {
+    lcos::XkbRules live;
+    EXPECT(lcos::parse_xkb_rules(evdev, live, error));
+    EXPECT(lcos::find_layout(live, "us") != nullptr);
+    EXPECT(lcos::find_option_group(live, "grp") != nullptr);
+  }
+}
+
+}  // namespace
+
+int main() {
+  test_names();
+  test_layout();
+  test_confirm_and_volume();
+  test_shortcuts();
+  test_themes_and_xkb();
+  if (failures != 0) {
+    std::cerr << failures << " logic check(s) failed\n";
+    return 1;
+  }
+  std::cout << "logic tests passed\n";
+  return 0;
+}

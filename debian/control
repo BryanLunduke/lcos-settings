@@ -1,0 +1,32 @@
+Source: lcos-settings
+Section: x11
+Priority: optional
+Maintainer: LCOS <lcos@lunduke.com>
+Homepage: https://lunduke.com
+Standards-Version: 4.6.2
+Build-Depends: debhelper-compat (= 13),
+ meson,
+ ninja-build,
+ g++,
+ pkg-config,
+ libgtkmm-3.0-dev (>= 3.24),
+ libxfconf-0-dev,
+ libpulse-dev,
+ libxrandr-dev,
+ libx11-dev,
+ libxi-dev,
+ xvfb,
+ xauth,
+ dbus,
+ xfconf,
+ pulseaudio,
+ xkb-data
+
+Package: lcos-settings
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}, xfconf, desktop-file-utils, gtk-update-icon-cache
+Description: LCOS Command Center, unified settings for LCOS
+ LCOS Command Center is a GTK 3 settings window for the Lunduke Computer
+ Operating System. This pre-release covers display, appearance, keyboard,
+ mouse, and sound, using the same xfconf, RandR, and PulseAudio backing
+ stores as the XFCE tools shipped with LCOS 1.0.

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=LCOS Command Center
+GenericName=Settings
+Comment=Display, appearance, keyboard, mouse, and sound settings for the Lunduke Computer Operating System
+Exec=lcos-settings
+Icon=org.lunduke.LcosSettings
+Terminal=false
+Type=Application
+Categories=Settings;DesktopSettings;
+StartupNotify=true
+StartupWMClass=lcos-settings
+Keywords=Settings;Display;Appearance;Keyboard;Mouse;Sound;Theme;

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.lunduke.LcosSettings</id>
+  <metadata_license>FSFAP</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>LCOS Command Center</name>
+  <summary>Unified settings for the Lunduke Computer Operating System</summary>
+  <description>
+    <p>
+      LCOS Command Center is the first pass of a single settings window for
+      LCOS. It covers display, appearance, keyboard, mouse, and sound, and
+      writes the same xfconf channels the XFCE settings tools use.
+    </p>
+  </description>
+  <url type="homepage">https://lunduke.com</url>
+  <launchable type="desktop-id">org.lunduke.LcosSettings.desktop</launchable>
+  <provides>
+    <binary>lcos-settings</binary>
+  </provides>
+  <developer_name>The Lunduke Journal</developer_name>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Settings</category>
+  </categories>
+  <releases>
+    <release version="1.1~dev" date="2026-11-09">
+      <description>
+        <p>First development snapshot for the LCOS 1.1 settings work.</p>
+      </description>
+    </release>
+  </releases>
+</component>

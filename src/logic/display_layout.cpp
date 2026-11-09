@@ -1,0 +1,240 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include "display_layout.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
+namespace lcos {
+
+bool parse_resolution(const std::string& text, int& width, int& height) {
+  const auto x = text.find('x');
+  if (x == std::string::npos || x == 0 || x + 1 >= text.size()) {
+    return false;
+  }
+  try {
+    std::size_t used_w = 0;
+    std::size_t used_h = 0;
+    const int w = std::stoi(text.substr(0, x), &used_w);
+    const int h = std::stoi(text.substr(x + 1), &used_h);
+    if (used_w != x || used_h == 0 || w <= 0 || h <= 0) {
+      return false;
+    }
+    // Allow a trailing marker such as "1080i" only when the digits parse.
+    width = w;
+    height = h;
+    return true;
+  } catch (...) {
+    return false;
+  }
+}
+
+std::string format_resolution(int width, int height) {
+  return std::to_string(width) + "x" + std::to_string(height);
+}
+
+bool refresh_matches(double a, double b) {
+  return std::llround(a * 100.0) == std::llround(b * 100.0);
+}
+
+double mode_refresh_hz(unsigned long dot_clock, unsigned int h_total,
+                       unsigned int v_total) {
+  if (h_total == 0 || v_total == 0) {
+    return 0;
+  }
+  return static_cast<double>(dot_clock) /
+         (static_cast<double>(h_total) * static_cast<double>(v_total));
+}
+
+int rotated_width(const OutputConfig& output) {
+  if (output.rotation == 90 || output.rotation == 270) {
+    return output.height;
+  }
+  return output.width;
+}
+
+int rotated_height(const OutputConfig& output) {
+  if (output.rotation == 90 || output.rotation == 270) {
+    return output.width;
+  }
+  return output.height;
+}
+
+int footprint_width(const OutputConfig& output) {
+  const double scaled = rotated_width(output) * output.scale;
+  return std::max(1, static_cast<int>(std::lround(scaled)));
+}
+
+int footprint_height(const OutputConfig& output) {
+  const double scaled = rotated_height(output) * output.scale;
+  return std::max(1, static_cast<int>(std::lround(scaled)));
+}
+
+ScreenBounds screen_bounds(const std::vector<OutputConfig>& outputs) {
+  ScreenBounds bounds;
+  bool any = false;
+  for (const auto& output : outputs) {
+    if (!output.active) {
+      continue;
+    }
+    any = true;
+    bounds.width = std::max(bounds.width, output.x + footprint_width(output));
+    bounds.height = std::max(bounds.height, output.y + footprint_height(output));
+  }
+  if (!any) {
+    bounds.width = 1;
+    bounds.height = 1;
+  }
+  return bounds;
+}
+
+void normalize_positions(std::vector<OutputConfig>& outputs) {
+  int min_x = std::numeric_limits<int>::max();
+  int min_y = std::numeric_limits<int>::max();
+  bool any = false;
+  for (const auto& output : outputs) {
+    if (!output.active) {
+      continue;
+    }
+    any = true;
+    min_x = std::min(min_x, output.x);
+    min_y = std::min(min_y, output.y);
+  }
+  if (!any || (min_x == 0 && min_y == 0)) {
+    return;
+  }
+  for (auto& output : outputs) {
+    if (!output.active) {
+      continue;
+    }
+    output.x -= min_x;
+    output.y -= min_y;
+  }
+}
+
+void arrange_extend(std::vector<OutputConfig>& outputs) {
+  int x = 0;
+  for (auto& output : outputs) {
+    if (!output.active) {
+      continue;
+    }
+    output.x = x;
+    output.y = 0;
+    x += footprint_width(output);
+  }
+}
+
+namespace {
+
+bool has_size(const OutputConfig& output, int width, int height) {
+  for (const auto& mode : output.modes) {
+    if (mode.width == width && mode.height == height) {
+      return true;
+    }
+  }
+  return false;
+}
+
+}  // namespace
+
+double closest_refresh(const OutputConfig& output, int width, int height,
+                       double preferred) {
+  const ModeInfo* best = nullptr;
+  double best_distance = 0;
+  for (const auto& mode : output.modes) {
+    if (mode.width != width || mode.height != height) {
+      continue;
+    }
+    const double distance = std::fabs(mode.refresh - preferred);
+    if (best == nullptr || distance < best_distance) {
+      best = &mode;
+      best_distance = distance;
+    }
+  }
+  return best != nullptr ? best->refresh : preferred;
+}
+
+void arrange_mirror(std::vector<OutputConfig>& outputs) {
+  std::vector<OutputConfig*> active;
+  for (auto& output : outputs) {
+    if (output.active) {
+      active.push_back(&output);
+    }
+  }
+  if (active.empty()) {
+    return;
+  }
+
+  ModeInfo best;
+  bool found = false;
+  for (const auto& mode : active.front()->modes) {
+    bool common = true;
+    for (std::size_t i = 1; i < active.size(); ++i) {
+      if (!has_size(*active[i], mode.width, mode.height)) {
+        common = false;
+        break;
+      }
+    }
+    if (!common) {
+      continue;
+    }
+    if (!found || mode.width * mode.height > best.width * best.height) {
+      best = mode;
+      found = true;
+    }
+  }
+
+  for (auto* output : active) {
+    output->x = 0;
+    output->y = 0;
+    if (!found) {
+      continue;
+    }
+    output->width = best.width;
+    output->height = best.height;
+    output->refresh =
+        closest_refresh(*output, best.width, best.height, best.refresh);
+  }
+}
+
+const ModeInfo* find_mode(const std::vector<ModeInfo>& modes, int width,
+                          int height, double refresh) {
+  const ModeInfo* fallback = nullptr;
+  for (const auto& mode : modes) {
+    if (mode.width != width || mode.height != height) {
+      continue;
+    }
+    if (fallback == nullptr || mode.refresh > fallback->refresh) {
+      fallback = &mode;
+    }
+    if (refresh > 0 && refresh_matches(mode.refresh, refresh)) {
+      return &mode;
+    }
+  }
+  if (refresh <= 0) {
+    return fallback;
+  }
+  return nullptr;
+}
+
+std::string friendly_output_name(const std::string& randr_name,
+                                 const std::string& edid_name) {
+  if (!edid_name.empty()) {
+    return edid_name;
+  }
+  if (randr_name.rfind("eDP", 0) == 0 || randr_name.rfind("LVDS", 0) == 0 ||
+      randr_name.rfind("DSI", 0) == 0 || randr_name == "PANEL") {
+    return "Laptop";
+  }
+  return randr_name;
+}
+
+int millimeters_for_pixels(int pixels) {
+  if (pixels < 1) {
+    pixels = 1;
+  }
+  return std::max(1, static_cast<int>(std::lround((pixels / 96.0) * 25.4)));
+}
+
+}  // namespace lcos
