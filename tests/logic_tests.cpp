@@ -7,6 +7,7 @@
 #include "logic/names.hpp"
 #include "logic/power.hpp"
 #include "logic/shortcuts.hpp"
+#include "logic/system_model.hpp"
 #include "logic/text.hpp"
 #include "logic/themes.hpp"
 #include "logic/volume.hpp"
@@ -258,6 +259,54 @@ void test_shortcuts() {
          "/commands/custom/<Super>e/startup-notify");
 }
 
+void test_system_model() {
+  EXPECT(lcos::valid_username("lcos"));
+  EXPECT(!lcos::valid_username("Root"));
+  EXPECT(!lcos::valid_username("root"));
+  EXPECT(!lcos::valid_username("has space"));
+  EXPECT(lcos::valid_password("correct horse"));
+  EXPECT(!lcos::valid_password(""));
+  EXPECT(!lcos::valid_password("line\nbreak"));
+  EXPECT(lcos::valid_timezone_name("Europe/Oslo"));
+  EXPECT(!lcos::valid_timezone_name("../etc/passwd"));
+  EXPECT(!lcos::valid_timezone_name("/Europe/Oslo"));
+  EXPECT(lcos::valid_locale_name("en_US.UTF-8"));
+  EXPECT(lcos::normalize_locale_name("en_US.utf8") == "en_US.UTF-8");
+  EXPECT(lcos::valid_undo_token("0123456789abcdef0123456789abcdef"));
+  EXPECT(!lcos::valid_undo_token("../etc/shadow"));
+
+  const std::string passwd =
+      "root:x:0:0:root:/root:/bin/bash\n"
+      "nobody:x:65534:65534:nobody:/nonexistent:/usr/sbin/nologin\n"
+      "lcos:x:1000:1000:Lunduke:/home/lcos:/bin/bash\n"
+      "guest:x:1001:1001:Guest:/home/guest:/bin/bash\n"
+      "svc:x:1002:1002:Service:/var/lib/svc:/usr/sbin/nologin\n";
+  const auto accounts = lcos::human_accounts(passwd, "lcos", 1000);
+  EXPECT(accounts.size() == 2);
+  EXPECT(accounts[0].name == "guest" && !accounts[0].administrator);
+  EXPECT(accounts[1].name == "lcos" && accounts[1].administrator && accounts[1].real_name == "Lunduke");
+  EXPECT(lcos::is_last_administrator("lcos", accounts));
+  EXPECT(!lcos::is_last_administrator("guest", accounts));
+
+  EXPECT(lcos::classify_clock_format("%R") == lcos::HourClock::Hour24);
+  EXPECT(lcos::classify_clock_format("%I:%M %p") == lcos::HourClock::Hour12);
+  EXPECT(lcos::classify_clock_format("%A") == lcos::HourClock::Unknown);
+  const std::string conf = "[Seat:*]\n#autologin-user=old\nautologin-user=lcos\nuser-session=xfce\n";
+  EXPECT(lcos::autologin_user_in_conf(conf) == "lcos");
+  const std::string updated = lcos::conf_with_autologin(conf, "guest");
+  EXPECT(lcos::autologin_user_in_conf(updated) == "guest");
+  EXPECT(updated.find("user-session=xfce") != std::string::npos);
+  EXPECT(lcos::autologin_user_in_conf(lcos::conf_with_autologin(conf, "")).empty());
+
+  const std::string desktop =
+      "[Desktop Entry]\nType=Application\nName=Example\nExec=/bin/true\nHidden=false\n";
+  const auto rows = lcos::merge_autostart({{"example.desktop", desktop}},
+                                          {{"example.desktop", desktop + "Hidden=true\n"}});
+  EXPECT(rows.size() == 1 && !rows[0].enabled && !rows[0].removable);
+  const auto added = lcos::generated_locale_names("C\nen_US.utf8\n");
+  EXPECT(added.size() == 2);
+}
+
 void test_themes_and_xkb() {
   const std::string index = fixture("index.theme");
   EXPECT(!index.empty());
@@ -328,6 +377,7 @@ int main() {
   test_layout();
   test_confirm_and_volume();
   test_shortcuts();
+  test_system_model();
   test_themes_and_xkb();
   if (failures != 0) {
     std::cerr << failures << " logic check(s) failed\n";

@@ -4,8 +4,10 @@
 
 #include "pages/accessibility_page.hpp"
 #include "pages/appearance_page.hpp"
+#include "pages/datetime_page.hpp"
 #include "pages/desktop_page.hpp"
 #include "pages/display_page.hpp"
+#include "pages/language_page.hpp"
 #include "pages/keyboard_page.hpp"
 #include "pages/media_page.hpp"
 #include "pages/mouse_page.hpp"
@@ -13,6 +15,8 @@
 #include "pages/power_page.hpp"
 #include "pages/software_page.hpp"
 #include "pages/sound_page.hpp"
+#include "pages/startup_page.hpp"
+#include "pages/users_page.hpp"
 #include "pages/window_page.hpp"
 #include "pages/window_tweaks_page.hpp"
 
@@ -61,9 +65,13 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* notifications = Gtk::manage(new NotificationsPage(store_, *this));
   auto* media = Gtk::manage(new MediaPage(store_));
   auto* sound = Gtk::manage(new SoundPage(store_, pulse_));
+  auto* datetime = Gtk::manage(new DateTimePage(store_, privileged_, *this));
+  auto* language = Gtk::manage(new LanguagePage(privileged_, *this));
+  auto* users = Gtk::manage(new UsersPage(privileged_, *this));
+  auto* startup = Gtk::manage(new StartupPage(store_, privileged_, *this));
   auto* software = Gtk::manage(new SoftwarePage());
   pages_ = {display, desktop, appearance, windows, tweaks, keyboard, mouse, accessibility,
-            power, notifications, media, sound, software};
+            power, notifications, media, sound, datetime, language, users, startup, software};
   nav_ = {
       {"display", "Display", "preferences-desktop-display"},
       {"desktop", "Desktop", "preferences-desktop-wallpaper"},
@@ -77,6 +85,10 @@ MainWindow::MainWindow(XfconfStore& store)
       {"notifications", "Notifications", "preferences-system-notifications"},
       {"removable-media", "Removable Drives and Media", "drive-removable-media"},
       {"sound", "Sound", "audio-volume-high"},
+      {"date-time", "Date & Time", "appointment-soon"},
+      {"language", "Language", "preferences-desktop-locale"},
+      {"users", "Users", "system-users"},
+      {"startup", "Startup", "system-run"},
       {"default-software", "Default Software", "applications-other"},
   };
 

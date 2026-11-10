@@ -3,6 +3,7 @@
 #define LCOS_MAIN_WINDOW_HPP
 
 #include "backends/pointer_backend.hpp"
+#include "backends/priv_client.hpp"
 #include "backends/pulse_client.hpp"
 #include "backends/xfconf_store.hpp"
 #include "backends/xrandr_backend.hpp"
@@ -35,6 +36,7 @@ class MainWindow : public Gtk::ApplicationWindow {
   bool dump_step();
 
   XfconfStore& store_;
+  PrivSession privileged_;
   XrandrBackend randr_;
   PointerBackend pointers_;
   PulseClient pulse_;

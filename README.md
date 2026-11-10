@@ -11,7 +11,7 @@ for the individual XFCE settings dialogs.
 Categories: Display, Desktop (background, icons, and menus), Appearance,
 Window Manager, Window Manager Tweaks, Keyboard, Mouse (including touchpad),
 Accessibility, Power, Notifications, Removable Drives and Media, Sound, and
-Default Software. The window writes the same xfconf channels the XFCE 4.20
+Default Software, plus date and time, language, users, and startup. The window writes the same xfconf channels the XFCE 4.20
 tools already watch (`displays`, `xfce4-desktop`, `xsettings`, `xfwm4`,
 `keyboards`, `keyboard-layout`, `xfce4-keyboard-shortcuts`, `pointers`,
 `accessibility`, `xfce4-session`, `xfce4-power-manager`, `xfce4-notifyd`,
