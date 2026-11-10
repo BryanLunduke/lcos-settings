@@ -23,6 +23,7 @@ namespace lcos {
 class DateTimePage : public SettingsPage {
  public:
   DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window& parent);
+  ~DateTimePage() override;
 
   Glib::ustring title() const override { return "Date & Time"; }
   Glib::ustring summary() const override {

@@ -182,6 +182,8 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
 
   load_zones();
   load_clock();
+  // Disconnected in the destructor. Leaving it connected updates the clock
+  // label after the window has been deleted on OK, Cancel, or close.
   clock_timer_ = Glib::signal_timeout().connect(
       [this]() {
         const std::time_t now = std::time(nullptr);
@@ -194,6 +196,13 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
         return true;
       },
       1000);
+}
+
+DateTimePage::~DateTimePage() {
+  now_ = nullptr;
+  if (clock_timer_.connected()) {
+    clock_timer_.disconnect();
+  }
 }
 
 void DateTimePage::tell(const std::string& message) {

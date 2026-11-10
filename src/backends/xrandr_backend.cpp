@@ -35,10 +35,12 @@ void set_crtc_matrix(Display* display, RRCrtc crtc, double matrix) {
   transform.matrix[0][0] = XDoubleToFixed(matrix);
   transform.matrix[1][1] = XDoubleToFixed(matrix);
   transform.matrix[2][2] = XDoubleToFixed(1.0);
-  // A filter name on the identity transform is rejected by some servers,
-  // including Xvfb. Non-identity scales need a filter or the picture is
-  // nearest-neighbour and, on some servers, the transform is ignored.
-  const char* filter = scale_differs(matrix, 1.0) ? "bilinear" : nullptr;
+  // libXrandr calls strlen on the filter. NULL crashes (Revert and scale 1
+  // both did). xfsettingsd 4.20 uses "nearest" for an identity transform and
+  // "bilinear" otherwise. The call is skipped when the matrix is already
+  // identity, so Xvfb's BadValue on XRRSetCrtcTransform stays off the
+  // session test.
+  const char* filter = scale_differs(matrix, 1.0) ? "bilinear" : "nearest";
   XRRSetCrtcTransform(display, crtc, &transform, filter, nullptr, 0);
   XSync(display, False);
 }

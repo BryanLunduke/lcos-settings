@@ -26,6 +26,7 @@
 #include <cstring>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <ctime>
@@ -189,32 +190,48 @@ volatile sig_atomic_t g_cancel_locale = 0;
 void on_locale_term(int) {
   g_cancel_locale = 1;
   if (g_locale_child > 0) {
-    kill(g_locale_child, SIGTERM);
+    // The child is its own process group, so this also stops localedef if
+    // a shell wrapper spawned it.
+    kill(-g_locale_child, SIGTERM);
   }
 }
 
-bool run_locale_gen() {
-  // The desktop user cannot signal this process after pkexec has switched
-  // to root. Stdin stays a pipe the user owns. Any bytes on it mean cancel.
-  int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+void arm_locale_cancel_pipe() {
+  const int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
   if (flags >= 0) {
     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
   }
+}
+
+// Runs one program in its own process group. A cancel byte on stdin, which
+// the desktop user can still write after pkexec is root, kills that group.
+bool run_cancellable(const std::vector<std::string>& args) {
+  if (args.empty() || g_cancel_locale != 0) {
+    return false;
+  }
+  std::vector<char*> argv;
+  argv.reserve(args.size() + 1);
+  for (const auto& arg : args) {
+    argv.push_back(const_cast<char*>(arg.c_str()));
+  }
+  argv.push_back(nullptr);
   const pid_t pid = fork();
   if (pid < 0) {
     return false;
   }
   if (pid == 0) {
-    execl("/usr/sbin/locale-gen", "locale-gen", static_cast<char*>(nullptr));
+    setpgid(0, 0);
+    execv(argv[0], argv.data());
     _exit(127);
   }
+  setpgid(pid, pid);
   g_locale_child = pid;
   bool watch_stdin = true;
   int term_tries = 0;
   int status = 0;
   while (true) {
     if (g_cancel_locale != 0) {
-      kill(pid, term_tries > 15 ? SIGKILL : SIGTERM);
+      kill(-pid, term_tries > 15 ? SIGKILL : SIGTERM);
       ++term_tries;
     }
     if (watch_stdin) {
@@ -229,7 +246,7 @@ bool run_locale_gen() {
           const ssize_t n = read(STDIN_FILENO, buffer, sizeof(buffer));
           if (n > 0) {
             g_cancel_locale = 1;
-            kill(pid, SIGTERM);
+            kill(-pid, SIGTERM);
           }
         }
         if ((fd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0 && (fd.revents & POLLIN) == 0) {
@@ -248,9 +265,114 @@ bool run_locale_gen() {
   }
   g_locale_child = -1;
   if (g_cancel_locale != 0) {
+    // The leader may have exited and left a child. Signal the group again.
+    kill(-pid, SIGKILL);
     return false;
   }
   return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+constexpr const char* kLocaleArchive = "/usr/lib/locale/locale-archive";
+
+std::set<std::string> locale_dir_names() {
+  std::set<std::string> names;
+  if (DIR* directory = opendir("/usr/lib/locale")) {
+    while (const dirent* item = readdir(directory)) {
+      const std::string name = item->d_name;
+      if (name != "." && name != "..") {
+        names.insert(name);
+      }
+    }
+    closedir(directory);
+  }
+  return names;
+}
+
+void remove_new_locale_entries(const std::set<std::string>& before) {
+  for (const auto& name : locale_dir_names()) {
+    if (before.count(name) != 0 || name.find('/') != std::string::npos) {
+      continue;
+    }
+    const std::string path = std::string("/usr/lib/locale/") + name;
+    run_command({"rm", "-rf", "--", path}, "");
+  }
+}
+
+std::string locale_dir_text(const std::set<std::string>& names) {
+  std::string text;
+  for (const auto& name : names) {
+    text += name;
+    text += '\n';
+  }
+  return text;
+}
+
+std::set<std::string> locale_dir_from_text(const std::string& text) {
+  std::set<std::string> names;
+  std::string line;
+  for (std::size_t i = 0; i <= text.size(); ++i) {
+    if (i == text.size() || text[i] == '\n') {
+      if (!line.empty()) {
+        names.insert(line);
+      }
+      line.clear();
+    } else {
+      line.push_back(text[i]);
+    }
+  }
+  return names;
+}
+
+// Debian locale-gen deletes locale-archive and then compiles every enabled
+// locale. Stopping that leaves a partial archive and can orphan localedef.
+// Compile only the new locale into the existing archive instead.
+std::string localedef_input(const std::string& locale) {
+  const std::string user_root = "/usr/local/share/i18n/locales/";
+  const std::string system_root = "/usr/share/i18n/locales/";
+  if (access((user_root + locale).c_str(), F_OK) == 0) {
+    return user_root + locale;
+  }
+  if (access((system_root + locale).c_str(), F_OK) == 0) {
+    return locale;
+  }
+  std::string base = locale;
+  const auto at = base.find('@');
+  std::string modifier;
+  if (at != std::string::npos) {
+    modifier = base.substr(at);
+    base.resize(at);
+  }
+  const auto dot = base.find('.');
+  if (dot != std::string::npos) {
+    base.resize(dot);
+  }
+  const std::string input = base + modifier;
+  if (access((user_root + input).c_str(), F_OK) == 0) {
+    return user_root + input;
+  }
+  return input;
+}
+
+void drop_undo_file(const std::string& token, const std::string& name) {
+  unlink(undo_path(token, name).c_str());
+}
+
+void drop_token_dir_if_empty(const std::string& token) {
+  const std::string dir = undo_dir(token);
+  if (DIR* directory = opendir(dir.c_str())) {
+    bool empty = true;
+    while (const dirent* item = readdir(directory)) {
+      const std::string name = item->d_name;
+      if (name != "." && name != "..") {
+        empty = false;
+        break;
+      }
+    }
+    closedir(directory);
+    if (empty) {
+      rmdir(dir.c_str());
+    }
+  }
 }
 
 unsigned caller_uid() {
@@ -532,17 +654,79 @@ void action_locale(const std::string& token, const std::vector<std::string>& loc
     need_generate = true;
   }
   if (need_generate) {
+    const bool created_gen_undo = !undo_exists(token, "locale.gen");
+    const bool created_archive_undo = !undo_exists(token, "locale.archive") &&
+                                      !undo_exists(token, "locale.archive.missing");
+    const bool created_dir_undo = !undo_exists(token, "locale.dir");
     remember_file(token, "locale.gen", "/etc/locale.gen");
+    const bool archive_existed = access(kLocaleArchive, F_OK) == 0;
+    const std::string previous_archive = archive_existed ? slurp(kLocaleArchive) : std::string();
+    remember_file(token, "locale.archive", kLocaleArchive);
+    const std::set<std::string> locale_files_before = locale_dir_names();
+    remember_text(token, "locale.dir", locale_dir_text(locale_files_before));
     write_file("/etc/locale.gen", locale_gen, 0644);
     struct sigaction action;
     std::memset(&action, 0, sizeof(action));
     action.sa_handler = on_locale_term;
     sigaction(SIGTERM, &action, nullptr);
-    const bool generated = run_locale_gen();
+    arm_locale_cancel_pipe();
+    bool compiled = true;
+    std::vector<const lcos::SupportedLocale*> pending;
+    for (const auto& name : locales) {
+      if (name.empty() || builtin_locale(name)) {
+        continue;
+      }
+      if (std::find(generated.begin(), generated.end(), name) != generated.end()) {
+        continue;
+      }
+      const lcos::SupportedLocale* locale = lcos::find_supported_locale(supported, name);
+      if (locale != nullptr) {
+        pending.push_back(locale);
+      }
+    }
+    const char* alias_file = "/usr/share/locale/locale.alias";
+    const bool have_alias = access(alias_file, R_OK) == 0;
+    for (const lcos::SupportedLocale* locale : pending) {
+      if (g_cancel_locale != 0) {
+        compiled = false;
+        break;
+      }
+      std::vector<std::string> command = {"/usr/bin/localedef", "-i", localedef_input(locale->name),
+                                          "-c", "-f", locale->charset};
+      if (have_alias) {
+        command.push_back("-A");
+        command.push_back(alias_file);
+      }
+      command.push_back(locale->name);
+      if (!run_cancellable(command)) {
+        compiled = false;
+        break;
+      }
+    }
     action.sa_handler = SIG_DFL;
     sigaction(SIGTERM, &action, nullptr);
-    if (!generated || g_cancel_locale != 0) {
+    if (!compiled || g_cancel_locale != 0) {
       write_file("/etc/locale.gen", previous_gen, 0644);
+      if (archive_existed) {
+        write_file(kLocaleArchive, previous_archive, 0644);
+      }
+      remove_new_locale_entries(locale_files_before);
+      // This run's undo files are the pre-generation bytes, which are now
+      // back on disk. Drop them so a cancelled run does not leave
+      // /run/lcos-settings/<token> behind. An older snapshot from a change
+      // that already succeeded in this visit stays for window Cancel.
+      if (created_gen_undo) {
+        drop_undo_file(token, "locale.gen");
+        drop_undo_file(token, "locale.gen.missing");
+      }
+      if (created_archive_undo) {
+        drop_undo_file(token, "locale.archive");
+        drop_undo_file(token, "locale.archive.missing");
+      }
+      if (created_dir_undo) {
+        drop_undo_file(token, "locale.dir");
+      }
+      drop_token_dir_if_empty(token);
       fail(g_cancel_locale != 0 ? "locale generation was cancelled" : "could not generate the locale");
     }
   }
@@ -827,6 +1011,16 @@ void revert_token(const std::string& token) {
     } else {
       write_file("/etc/locale.gen", slurp(dir + "/locale.gen"), 0644);
     }
+  }
+  if (access((dir + "/locale.archive").c_str(), F_OK) == 0) {
+    if (access((dir + "/locale.archive.missing").c_str(), F_OK) == 0) {
+      unlink(kLocaleArchive);
+    } else {
+      write_file(kLocaleArchive, slurp(dir + "/locale.archive"), 0644);
+    }
+  }
+  if (access((dir + "/locale.dir").c_str(), F_OK) == 0) {
+    remove_new_locale_entries(locale_dir_from_text(slurp(dir + "/locale.dir")));
   }
   if (access((dir + "/locale").c_str(), F_OK) == 0) {
     if (access((dir + "/locale.missing").c_str(), F_OK) == 0) {

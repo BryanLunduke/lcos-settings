@@ -33,7 +33,9 @@ class DisplayPage : public SettingsPage {
   void on_page_shown() override;
 
  private:
-  bool on_draw(const Cairo::RefPtr<Cairo::Context>& context);
+  // Not named on_draw: that overrides Gtk::Widget::on_draw, and returning
+  // true there stops every child on this page from being painted.
+  void paint_preview(const Cairo::RefPtr<Cairo::Context>& context);
   bool on_button_press(GdkEventButton* event);
   bool on_motion(GdkEventMotion* event);
   bool on_button_release(GdkEventButton* event);
@@ -67,6 +69,7 @@ class DisplayPage : public SettingsPage {
   bool applying_ = false;
   bool confirming_ = false;
   bool alive_ = true;
+  sigc::connection paint_idle_;
   bool screen_watch_ = false;
   bool hardware_changed_ = false;
   GdkWindow* root_window_ = nullptr;

@@ -105,8 +105,13 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   scroll_ = scroll;
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
   signal_size_allocate().connect([this](Gtk::Allocation&) {
-    Glib::signal_idle().connect([this]() {
-      paint_now();
+    if (paint_idle_.connected()) {
+      return;
+    }
+    paint_idle_ = Glib::signal_idle().connect([this]() {
+      if (alive_) {
+        paint_now();
+      }
       return false;
     });
   });
@@ -326,8 +331,11 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
 DisplayPage::~DisplayPage() {
   // The widget's display pointer is already gone while gtkmm destroys it.
   // Removing the filter through get_display() crashed on every OK, Cancel,
-  // and window close.
+  // and window close. A queued scrollbar refresh must not run after that.
   alive_ = false;
+  if (paint_idle_.connected()) {
+    paint_idle_.disconnect();
+  }
   if (screen_watch_ && root_window_ != nullptr && !gdk_window_is_destroyed(root_window_)) {
     gdk_window_remove_filter(root_window_, &DisplayPage::screen_filter, this);
   }
@@ -574,10 +582,14 @@ void DisplayPage::on_page_shown() {
   if (scroll_ != nullptr && scroll_->get_vadjustment()) {
     scroll_->get_vadjustment()->set_value(0);
   }
-  Glib::signal_idle().connect([this]() {
-    paint_now();
-    return false;
-  });
+  if (!paint_idle_.connected()) {
+    paint_idle_ = Glib::signal_idle().connect([this]() {
+      if (alive_) {
+        paint_now();
+      }
+      return false;
+    });
+  }
 }
 
 void DisplayPage::paint_now() {
@@ -611,12 +623,12 @@ void DisplayPage::redraw() {
   auto surface =
       Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, preview_width_, preview_height_);
   auto context = Cairo::Context::create(surface);
-  on_draw(context);
+  paint_preview(context);
   preview_.set(Gdk::Pixbuf::create(surface, 0, 0, preview_width_, preview_height_));
   paint_now();
 }
 
-bool DisplayPage::on_draw(const Cairo::RefPtr<Cairo::Context>& context) {
+void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
   const int width = std::max(1, preview_width_);
   const int height = std::max(1, preview_height_);
   context->save();
@@ -673,7 +685,6 @@ bool DisplayPage::on_draw(const Cairo::RefPtr<Cairo::Context>& context) {
     context->show_text("No displays");
   }
   context->restore();
-  return true;
 }
 
 int DisplayPage::hit_test(double x, double y) const {
