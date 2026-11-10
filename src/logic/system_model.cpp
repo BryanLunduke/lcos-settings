@@ -2,8 +2,11 @@
 
 #include "system_model.hpp"
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <set>
 
 namespace lcos {
@@ -84,6 +87,42 @@ bool list_has_xfce(const std::string& value) {
 std::string shell_base(const std::string& shell) {
   const auto slash = shell.find_last_of('/');
   return slash == std::string::npos ? shell : shell.substr(slash + 1);
+}
+
+bool command_runnable(const std::string& command) {
+  std::string bin;
+  for (char c : command) {
+    if (c == ' ' || c == '\t') {
+      break;
+    }
+    bin.push_back(c);
+  }
+  if (bin.empty()) {
+    return false;
+  }
+  if (bin.find('/') != std::string::npos) {
+    return access(bin.c_str(), X_OK) == 0;
+  }
+  const char* path = std::getenv("PATH");
+  if (path == nullptr) {
+    return false;
+  }
+  std::string dir;
+  for (std::size_t i = 0; i <= std::strlen(path); ++i) {
+    if (path[i] == ':' || path[i] == '\0') {
+      const std::string full = (dir.empty() ? std::string(".") : dir) + "/" + bin;
+      if (access(full.c_str(), X_OK) == 0) {
+        return true;
+      }
+      dir.clear();
+      if (path[i] == '\0') {
+        break;
+      }
+    } else {
+      dir.push_back(path[i]);
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -362,13 +401,23 @@ std::vector<AutostartEntry> merge_autostart(
   for (const auto& id : ids) {
     const auto user = user_files.find(id);
     const auto system = system_files.find(id);
-    const std::string& text = user != user_files.end() ? user->second : system->second;
-    const auto keys = desktop_keys(text);
+    std::map<std::string, std::string> keys;
+    if (system != system_files.end()) {
+      keys = desktop_keys(system->second);
+    }
+    if (user != user_files.end()) {
+      for (const auto& entry : desktop_keys(user->second)) {
+        keys[entry.first] = entry.second;
+      }
+    }
     const auto type = keys.find("Type");
     if (type == keys.end() || lower_copy(type->second) != "application") {
       continue;
     }
     if (list_has_xfce(keys.count("NotShowIn") ? keys.at("NotShowIn") : "")) {
+      continue;
+    }
+    if (keys.count("TryExec") != 0 && !command_runnable(keys.at("TryExec"))) {
       continue;
     }
     AutostartEntry row;
@@ -393,6 +442,22 @@ std::vector<AutostartEntry> merge_autostart(
     rows.push_back(std::move(row));
   }
   return rows;
+}
+
+AutostartToggle autostart_toggle_keys(bool show_in_xfce, bool enabled_now) {
+  AutostartToggle toggle;
+  if (show_in_xfce) {
+    toggle.set_hidden = true;
+    toggle.hidden = enabled_now;
+    return toggle;
+  }
+  toggle.set_override = true;
+  toggle.override_on = !enabled_now;
+  if (!enabled_now) {
+    toggle.set_hidden = true;
+    toggle.hidden = false;
+  }
+  return toggle;
 }
 
 std::string autostart_desktop_text(const std::string& name, const std::string& comment,

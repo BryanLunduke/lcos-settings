@@ -24,9 +24,6 @@ class UsersPage : public SettingsPage {
   Glib::ustring summary() const override {
     return "Local accounts, passwords, pictures, and automatic login. Cancel restores this visit.";
   }
-  bool has_pending() const override { return session_.dirty(); }
-  bool commit_pending() override;
-  void revert_page() override;
   void on_page_shown() override;
 
  private:

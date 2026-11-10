@@ -2,6 +2,7 @@
 
 #include "pages/appearance_page.hpp"
 
+#include "logic/helper_status.hpp"
 #include "logic/themes.hpp"
 #include "ui_util.hpp"
 
@@ -166,10 +167,14 @@ AppearancePage::AppearancePage(XfconfStore& store) : store_(store) {
     if (custom_dpi_.get_active()) {
       int dpi = store_.get_int("xsettings", "/Xfce/LastCustomDPI", -1);
       if (dpi < 50) {
+        dpi = xft_dpi_to_spin(store_.get_int("xsettings", "/Xft/DPI", -1));
+      }
+      if (dpi < 50) {
         dpi = 96;
       }
       dpi_.set_value(dpi);
-      store_.set_int("xsettings", "/Xft/DPI", dpi);
+      store_.set_int("xsettings", "/Xft/DPI", spin_to_xft_dpi(dpi));
+      store_.set_int("xsettings", "/Xfce/LastCustomDPI", dpi);
     } else {
       store_.set_int("xsettings", "/Xfce/LastCustomDPI", dpi_.get_value_as_int());
       store_.set_int("xsettings", "/Xft/DPI", -1);
@@ -180,7 +185,7 @@ AppearancePage::AppearancePage(XfconfStore& store) : store_(store) {
       return;
     }
     const int value = dpi_.get_value_as_int();
-    store_.set_int("xsettings", "/Xft/DPI", value);
+    store_.set_int("xsettings", "/Xft/DPI", spin_to_xft_dpi(value));
     store_.set_int("xsettings", "/Xfce/LastCustomDPI", value);
   });
   toolbar_.signal_changed().connect([this] {
@@ -275,10 +280,12 @@ void AppearancePage::load() {
   hinting_.set_active_id(hint.empty() ? "hintslight" : hint);
   const std::string sub = store_.get_string("xsettings", "/Xft/RGBA", "none");
   rgba_.set_active_id(sub.empty() ? "none" : sub);
-  const int dpi = store_.get_int("xsettings", "/Xft/DPI", -1);
+  const int stored_dpi = store_.get_int("xsettings", "/Xft/DPI", -1);
+  const int dpi = xft_dpi_to_spin(stored_dpi);
   custom_dpi_.set_active(dpi > 0);
   dpi_.set_sensitive(dpi > 0);
-  dpi_.set_value(dpi > 0 ? dpi : store_.get_int("xsettings", "/Xfce/LastCustomDPI", 96));
+  const int shown = dpi > 0 ? dpi : store_.get_int("xsettings", "/Xfce/LastCustomDPI", 96);
+  dpi_.set_value(shown > 0 ? shown : 96);
   const std::string toolbar = store_.get_string("xsettings", "/Gtk/ToolbarStyle", "both-horiz");
   toolbar_.set_active_id(toolbar.empty() ? "both-horiz" : toolbar);
   menu_images_.set_active(store_.get_bool("xsettings", "/Gtk/MenuImages", true));

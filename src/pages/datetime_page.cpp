@@ -332,10 +332,6 @@ void DateTimePage::apply_zone(const std::string& zone) {
   }
 }
 
-bool DateTimePage::commit_pending() { return session_.commit().ok; }
-
-void DateTimePage::revert_page() { session_.revert(); }
-
 void DateTimePage::on_page_shown() {
   show_zones();
   load_clock();

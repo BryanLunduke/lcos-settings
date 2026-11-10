@@ -73,15 +73,22 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
   spinner_ = Gtk::manage(new Gtk::Spinner());
   status_ = make_label("");
   status_->set_line_wrap(true);
+  cancel_locale_ = Gtk::manage(new Gtk::Button("Stop"));
   busy_row->pack_start(*spinner_, Gtk::PACK_SHRINK);
   busy_row->pack_start(*status_, Gtk::PACK_EXPAND_WIDGET);
+  busy_row->pack_start(*cancel_locale_, Gtk::PACK_SHRINK);
   busy_row->set_no_show_all(true);
   busy_row->hide();
   page->pack_start(*busy_row, Gtk::PACK_SHRINK);
+  cancel_locale_->signal_clicked().connect([this] {
+    if (busy_) {
+      session_.cancel();
+    }
+  });
   auto* note = make_label(
       "Every locale in the supported list is offered. Choosing one that is not generated yet "
-      "enables it in /etc/locale.gen and runs locale-gen. Cancel restores the language choice and "
-      "leaves the generated locale in place. Keyboard layouts are set on the Keyboard page.");
+      "enables it in /etc/locale.gen and runs locale-gen. Stop, or Cancel, restores locale.gen. "
+      "Keyboard layouts are set on the Keyboard page.");
   note->set_line_wrap(true);
   page->pack_start(*note, Gtk::PACK_SHRINK);
   pack_start(*make_page_scroll(*page), Gtk::PACK_EXPAND_WIDGET);
@@ -237,17 +244,21 @@ void LanguagePage::apply() {
       pending += name;
     }
   }
+  const std::vector<std::string> args = {"set-locale", lang, dates, numbers, currency};
   if (!pending.empty()) {
-    set_busy(true, "Generating " + pending + "… This can take a minute.");
+    set_busy(true, "Generating " + pending + "… This can take a minute. Stop cancels it.");
+    session_.run_async(args, "", [this](PrivResult result) {
+      set_busy(false, "");
+      if (!result.ok && result.error != "Cancelled.") {
+        tell(result.error);
+      }
+      load();
+    });
+    return;
   }
-  const PrivResult result = session_.run({"set-locale", lang, dates, numbers, currency});
-  if (!pending.empty()) {
-    set_busy(false, "");
-  }
+  const PrivResult result = session_.run(args);
   if (!result.ok) {
     tell(result.error);
-    load();
-  } else if (!pending.empty()) {
     load();
   }
 }
@@ -256,10 +267,6 @@ void LanguagePage::tell(const std::string& message) {
   Gtk::MessageDialog dialog(parent_, message, false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
   dialog.run();
 }
-
-bool LanguagePage::commit_pending() { return session_.commit().ok; }
-
-void LanguagePage::revert_page() { session_.revert(); }
 
 void LanguagePage::on_page_shown() { load(); }
 

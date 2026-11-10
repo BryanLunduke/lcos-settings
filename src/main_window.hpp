@@ -30,6 +30,7 @@ class MainWindow : public Gtk::ApplicationWindow {
   void select_page(int index);
   void load_nav_icons();
   void update_apply();
+  void tell(const std::string& message);
   void close_keep();
   void close_revert();
   bool on_delete_event(GdkEventAny* event) override;

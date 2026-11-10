@@ -25,10 +25,14 @@ class XrandrBackend {
   std::string apply(const std::vector<OutputConfig>& desired);
   // True when any output advertises the RandR Backlight or BACKLIGHT property.
   bool outputs_have_backlight() const;
+  // Ask the server to deliver RRScreenChangeNotify on the root window.
+  void select_screen_events();
+  bool is_screen_change(const void* xevent) const;
 
  private:
   Display* display_ = nullptr;
   bool ready_ = false;
+  int event_base_ = 0;
   std::string error_;
 };
 

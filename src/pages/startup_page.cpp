@@ -254,10 +254,15 @@ void StartupPage::reload_apps() {
   for (const auto& row : rows) {
     auto iter = apps_->append();
     (*iter)[columns_.enabled] = row.enabled;
-    (*iter)[columns_.name] = row.name;
+    Glib::ustring name = row.name;
+    if (row.run_hook != 0) {
+      name += " (not at login)";
+    }
+    (*iter)[columns_.name] = name;
     (*iter)[columns_.command] = row.command;
     (*iter)[columns_.id] = row.id;
     (*iter)[columns_.removable] = row.removable;
+    (*iter)[columns_.show_in_xfce] = row.show_in_xfce;
   }
 }
 
@@ -293,6 +298,7 @@ void StartupPage::toggle_selected(const std::string& path) {
   }
   const std::string id = static_cast<Glib::ustring>((*iter)[columns_.id]);
   const bool enabled = (*iter)[columns_.enabled];
+  const bool show_in_xfce = (*iter)[columns_.show_in_xfce];
   remember_autostart();
   const std::string dir = user_autostart_dir();
   g_mkdir_with_parents(dir.c_str(), 0700);
@@ -301,8 +307,13 @@ void StartupPage::toggle_selected(const std::string& path) {
   if (text.empty()) {
     text = read_text("/etc/xdg/autostart/" + id);
   }
-  text = set_desktop_key(text, "Hidden", enabled ? "true" : "false");
-  text = set_desktop_key(text, "X-XFCE-Autostart-Override", enabled ? "false" : "true");
+  const AutostartToggle toggle = autostart_toggle_keys(show_in_xfce, enabled);
+  if (toggle.set_hidden) {
+    text = set_desktop_key(text, "Hidden", toggle.hidden ? "true" : "false");
+  }
+  if (toggle.set_override) {
+    text = set_desktop_key(text, "X-XFCE-Autostart-Override", toggle.override_on ? "true" : "false");
+  }
   write_text(user_path, text);
   reload_apps();
 }
@@ -475,10 +486,9 @@ void StartupPage::restore_files() {
   files_dirty_ = false;
 }
 
-bool StartupPage::has_pending() const { return session_.dirty() || files_dirty_; }
+bool StartupPage::has_pending() const { return files_dirty_; }
 
 bool StartupPage::commit_pending() {
-  session_.commit();
   autostart_snapshot_.clear();
   session_snapshot_.clear();
   files_dirty_ = false;
@@ -486,7 +496,6 @@ bool StartupPage::commit_pending() {
 }
 
 void StartupPage::revert_page() {
-  session_.revert();
   restore_files();
   reload_apps();
   reload_sessions();

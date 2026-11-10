@@ -21,16 +21,15 @@ void install_css() {
   }
   auto css = Gtk::CssProvider::create();
   css->load_from_data(
-      ".lcos-sidebar { background-color: #efeae0; padding-top: 6px; }"
-      ".lcos-sidebar row { border-bottom: 1px solid rgba(0,0,0,0.05); }"
-      ".lcos-sidebar row:selected { background-color: #1f3a5f; color: #f7f4ea; }"
-      ".lcos-sidebar row:selected label { color: #f7f4ea; }"
+      ".lcos-sidebar { background-color: @theme_bg_color; color: @theme_fg_color; padding-top: 6px; }"
+      ".lcos-sidebar row { border-bottom: 1px solid alpha(@theme_fg_color, 0.08); }"
+      ".lcos-sidebar row label { color: @theme_fg_color; }"
+      ".lcos-sidebar row:selected { background-color: @theme_selected_bg_color; }"
+      ".lcos-sidebar row:selected label { color: @theme_selected_fg_color; }"
       ".lcos-title { font-size: 18px; font-weight: 700; }"
-      ".lcos-subtitle { color: #5c564c; margin-bottom: 4px; }"
+      ".lcos-subtitle { color: alpha(@theme_fg_color, 0.75); margin-bottom: 4px; }"
       "notebook header tabs tab { padding: 6px 14px; }"
-      "frame > label { font-weight: 600; }"
-      "scrollbar { background-color: #e6dfd4; min-width: 12px; min-height: 12px; }"
-      "scrollbar slider { background-color: #5c564c; min-width: 8px; min-height: 28px; border-radius: 4px; margin: 2px; }");
+      "frame > label { font-weight: 600; }");
   Gtk::StyleContext::add_provider_for_screen(screen, css,
                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }

@@ -40,12 +40,14 @@ class StartupPage : public SettingsPage {
       add(command);
       add(id);
       add(removable);
+      add(show_in_xfce);
     }
     Gtk::TreeModelColumn<bool> enabled;
     Gtk::TreeModelColumn<Glib::ustring> name;
     Gtk::TreeModelColumn<Glib::ustring> command;
     Gtk::TreeModelColumn<Glib::ustring> id;
     Gtk::TreeModelColumn<bool> removable;
+    Gtk::TreeModelColumn<bool> show_in_xfce;
   };
 
   void reload_apps();

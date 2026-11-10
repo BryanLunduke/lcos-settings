@@ -24,6 +24,7 @@ struct PaDevice {
   int channels = 2;
   int volume_percent = 0;
   bool mute = false;
+  std::vector<std::uint32_t> channel_volumes;
   std::string active_port;
   std::vector<PaPort> ports;
 };
@@ -36,6 +37,7 @@ struct PaInput {
   int channels = 2;
   int volume_percent = 0;
   bool mute = false;
+  std::vector<std::uint32_t> channel_volumes;
 };
 
 struct PaCard {
@@ -73,16 +75,19 @@ class PulseClient {
   sigc::signal<void> changed;
 
   void set_sink_volume(std::uint32_t index, int percent);
+  void set_sink_volumes(std::uint32_t index, const std::vector<std::uint32_t>& volumes);
   void set_sink_mute(std::uint32_t index, bool mute);
   void set_sink_port(std::uint32_t index, const std::string& port);
   void set_default_sink(const std::string& name);
 
   void set_source_volume(std::uint32_t index, int percent);
+  void set_source_volumes(std::uint32_t index, const std::vector<std::uint32_t>& volumes);
   void set_source_mute(std::uint32_t index, bool mute);
   void set_source_port(std::uint32_t index, const std::string& port);
   void set_default_source(const std::string& name);
 
   void set_input_volume(std::uint32_t index, int percent);
+  void set_input_volumes(std::uint32_t index, const std::vector<std::uint32_t>& volumes);
   void set_input_mute(std::uint32_t index, bool mute);
   void set_card_profile(std::uint32_t index, const std::string& profile);
 

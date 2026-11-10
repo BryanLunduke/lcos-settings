@@ -28,9 +28,6 @@ class DateTimePage : public SettingsPage {
   Glib::ustring summary() const override {
     return "Time zone, clock, and automatic time. Administrator changes are undone by Cancel.";
   }
-  bool has_pending() const override { return session_.dirty(); }
-  bool commit_pending() override;
-  void revert_page() override;
   void on_page_shown() override;
 
  private:

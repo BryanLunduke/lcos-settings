@@ -7,6 +7,7 @@
 #include "logic/display_layout.hpp"
 #include "pages/settings_page.hpp"
 
+#include <gdk/gdk.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/image.h>
@@ -20,6 +21,7 @@ namespace lcos {
 class DisplayPage : public SettingsPage {
  public:
   DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& parent);
+  ~DisplayPage() override;
 
   Glib::ustring title() const override { return "Display"; }
   Glib::ustring summary() const override {
@@ -37,6 +39,7 @@ class DisplayPage : public SettingsPage {
   bool on_button_release(GdkEventButton* event);
 
   void load_hardware();
+  static GdkFilterReturn screen_filter(GdkXEvent* xevent, GdkEvent* event, gpointer data);
   void rebuild_output_combo();
   void show_selected();
   void push_selected_from_fields();
@@ -60,6 +63,8 @@ class DisplayPage : public SettingsPage {
   std::vector<OutputConfig> session_open_;
   std::vector<OutputConfig> confirmed_;
   bool dirty_ = false;
+  bool applying_ = false;
+  bool screen_watch_ = false;
   bool hardware_changed_ = false;
   int selected_index_ = 0;
   int freeze_ = 0;

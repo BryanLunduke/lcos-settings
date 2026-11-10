@@ -37,6 +37,8 @@ logic_lib = static_library(
     'src/logic/mime_files.cpp',
     'src/logic/wm_shortcuts.cpp',
     'src/logic/system_model.cpp',
+    'src/logic/atomic_file.cpp',
+    'src/logic/helper_status.cpp',
   ),
   include_directories: lcos_inc,
   dependencies: glib_dep,

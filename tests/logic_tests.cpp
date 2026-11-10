@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "logic/atomic_file.hpp"
 #include "logic/backdrop.hpp"
 #include "logic/confirm.hpp"
 #include "logic/display_layout.hpp"
+#include "logic/helper_status.hpp"
 #include "logic/mime_files.hpp"
 #include "logic/names.hpp"
 #include "logic/power.hpp"
@@ -15,6 +17,9 @@
 #include "logic/xkb_rules.hpp"
 
 #include <glib.h>
+
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -145,8 +150,10 @@ void test_layout() {
   right.rotation = 90;
   right.scale = 2;
   EXPECT(lcos::rotated_width(right) == 1080);
-  EXPECT(lcos::footprint_width(right) == 2160);
-  EXPECT(lcos::footprint_height(right) == 3840);
+  // UI scale 2 keeps a framebuffer of mode/2, which is what XFCE's RandR
+  // transform of 1/scale describes.
+  EXPECT(lcos::footprint_width(right) == 540);
+  EXPECT(lcos::footprint_height(right) == 960);
 
   std::vector<lcos::OutputConfig> outputs{left, right};
   lcos::arrange_extend(outputs);
@@ -204,6 +211,11 @@ void test_confirm_and_volume() {
   EXPECT(lcos::percent_to_volume(150) == lcos::kPaVolumeNorm / 2 * 3);
   EXPECT(lcos::volume_to_percent(lcos::percent_to_volume(73)) == 73);
   EXPECT(lcos::percent_to_volume(400) == lcos::percent_to_volume(150));
+  const auto balanced =
+      lcos::scale_channel_volumes({lcos::kPaVolumeNorm, lcos::kPaVolumeNorm / 2}, 50);
+  EXPECT(balanced.size() == 2);
+  EXPECT(balanced[0] == lcos::percent_to_volume(50));
+  EXPECT(balanced[1] == lcos::percent_to_volume(25));
 }
 
 void test_shortcuts() {
@@ -303,6 +315,23 @@ void test_system_model() {
   const auto rows = lcos::merge_autostart({{"example.desktop", desktop}},
                                           {{"example.desktop", desktop + "Hidden=true\n"}});
   EXPECT(rows.size() == 1 && !rows[0].enabled && !rows[0].removable);
+  const std::string sparse = "[Desktop Entry]\nHidden=true\n";
+  const auto overlaid = lcos::merge_autostart({{"example.desktop", desktop}},
+                                              {{"example.desktop", sparse}});
+  EXPECT(overlaid.size() == 1);
+  EXPECT(!overlaid[0].enabled);
+  EXPECT(overlaid[0].command == "/bin/true");
+  EXPECT(overlaid[0].name == "Example");
+  const std::string missing_exec = desktop + "TryExec=/no/such/lcos-tryexec\n";
+  EXPECT(lcos::merge_autostart({{"example.desktop", missing_exec}}, {}).empty());
+  const auto xfce_off = lcos::autostart_toggle_keys(true, true);
+  EXPECT(xfce_off.set_hidden && xfce_off.hidden && !xfce_off.set_override);
+  const auto xfce_on = lcos::autostart_toggle_keys(true, false);
+  EXPECT(xfce_on.set_hidden && !xfce_on.hidden);
+  const auto other_off = lcos::autostart_toggle_keys(false, true);
+  EXPECT(!other_off.set_hidden && other_off.set_override && !other_off.override_on);
+  const auto other_on = lcos::autostart_toggle_keys(false, false);
+  EXPECT(other_on.set_hidden && !other_on.hidden && other_on.set_override && other_on.override_on);
   const auto added = lcos::generated_locale_names("C\nen_US.utf8\n");
   EXPECT(added.size() == 2);
 
@@ -328,6 +357,76 @@ void test_system_model() {
   EXPECT(lcos::effective_autologin({"autologin-user=lcos\nuser-session=xfce\n", "autologin-user=\n"})
              .empty());
   EXPECT(lcos::effective_autologin({"#autologin-user=lcos\n"}).empty());
+}
+
+void test_helper_files_and_status() {
+  EXPECT(lcos::xft_dpi_to_spin(-1) == -1);
+  EXPECT(lcos::xft_dpi_to_spin(0) == -1);
+  EXPECT(lcos::xft_dpi_to_spin(96) == 96);
+  EXPECT(lcos::xft_dpi_to_spin(96 * 1024) == 96);
+  EXPECT(lcos::xft_dpi_to_spin(120 * 1024) == 120);
+  EXPECT(lcos::spin_to_xft_dpi(96) == 96 * 1024);
+  EXPECT(lcos::spin_to_xft_dpi(-1) == -1);
+
+  const auto dismissed = lcos::interpret_helper_exit(1, 126 << 8, "");
+  EXPECT(!dismissed.ok);
+  EXPECT(dismissed.error.find("dismissed") != std::string::npos);
+  const auto denied = lcos::interpret_helper_exit(1, 127 << 8, "");
+  EXPECT(!denied.ok);
+  EXPECT(denied.error.find("denied") != std::string::npos);
+  const auto helper_failed = lcos::interpret_helper_exit(1, 1 << 8, "could not set the password\n");
+  EXPECT(!helper_failed.ok);
+  EXPECT(helper_failed.error == "could not set the password");
+  const auto lost = lcos::interpret_helper_exit(-1, 0, "");
+  EXPECT(!lost.ok);
+  const auto kept = lcos::interpret_helper_exit(1, 0, "ignored");
+  EXPECT(kept.ok);
+
+  const fs::path root = fs::temp_directory_path() / "lcos-atomic-file";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  const fs::path regular = root / "shadow-like";
+  {
+    std::ofstream out(regular);
+    out << "before\n";
+  }
+  EXPECT(chmod(regular.c_str(), 0640) == 0);
+  struct stat before;
+  EXPECT(stat(regular.c_str(), &before) == 0);
+  lcos::ReplaceRequest request;
+  request.mode_if_new = 0644;
+  std::string error;
+  EXPECT(lcos::replace_regular_file(regular.string(), "after\n", request, &error));
+  struct stat after;
+  EXPECT(stat(regular.c_str(), &after) == 0);
+  EXPECT((after.st_mode & 0777) == 0640);
+  EXPECT(after.st_uid == before.st_uid);
+  EXPECT(after.st_gid == before.st_gid);
+  {
+    std::ifstream in(regular);
+    std::string text;
+    std::getline(in, text);
+    EXPECT(text == "after");
+  }
+
+  const fs::path secret = root / "secret";
+  const fs::path link = root / "face";
+  {
+    std::ofstream out(secret);
+    out << "SECRET";
+  }
+  EXPECT(symlink(secret.c_str(), link.c_str()) == 0);
+  EXPECT(!lcos::replace_regular_file(link.string(), "PWNED", request, &error));
+  {
+    std::ifstream in(secret);
+    std::string text;
+    std::getline(in, text);
+    EXPECT(text == "SECRET");
+  }
+  struct stat link_st;
+  EXPECT(lstat(link.c_str(), &link_st) == 0);
+  EXPECT(S_ISLNK(link_st.st_mode));
+  fs::remove_all(root);
 }
 
 void test_themes_and_xkb() {
@@ -401,6 +500,7 @@ int main() {
   test_confirm_and_volume();
   test_shortcuts();
   test_system_model();
+  test_helper_files_and_status();
   test_themes_and_xkb();
   if (failures != 0) {
     std::cerr << failures << " logic check(s) failed\n";

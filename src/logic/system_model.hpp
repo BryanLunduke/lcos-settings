@@ -60,12 +60,25 @@ struct AutostartEntry {
   int run_hook = 0;
 };
 
-// Keys are desktop file basenames. Values are file text. A user file with the
-// same name replaces the system file. Entries that are not XFCE applications
-// are omitted.
+// Keys are desktop file basenames. Values are file text. A user file overlays
+// the system file (user keys win). A partial override that only sets Hidden
+// still keeps Type, Exec, and Name from the system file. Entries that are not
+// applications, that hide from XFCE, or whose TryExec cannot be run are omitted.
 std::vector<AutostartEntry> merge_autostart(
     const std::map<std::string, std::string>& system_files,
     const std::map<std::string, std::string>& user_files);
+
+// Which keys a checkbox click should write. XFCE entries toggle Hidden.
+// Entries for other desktops toggle X-XFCE-Autostart-Override and, when
+// turning on, clear Hidden so the entry is not hidden everywhere.
+struct AutostartToggle {
+  bool set_hidden = false;
+  bool hidden = false;
+  bool set_override = false;
+  bool override_on = false;
+};
+
+AutostartToggle autostart_toggle_keys(bool show_in_xfce, bool enabled_now);
 
 std::string autostart_desktop_text(const std::string& name, const std::string& comment,
                                    const std::string& command, bool hidden, int run_hook);

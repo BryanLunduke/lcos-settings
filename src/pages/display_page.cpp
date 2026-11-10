@@ -10,6 +10,7 @@
 #include <cstdio>
 
 #include <gtk/gtk.h>
+#include <gdk/gdkx.h>
 
 #include <glibmm/main.h>
 #include <gtkmm/box.h>
@@ -301,6 +302,46 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   right->pack_start(*status_, Gtk::PACK_SHRINK);
 
   load_hardware();
+  signal_map().connect([this] {
+    if (screen_watch_) {
+      return;
+    }
+    randr_.select_screen_events();
+    auto display = get_display();
+    if (!display) {
+      return;
+    }
+    auto root = display->get_default_screen()->get_root_window();
+    if (!root) {
+      return;
+    }
+    gdk_window_add_filter(root->gobj(), &DisplayPage::screen_filter, this);
+    screen_watch_ = true;
+  });
+}
+
+DisplayPage::~DisplayPage() {
+  if (!screen_watch_) {
+    return;
+  }
+  auto display = get_display();
+  if (!display) {
+    return;
+  }
+  auto root = display->get_default_screen()->get_root_window();
+  if (root) {
+    gdk_window_remove_filter(root->gobj(), &DisplayPage::screen_filter, this);
+  }
+}
+
+GdkFilterReturn DisplayPage::screen_filter(GdkXEvent* xevent, GdkEvent*, gpointer data) {
+  auto* self = static_cast<DisplayPage*>(data);
+  if (self->applying_ || self->dirty_ || !self->randr_.is_screen_change(xevent)) {
+    return GDK_FILTER_CONTINUE;
+  }
+  self->load_hardware();
+  self->dirty_ = false;
+  return GDK_FILTER_CONTINUE;
 }
 
 void DisplayPage::load_hardware() {
@@ -771,7 +812,9 @@ bool DisplayPage::commit_pending() {
   normalize_positions(outputs_);
   show_selected();
   redraw();
+  applying_ = true;
   const std::string error = randr_.apply(outputs_);
+  applying_ = false;
   if (!error.empty()) {
     Gtk::MessageDialog dialog(parent_, "Could not apply the display layout.", false,
                               Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);

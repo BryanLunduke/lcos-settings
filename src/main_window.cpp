@@ -27,6 +27,7 @@
 #include <gtkmm/box.h>
 #include <gtkmm/image.h>
 #include <gtkmm/label.h>
+#include <gtkmm/messagedialog.h>
 #include <gtkmm/separator.h>
 
 #include <algorithm>
@@ -173,8 +174,9 @@ MainWindow::MainWindow(XfconfStore& store)
   ok->signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::close_keep));
   apply_->signal_clicked().connect([this] {
     for (auto* page : pages_) {
-      if (page->has_pending()) {
-        page->commit_pending();
+      if (page->has_pending() && !page->commit_pending()) {
+        update_apply();
+        return;
       }
     }
     update_apply();
@@ -249,6 +251,11 @@ void MainWindow::update_apply() {
   apply_->set_sensitive(pending);
 }
 
+void MainWindow::tell(const std::string& message) {
+  Gtk::MessageDialog dialog(*this, message, false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+  dialog.run();
+}
+
 void MainWindow::close_keep() {
   if (closing_) {
     return;
@@ -259,12 +266,29 @@ void MainWindow::close_keep() {
       return;
     }
   }
+  if (privileged_.busy()) {
+    privileged_.wait_until_idle();
+  }
+  const PrivResult committed = privileged_.commit();
+  if (!committed.ok) {
+    tell(committed.error.empty() ? "The privileged changes could not be kept." : committed.error);
+    return;
+  }
   closing_ = true;
   hide();
 }
 
 void MainWindow::close_revert() {
   if (closing_) {
+    return;
+  }
+  if (privileged_.busy()) {
+    privileged_.cancel();
+    privileged_.wait_until_idle();
+  }
+  const PrivResult reverted = privileged_.revert();
+  if (!reverted.ok) {
+    tell(reverted.error.empty() ? "The privileged changes could not be restored." : reverted.error);
     return;
   }
   closing_ = true;

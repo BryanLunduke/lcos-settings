@@ -314,7 +314,8 @@ void UsersPage::remove_user() {
   }
   Gtk::MessageDialog confirm(parent_, "Remove " + account->name + "?", false, Gtk::MESSAGE_QUESTION,
                              Gtk::BUTTONS_YES_NO, true);
-  confirm.set_secondary_text("Cancel puts the account back. Files from the home directory are restored too.");
+  confirm.set_secondary_text(
+      "Cancel puts the account back. The home directory stays in place either way.");
   if (confirm.run() != Gtk::RESPONSE_YES) {
     return;
   }
@@ -462,10 +463,6 @@ void UsersPage::change_autologin() {
   }
   reload();
 }
-
-bool UsersPage::commit_pending() { return session_.commit().ok; }
-
-void UsersPage::revert_page() { session_.revert(); }
 
 void UsersPage::on_page_shown() { reload(); }
 

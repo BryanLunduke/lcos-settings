@@ -23,6 +23,30 @@ inline std::uint32_t percent_to_volume(int percent) {
       std::lround(static_cast<double>(percent) / 100.0 * kPaVolumeNorm));
 }
 
+// Move every channel so the loudest one matches `percent`, keeping the
+// ratio between channels. That is what preserves balance.
+inline std::vector<std::uint32_t> scale_channel_volumes(const std::vector<std::uint32_t>& channels,
+                                                       int percent) {
+  const std::uint32_t target = percent_to_volume(percent);
+  if (channels.empty()) {
+    return {target};
+  }
+  std::uint32_t loudest = 0;
+  for (const std::uint32_t volume : channels) {
+    loudest = std::max(loudest, volume);
+  }
+  if (loudest == 0) {
+    return std::vector<std::uint32_t>(channels.size(), target);
+  }
+  std::vector<std::uint32_t> scaled;
+  scaled.reserve(channels.size());
+  for (const std::uint32_t volume : channels) {
+    scaled.push_back(static_cast<std::uint32_t>(
+        std::lround(static_cast<double>(volume) / static_cast<double>(loudest) * target)));
+  }
+  return scaled;
+}
+
 }  // namespace lcos
 
 #endif

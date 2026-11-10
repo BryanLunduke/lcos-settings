@@ -61,13 +61,19 @@ int rotated_height(const OutputConfig& output) {
   return output.height;
 }
 
+double ui_scale(const OutputConfig& output) {
+  return output.scale > 0.05 ? output.scale : 1.0;
+}
+
 int footprint_width(const OutputConfig& output) {
-  const double scaled = rotated_width(output) * output.scale;
+  // XFCE 4.20 stores the RandR transform as 1/ui-scale. The framebuffer
+  // footprint is the mode size divided by that ui scale.
+  const double scaled = rotated_width(output) / ui_scale(output);
   return std::max(1, static_cast<int>(std::lround(scaled)));
 }
 
 int footprint_height(const OutputConfig& output) {
-  const double scaled = rotated_height(output) * output.scale;
+  const double scaled = rotated_height(output) / ui_scale(output);
   return std::max(1, static_cast<int>(std::lround(scaled)));
 }
 

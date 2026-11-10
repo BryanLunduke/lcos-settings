@@ -3,6 +3,7 @@
 // checked before any change. Passwords arrive on stdin and are never logged
 // or placed on a command line.
 
+#include "logic/atomic_file.hpp"
 #include "logic/system_model.hpp"
 
 #include <crypt.h>
@@ -18,12 +19,14 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <ctime>
 #include <vector>
 
 namespace {
@@ -159,21 +162,46 @@ std::string slurp(const std::string& path) {
 }
 
 void write_file(const std::string& path, const std::string& text, mode_t mode) {
-  const std::string tmp = path + ".lcos-tmp";
-  {
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out) {
-      fail("cannot write " + path);
-    }
-    out << text;
-    if (!out) {
-      fail("cannot write " + path);
+  lcos::ReplaceRequest request;
+  request.mode_if_new = mode;
+  std::string error;
+  if (!lcos::replace_regular_file(path, text, request, &error)) {
+    fail(error.empty() ? "cannot write " + path : error);
+  }
+}
+
+pid_t g_locale_child = -1;
+volatile sig_atomic_t g_cancel_locale = 0;
+
+void on_locale_term(int) {
+  g_cancel_locale = 1;
+  if (g_locale_child > 0) {
+    kill(g_locale_child, SIGTERM);
+  }
+}
+
+bool run_locale_gen() {
+  const pid_t pid = fork();
+  if (pid < 0) {
+    return false;
+  }
+  if (pid == 0) {
+    execl("/usr/sbin/locale-gen", "locale-gen", static_cast<char*>(nullptr));
+    _exit(127);
+  }
+  g_locale_child = pid;
+  int status = 0;
+  while (waitpid(pid, &status, 0) < 0) {
+    if (errno != EINTR) {
+      g_locale_child = -1;
+      return false;
     }
   }
-  chmod(tmp.c_str(), mode);
-  if (rename(tmp.c_str(), path.c_str()) != 0) {
-    fail("cannot write " + path);
+  g_locale_child = -1;
+  if (g_cancel_locale != 0) {
+    return false;
   }
+  return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
 unsigned caller_uid() {
@@ -316,7 +344,7 @@ void action_timezone(const std::string& token, const std::string& name) {
   }
 }
 
-void action_time(const std::string& date, const std::string& clock) {
+void action_time(const std::string& token, const std::string& date, const std::string& clock) {
   if (date.size() != 10 || clock.size() != 8 || date[4] != '-' || date[7] != '-' || clock[2] != ':' ||
       clock[5] != ':') {
     fail("invalid date or time");
@@ -340,6 +368,7 @@ void action_time(const std::string& date, const std::string& clock) {
   if (chrony_enabled()) {
     fail("turn off automatic time before setting the clock");
   }
+  remember_text(token, "clock", std::to_string(std::time(nullptr)));
   if (!run_command({"date", "-s", date + " " + clock}, "")) {
     fail("could not set the clock");
   }
@@ -352,15 +381,23 @@ void action_ntp(const std::string& token, const std::string& state) {
   if (state != "on" && state != "off") {
     fail("invalid automatic time setting");
   }
-  remember_text(token, "ntp", chrony_enabled() ? "on" : "off");
+  const bool was_on = chrony_enabled();
+  remember_text(token, "ntp", was_on ? "on" : "off");
   if (state == "on") {
     run_command({"update-rc.d", "chrony", "enable"}, "");
     if (!run_command({"/etc/init.d/chrony", "start"}, "")) {
+      if (!was_on) {
+        run_command({"update-rc.d", "chrony", "disable"}, "");
+      }
       fail("could not start chrony");
     }
   } else {
     run_command({"/etc/init.d/chrony", "stop"}, "");
     if (!run_command({"update-rc.d", "chrony", "disable"}, "")) {
+      if (was_on) {
+        run_command({"update-rc.d", "chrony", "enable"}, "");
+        run_command({"/etc/init.d/chrony", "start"}, "");
+      }
       fail("could not disable chrony");
     }
   }
@@ -421,7 +458,8 @@ void action_locale(const std::string& token, const std::vector<std::string>& loc
     fail("the supported locale list is not available");
   }
   const auto generated = lcos::generated_locale_names(capture_command({"locale", "-a"}));
-  std::string locale_gen = slurp("/etc/locale.gen");
+  const std::string previous_gen = slurp("/etc/locale.gen");
+  std::string locale_gen = previous_gen;
   bool need_generate = false;
   for (const auto& name : locales) {
     if (name.empty() || builtin_locale(name)) {
@@ -445,9 +483,18 @@ void action_locale(const std::string& token, const std::vector<std::string>& loc
     need_generate = true;
   }
   if (need_generate) {
+    remember_file(token, "locale.gen", "/etc/locale.gen");
     write_file("/etc/locale.gen", locale_gen, 0644);
-    if (!run_command({"/usr/sbin/locale-gen"}, "")) {
-      fail("could not generate the locale");
+    struct sigaction action;
+    std::memset(&action, 0, sizeof(action));
+    action.sa_handler = on_locale_term;
+    sigaction(SIGTERM, &action, nullptr);
+    const bool generated = run_locale_gen();
+    action.sa_handler = SIG_DFL;
+    sigaction(SIGTERM, &action, nullptr);
+    if (!generated || g_cancel_locale != 0) {
+      write_file("/etc/locale.gen", previous_gen, 0644);
+      fail(g_cancel_locale != 0 ? "locale generation was cancelled" : "could not generate the locale");
     }
   }
   remember_file(token, "locale", "/etc/default/locale");
@@ -493,11 +540,15 @@ void action_add_user(const std::string& token, const std::string& name, const st
   if (!run_command({"useradd", "-m", "-s", "/bin/bash", "-c", real, name}, "")) {
     fail("could not create the account");
   }
-  set_password_hash(name, password);
-  if (kind == "administrator") {
-    run_command({"usermod", "-a", "-G", "sudo", name}, "");
-  }
   remember_text(token, "added." + name, "1");
+  if (!run_command({"chpasswd"}, name + ":" + password + "\n")) {
+    run_command({"userdel", "-r", name}, "");
+    fail("could not set the password");
+  }
+  if (kind == "administrator" && !run_command({"usermod", "-a", "-G", "sudo", name}, "")) {
+    run_command({"userdel", "-r", name}, "");
+    fail("could not create the account");
+  }
 }
 
 void action_remove_user(const std::string& token, const std::string& name) {
@@ -505,13 +556,9 @@ void action_remove_user(const std::string& token, const std::string& name) {
   refuse_self(entry);
   refuse_last_admin(name);
   remember_account(token, name);
-  const std::string home = entry->pw_dir != nullptr ? entry->pw_dir : "";
-  if (home == std::string("/home/") + name) {
-    const std::string backup = undo_path(token, "home." + name);
-    if (rename(home.c_str(), backup.c_str()) == 0) {
-      remember_text(token, "homepath." + name, home);
-    }
-  }
+  // Leave the home directory where it is. userdel without -r does not delete
+  // it, and Cancel recreates the account on that same path. Moving it into
+  // /run would put the only copy on tmpfs.
   if (!run_command({"userdel", name}, "")) {
     fail("could not remove the account");
   }
@@ -596,12 +643,23 @@ void action_avatar(const std::string& token, const std::string& name, const std:
     fail("the picture must be a PNG or JPEG file");
   }
   const std::string dest = std::string(entry->pw_dir) + "/.face";
+  struct stat face_st;
+  if (lstat(dest.c_str(), &face_st) == 0 && !S_ISREG(face_st.st_mode)) {
+    fail("refusing to replace a non-regular picture file");
+  }
   remember_file(token, "avatar." + name, dest);
   std::ifstream in(resolved, std::ios::binary);
   std::ostringstream data;
   data << in.rdbuf();
-  write_file(dest, data.str(), 0644);
-  chown(dest.c_str(), entry->pw_uid, entry->pw_gid);
+  lcos::ReplaceRequest request;
+  request.mode_if_new = 0644;
+  request.force_owner = true;
+  request.uid = entry->pw_uid;
+  request.gid = entry->pw_gid;
+  std::string error;
+  if (!lcos::replace_regular_file(dest, data.str(), request, &error)) {
+    fail(error.empty() ? "cannot write the picture" : error);
+  }
 }
 
 void action_autologin(const std::string& token, const std::string& user) {
@@ -624,6 +682,11 @@ void action_autologin(const std::string& token, const std::string& user) {
 }
 
 void restore_shadow_password(const std::string& saved_line) {
+  // Hold the shadow lock across the rewrite. write_file copies the current
+  // inode's owner, group, and mode, so root:shadow 0640 survives.
+  if (lckpwdf() != 0) {
+    fail("could not lock the password file");
+  }
   const auto cut = saved_line.find(':');
   if (cut == std::string::npos) {
     return;
@@ -660,6 +723,7 @@ void restore_shadow_password(const std::string& saved_line) {
     }
   }
   write_file("/etc/shadow", out, 0640);
+  ulckpwdf();
 }
 
 void revert_token(const std::string& token) {
@@ -685,6 +749,25 @@ void revert_token(const std::string& token) {
     } else if (state == "off") {
       run_command({"/etc/init.d/chrony", "stop"}, "");
       run_command({"update-rc.d", "chrony", "disable"}, "");
+    }
+  }
+  if (access((dir + "/clock").c_str(), F_OK) == 0) {
+    const std::string epoch = first_line(slurp(dir + "/clock"));
+    bool digits = !epoch.empty();
+    for (char c : epoch) {
+      if (!std::isdigit(static_cast<unsigned char>(c))) {
+        digits = false;
+      }
+    }
+    if (digits) {
+      run_command({"date", "-s", "@" + epoch}, "");
+    }
+  }
+  if (access((dir + "/locale.gen").c_str(), F_OK) == 0) {
+    if (access((dir + "/locale.gen.missing").c_str(), F_OK) == 0) {
+      unlink("/etc/locale.gen");
+    } else {
+      write_file("/etc/locale.gen", slurp(dir + "/locale.gen"), 0644);
     }
   }
   if (access((dir + "/locale").c_str(), F_OK) == 0) {
@@ -768,8 +851,19 @@ void revert_token(const std::string& token) {
           if (access((dir + "/" + name + ".missing").c_str(), F_OK) == 0) {
             unlink(dest.c_str());
           } else {
-            write_file(dest, slurp(dir + "/" + name), 0644);
-            chown(dest.c_str(), entry->pw_uid, entry->pw_gid);
+            struct stat face_st;
+            if (lstat(dest.c_str(), &face_st) == 0 && !S_ISREG(face_st.st_mode)) {
+              unlink(dest.c_str());
+            }
+            lcos::ReplaceRequest request;
+            request.mode_if_new = 0644;
+            request.force_owner = true;
+            request.uid = entry->pw_uid;
+            request.gid = entry->pw_gid;
+            std::string error;
+            if (!lcos::replace_regular_file(dest, slurp(dir + "/" + name), request, &error)) {
+              fail(error.empty() ? "could not restore the picture" : error);
+            }
           }
         }
       } else if (name.compare(0, 8, "lightdm.") == 0 && name.find(".missing") == std::string::npos) {
@@ -816,7 +910,7 @@ int main(int argc, char** argv) {
     } else if (action == "set-timezone" && argc == 4) {
       action_timezone(token, argv[3]);
     } else if (action == "set-time" && argc == 5) {
-      action_time(argv[3], argv[4]);
+      action_time(token, argv[3], argv[4]);
     } else if (action == "set-ntp" && argc == 4) {
       action_ntp(token, argv[3]);
     } else if (action == "set-locale" && argc == 7) {
