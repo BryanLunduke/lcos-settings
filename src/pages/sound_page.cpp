@@ -357,9 +357,15 @@ void SoundPage::build_apps() {
     mute->set_active(input.mute);
     const std::uint32_t index = input.index;
     scale->signal_value_changed().connect([this, scale, index] {
+      if (freeze_ > 0) {
+        return;
+      }
       pulse_.set_input_volume(index, static_cast<int>(scale->get_value()));
     });
     mute->signal_toggled().connect([this, mute, index] {
+      if (freeze_ > 0) {
+        return;
+      }
       pulse_.set_input_mute(index, mute->get_active());
     });
     row->pack_start(*name, Gtk::PACK_SHRINK);

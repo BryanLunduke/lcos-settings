@@ -35,7 +35,19 @@ class MainWindow : public Gtk::ApplicationWindow {
   XrandrBackend randr_;
   PointerBackend pointers_;
   PulseClient pulse_;
+  struct NavItem {
+    std::string id;
+    std::string title;
+    std::string icon;
+  };
+  struct Shot {
+    int page = 0;
+    int frame = 0;
+    std::string name;
+  };
+
   std::vector<SettingsPage*> pages_;
+  std::vector<NavItem> nav_;
   Gtk::ListBox sidebar_;
   Gtk::Stack stack_;
   Gtk::Label* heading_ = nullptr;
@@ -45,7 +57,8 @@ class MainWindow : public Gtk::ApplicationWindow {
   bool closing_ = false;
 
   std::string dump_dir_;
-  int dump_index_ = 0;
+  std::vector<Shot> shots_;
+  int shot_index_ = 0;
   int dump_phase_ = 0;
 };
 

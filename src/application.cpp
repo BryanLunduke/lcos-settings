@@ -21,12 +21,14 @@ void install_css() {
   }
   auto css = Gtk::CssProvider::create();
   css->load_from_data(
-      ".lcos-sidebar { background-color: #efeae0; }"
+      ".lcos-sidebar { background-color: #efeae0; padding-top: 6px; }"
       ".lcos-sidebar row { border-bottom: 1px solid rgba(0,0,0,0.05); }"
       ".lcos-sidebar row:selected { background-color: #1f3a5f; color: #f7f4ea; }"
       ".lcos-sidebar row:selected label { color: #f7f4ea; }"
       ".lcos-title { font-size: 18px; font-weight: 700; }"
-      ".lcos-subtitle { color: #5c564c; }");
+      ".lcos-subtitle { color: #5c564c; margin-bottom: 4px; }"
+      "notebook header tabs tab { padding: 6px 14px; }"
+      "frame > label { font-weight: 600; }");
   Gtk::StyleContext::add_provider_for_screen(screen, css,
                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }

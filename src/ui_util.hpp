@@ -34,17 +34,23 @@ inline Gtk::Frame* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
 
 class FormGrid {
  public:
-  FormGrid() {
+  explicit FormGrid(int label_width = 168) : label_width_(label_width) {
     grid_ = Gtk::manage(new Gtk::Grid());
     grid_->set_row_spacing(8);
     grid_->set_column_spacing(12);
+    grid_->set_margin_top(2);
   }
 
   Gtk::Grid& grid() { return *grid_; }
 
   void add(const Glib::ustring& caption, Gtk::Widget& widget) {
     auto* label = make_label(caption);
+    label->set_size_request(label_width_, -1);
+    label->set_line_wrap(true);
+    label->set_xalign(0);
+    label->set_max_width_chars(28);
     widget.set_hexpand(true);
+    widget.set_halign(Gtk::ALIGN_FILL);
     grid_->attach(*label, 0, row_, 1, 1);
     grid_->attach(widget, 1, row_, 1, 1);
     ++row_;
@@ -56,9 +62,18 @@ class FormGrid {
     ++row_;
   }
 
+  // Checkbox or button aligned with the control column, not the labels.
+  void add_control(Gtk::Widget& widget) {
+    widget.set_hexpand(true);
+    widget.set_halign(Gtk::ALIGN_START);
+    grid_->attach(widget, 1, row_, 1, 1);
+    ++row_;
+  }
+
  private:
   Gtk::Grid* grid_ = nullptr;
   int row_ = 0;
+  int label_width_ = 168;
 };
 
 struct Freeze {

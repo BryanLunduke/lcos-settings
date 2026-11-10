@@ -201,8 +201,13 @@ PulseClient::PulseClient() : impl_(new Impl) {}
 
 PulseClient::~PulseClient() {
   if (impl_->context != nullptr) {
+    // Drop callbacks before disconnect so a synchronous TERMINATED event
+    // cannot call back into a client that is already going away.
+    pa_context_set_state_callback(impl_->context, nullptr, nullptr);
+    pa_context_set_subscribe_callback(impl_->context, nullptr, nullptr);
     pa_context_disconnect(impl_->context);
     pa_context_unref(impl_->context);
+    impl_->context = nullptr;
   }
   if (impl_->loop != nullptr) {
     pa_glib_mainloop_free(impl_->loop);

@@ -31,6 +31,9 @@ logic_lib = static_library(
     'src/logic/shortcuts.cpp',
     'src/logic/themes.cpp',
     'src/logic/xkb_rules.cpp',
+    'src/logic/backdrop.cpp',
+    'src/logic/power.cpp',
+    'src/logic/mime_files.cpp',
   ),
   include_directories: lcos_inc,
   dependencies: glib_dep,
@@ -45,10 +48,13 @@ backend_sources = files(
 
 page_sources = files(
   'src/pages/display_page.cpp',
+  'src/pages/desktop_page.cpp',
   'src/pages/appearance_page.cpp',
+  'src/pages/power_page.cpp',
   'src/pages/keyboard_page.cpp',
   'src/pages/mouse_page.cpp',
   'src/pages/sound_page.cpp',
+  'src/pages/software_page.cpp',
   'src/main_window.cpp',
   'src/application.cpp',
 )

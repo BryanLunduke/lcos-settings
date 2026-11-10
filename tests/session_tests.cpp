@@ -86,6 +86,15 @@ void test_xfconf(lcos::XfconfStore& store) {
   EXPECT(store.set_double("displays", "/Default/HDMI-1/RefreshRate", 59.94));
   EXPECT(lcos::refresh_matches(store.get_double("displays", "/Default/HDMI-1/RefreshRate", 0),
                                59.94));
+  EXPECT(store.set_uint("xfce4-power-manager", "/xfce4-power-manager/inactivity-on-ac", 14));
+  EXPECT(store.get_uint("xfce4-power-manager", "/xfce4-power-manager/inactivity-on-ac", 0) == 14);
+  EXPECT(store.set_doubles("xfce4-desktop",
+                           "/backdrop/screen0/monitorXvfb/workspace0/rgba1",
+                           {0.1, 0.2, 0.3, 1.0}));
+  const auto doubles = store.get_doubles(
+      "xfce4-desktop", "/backdrop/screen0/monitorXvfb/workspace0/rgba1");
+  EXPECT(doubles.size() == 4);
+  EXPECT(doubles.size() == 4 && doubles[0] > 0.09 && doubles[0] < 0.11 && doubles[3] > 0.9);
   EXPECT(store.set_ints("pointers", "/TestPad/Properties/libinput_Scroll_Method_Enabled",
                         {1, 0, 0}));
   const auto ints =

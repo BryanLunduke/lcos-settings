@@ -9,15 +9,17 @@
 
 namespace lcos {
 
-enum class PropType { Absent, Bool, Int, Double, String, Ints };
+enum class PropType { Absent, Bool, Int, Uint, Double, String, Ints, Doubles };
 
 struct PropValue {
   PropType type = PropType::Absent;
   bool b = false;
   int i = 0;
+  unsigned u = 0;
   double d = 0;
   std::string s;
   std::vector<int> ints;
+  std::vector<double> doubles;
 
   bool same_as(const PropValue& other) const;
 };
@@ -45,17 +47,24 @@ class XfconfStore {
                 bool fallback) const;
   int get_int(const std::string& channel, const std::string& prop,
               int fallback) const;
+  unsigned get_uint(const std::string& channel, const std::string& prop,
+                    unsigned fallback) const;
   double get_double(const std::string& channel, const std::string& prop,
                     double fallback) const;
   std::vector<int> get_ints(const std::string& channel, const std::string& prop) const;
+  std::vector<double> get_doubles(const std::string& channel,
+                                  const std::string& prop) const;
 
   bool set_string(const std::string& channel, const std::string& prop,
                   const std::string& value);
   bool set_bool(const std::string& channel, const std::string& prop, bool value);
   bool set_int(const std::string& channel, const std::string& prop, int value);
+  bool set_uint(const std::string& channel, const std::string& prop, unsigned value);
   bool set_double(const std::string& channel, const std::string& prop, double value);
   bool set_ints(const std::string& channel, const std::string& prop,
                 const std::vector<int>& values);
+  bool set_doubles(const std::string& channel, const std::string& prop,
+                   const std::vector<double>& values);
   bool reset(const std::string& channel, const std::string& prop, bool recursive);
 
   // Writes that should survive Cancel (the display preview profile, and the
@@ -69,6 +78,7 @@ class XfconfStore {
       const std::string& channel, const std::string& base) const;
 
   void set_tracking(bool on) { tracking_ = on; }
+  bool tracking() const { return tracking_; }
   void revert_session();
   bool session_dirty() const { return !originals_.empty(); }
   bool channel_touched(const std::string& channel) const;

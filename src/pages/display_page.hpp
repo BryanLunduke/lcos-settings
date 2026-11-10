@@ -7,10 +7,10 @@
 #include "logic/display_layout.hpp"
 #include "pages/settings_page.hpp"
 
-#include <gtkmm/button.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/comboboxtext.h>
-#include <gtkmm/drawingarea.h>
+#include <gtkmm/image.h>
+#include <gtkmm/scrolledwindow.h>
 #include <gtkmm/spinbutton.h>
 
 #include <vector>
@@ -28,6 +28,7 @@ class DisplayPage : public SettingsPage {
   bool has_pending() const override { return dirty_; }
   bool commit_pending() override;
   void restore_session_hardware();
+  void on_page_shown() override;
 
  private:
   bool on_draw(const Cairo::RefPtr<Cairo::Context>& context);
@@ -49,6 +50,7 @@ class DisplayPage : public SettingsPage {
   void delete_profile();
   void identify();
   void ensure_primary();
+  void paint_now();
   OutputConfig* selected();
 
   XfconfStore& store_;
@@ -68,12 +70,10 @@ class DisplayPage : public SettingsPage {
   double origin_y_ = 0;
   double view_scale_ = 1;
 
-  // Windowless so the preview cannot cover the controls under it.
-  class Preview : public Gtk::DrawingArea {
-   public:
-    Preview() { set_has_window(false); }
-  };
-  Preview canvas_;
+  Gtk::Image preview_;
+  Gtk::ScrolledWindow* scroll_ = nullptr;
+  int preview_width_ = 720;
+  int preview_height_ = 170;
   Gtk::ComboBoxText output_combo_;
   Gtk::CheckButton enabled_;
   Gtk::CheckButton primary_;
@@ -82,6 +82,8 @@ class DisplayPage : public SettingsPage {
   Gtk::ComboBoxText rotation_;
   Gtk::ComboBoxText reflection_;
   Gtk::SpinButton scale_;
+  Gtk::SpinButton x_pos_;
+  Gtk::SpinButton y_pos_;
   Gtk::ComboBoxText on_connect_;
   Gtk::ComboBoxText auto_profile_;
   Gtk::ComboBoxText profiles_;

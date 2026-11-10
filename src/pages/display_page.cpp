@@ -9,9 +9,13 @@
 
 #include <cstdio>
 
+#include <gtk/gtk.h>
+
 #include <glibmm/main.h>
 #include <gtkmm/box.h>
+#include <gtkmm/button.h>
 #include <gtkmm/dialog.h>
+#include <gdkmm/pixbuf.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/label.h>
 #include <gtkmm/messagedialog.h>
@@ -88,26 +92,47 @@ void rounded_rect(const Cairo::RefPtr<Cairo::Context>& context, double x, double
 
 DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& parent)
     : store_(store), randr_(randr), parent_(parent) {
-  set_border_width(12);
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   scroll->set_shadow_type(Gtk::SHADOW_NONE);
+  auto* right = make_vbox(10);
+  right->set_border_width(12);
+  right->set_hexpand(true);
+  scroll->add(*right);
+  scroll_ = scroll;
+  pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
+  Glib::signal_timeout().connect([this]() {
+    paint_now();
+    return false;
+  }, 700);
 
-  canvas_.set_hexpand(true);
-  canvas_.set_vexpand(false);
-  canvas_.set_valign(Gtk::ALIGN_START);
-  canvas_.set_size_request(-1, 170);
-  canvas_.add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK |
-                     Gdk::POINTER_MOTION_MASK);
-  canvas_.signal_draw().connect(sigc::mem_fun(*this, &DisplayPage::on_draw));
-  canvas_.signal_button_press_event().connect(
-      sigc::mem_fun(*this, &DisplayPage::on_button_press));
-  canvas_.signal_motion_notify_event().connect(sigc::mem_fun(*this, &DisplayPage::on_motion));
-  canvas_.signal_button_release_event().connect(
-      sigc::mem_fun(*this, &DisplayPage::on_button_release));
-  pack_start(canvas_, Gtk::PACK_SHRINK);
+  FormGrid form;
+  form.add("Display", output_combo_);
+  enabled_.set_label("Use this display");
+  primary_.set_label("Primary display");
+  form.add_control(enabled_);
+  form.add_control(primary_);
+  form.add("Resolution", resolution_);
+  form.add("Refresh rate", refresh_);
+  form.add("Rotation", rotation_);
+  form.add("Reflection", reflection_);
+  scale_.set_range(0.1, 10.0);
+  scale_.set_increments(0.1, 1.0);
+  scale_.set_digits(2);
+  scale_.set_value(1.0);
+  form.add("Scale", scale_);
+  x_pos_.set_range(-8000, 16000);
+  y_pos_.set_range(-8000, 16000);
+  x_pos_.set_increments(1, 50);
+  y_pos_.set_increments(1, 50);
+  x_pos_.set_digits(0);
+  y_pos_.set_digits(0);
+  form.add("Position X", x_pos_);
+  form.add("Position Y", y_pos_);
+  right->pack_start(form.grid(), Gtk::PACK_SHRINK);
 
-  auto* arrange = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  auto* arrange = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+  arrange->set_margin_top(4);
   auto* mirror = Gtk::manage(new Gtk::Button("Mirror"));
   auto* extend = Gtk::manage(new Gtk::Button("Extend"));
   auto* identify = Gtk::manage(new Gtk::Button("Identify"));
@@ -121,36 +146,25 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   extend->signal_clicked().connect([this] {
     arrange_extend(outputs_);
     mark_dirty();
+    show_selected();
     redraw();
   });
   identify->signal_clicked().connect(sigc::mem_fun(*this, &DisplayPage::identify));
   arrange->pack_start(*mirror, Gtk::PACK_SHRINK);
   arrange->pack_start(*extend, Gtk::PACK_SHRINK);
   arrange->pack_start(*identify, Gtk::PACK_SHRINK);
-  pack_start(*arrange, Gtk::PACK_SHRINK);
+  right->pack_start(*arrange, Gtk::PACK_SHRINK);
 
-  auto* right = make_vbox(8);
-  right->set_hexpand(true);
-  scroll->add(*right);
-  scroll->set_min_content_height(460);
-  scroll->set_size_request(-1, 460);
-  pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
-  FormGrid form;
-  form.add("Display", output_combo_);
-  enabled_.set_label("Use this display");
-  primary_.set_label("Primary display");
-  form.add_full(enabled_);
-  form.add_full(primary_);
-  form.add("Resolution", resolution_);
-  form.add("Refresh rate", refresh_);
-  form.add("Rotation", rotation_);
-  form.add("Reflection", reflection_);
-  scale_.set_range(0.1, 10.0);
-  scale_.set_increments(0.1, 1.0);
-  scale_.set_digits(2);
-  scale_.set_value(1.0);
-  form.add("Scale", scale_);
-  right->pack_start(form.grid(), Gtk::PACK_SHRINK);
+  preview_.set_halign(Gtk::ALIGN_CENTER);
+  preview_.set_size_request(-1, preview_height_);
+  right->pack_start(preview_, Gtk::PACK_SHRINK);
+  preview_.add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK |
+                      Gdk::POINTER_MOTION_MASK | Gdk::BUTTON_MOTION_MASK);
+  preview_.signal_button_press_event().connect(
+      sigc::mem_fun(*this, &DisplayPage::on_button_press));
+  preview_.signal_motion_notify_event().connect(sigc::mem_fun(*this, &DisplayPage::on_motion));
+  preview_.signal_button_release_event().connect(
+      sigc::mem_fun(*this, &DisplayPage::on_button_release));
 
   rotation_.append("0", "Normal");
   rotation_.append("90", "Clockwise");
@@ -220,6 +234,19 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
     }
     push_selected_from_fields();
   });
+  auto move_output = [this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    if (OutputConfig* output = selected()) {
+      output->x = x_pos_.get_value_as_int();
+      output->y = y_pos_.get_value_as_int();
+      mark_dirty();
+      redraw();
+    }
+  };
+  x_pos_.signal_value_changed().connect(move_output);
+  y_pos_.signal_value_changed().connect(move_output);
 
   auto* policies = make_vbox(8);
   on_connect_.append("0", "Do nothing");
@@ -329,6 +356,8 @@ void DisplayPage::show_selected() {
   rotation_.set_sensitive(have && output->active);
   reflection_.set_sensitive(have && output->active);
   scale_.set_sensitive(have && output->active);
+  x_pos_.set_sensitive(have && output->active);
+  y_pos_.set_sensitive(have && output->active);
   if (!have) {
     return;
   }
@@ -373,6 +402,8 @@ void DisplayPage::show_selected() {
   }
   reflection_.set_active_id(output->reflection.empty() ? "0" : output->reflection);
   scale_.set_value(output->scale > 0 ? output->scale : 1.0);
+  x_pos_.set_value(output->x);
+  y_pos_.set_value(output->y);
 }
 
 void DisplayPage::push_selected_from_fields() {
@@ -488,11 +519,44 @@ void DisplayPage::mark_dirty() {
   }
 }
 
-void DisplayPage::redraw() { canvas_.queue_draw(); }
+void DisplayPage::on_page_shown() {
+  if (scroll_ != nullptr && scroll_->get_vadjustment()) {
+    scroll_->get_vadjustment()->set_value(0);
+  }
+  Glib::signal_idle().connect([this]() {
+    paint_now();
+    return false;
+  });
+}
+
+void DisplayPage::paint_now() {
+  if (scroll_ == nullptr || scroll_->get_child() == nullptr || !scroll_->get_child()->get_window()) {
+    return;
+  }
+  auto* child = scroll_->get_child();
+  auto context = child->get_window()->create_cairo_context();
+  context->set_operator(Cairo::OPERATOR_SOURCE);
+  context->set_source_rgb(0.965, 0.961, 0.957);
+  context->paint();
+  context->set_operator(Cairo::OPERATOR_OVER);
+  gtk_widget_draw(GTK_WIDGET(child->gobj()), context->cobj());
+}
+
+void DisplayPage::redraw() {
+  const int allocated = get_allocated_width();
+  preview_width_ = allocated > 80 ? allocated - 48 : 720;
+  preview_height_ = 130;
+  auto surface =
+      Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, preview_width_, preview_height_);
+  auto context = Cairo::Context::create(surface);
+  on_draw(context);
+  preview_.set(Gdk::Pixbuf::create(surface, 0, 0, preview_width_, preview_height_));
+  paint_now();
+}
 
 bool DisplayPage::on_draw(const Cairo::RefPtr<Cairo::Context>& context) {
-  const int width = std::max(1, canvas_.get_allocated_width());
-  const int height = std::max(1, canvas_.get_allocated_height());
+  const int width = std::max(1, preview_width_);
+  const int height = std::max(1, preview_height_);
   context->save();
   context->rectangle(0, 0, width, height);
   context->clip();
@@ -623,6 +687,11 @@ bool DisplayPage::on_motion(GdkEventMotion* event) {
       output.y = other.y - own_h;
     }
   }
+  {
+    Freeze freeze(freeze_);
+    x_pos_.set_value(output.x);
+    y_pos_.set_value(output.y);
+  }
   mark_dirty();
   redraw();
   return true;
@@ -634,7 +703,7 @@ bool DisplayPage::on_button_release(GdkEventButton*) {
 }
 
 void DisplayPage::write_scheme(const std::string& scheme, bool track) {
-  const bool previous = true;
+  const bool previous = store_.tracking();
   if (!track) {
     store_.set_tracking(false);
   }
@@ -662,13 +731,12 @@ void DisplayPage::write_scheme(const std::string& scheme, bool track) {
     // prefers those when they exist, so both forms stay in agreement.
     store_.set_double("displays", path("Scale/X"), output.scale);
     store_.set_double("displays", path("Scale/Y"), output.scale);
-    store_.set_int("displays", path("Position/X"), std::max(0, output.x));
-    store_.set_int("displays", path("Position/Y"), std::max(0, output.y));
+    store_.set_int("displays", path("Position/X"), output.x);
+    store_.set_int("displays", path("Position/Y"), output.y);
   }
   if (!track) {
     store_.set_tracking(previous);
   }
-  (void)previous;
 }
 
 bool DisplayPage::commit_pending() {
@@ -682,6 +750,9 @@ bool DisplayPage::commit_pending() {
     return false;
   }
   ensure_primary();
+  normalize_positions(outputs_);
+  show_selected();
+  redraw();
   const std::string error = randr_.apply(outputs_);
   if (!error.empty()) {
     Gtk::MessageDialog dialog(parent_, "Could not apply the display layout.", false,

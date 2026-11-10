@@ -3,9 +3,12 @@
 #include "main_window.hpp"
 
 #include "pages/appearance_page.hpp"
+#include "pages/desktop_page.hpp"
 #include "pages/display_page.hpp"
 #include "pages/keyboard_page.hpp"
 #include "pages/mouse_page.hpp"
+#include "pages/power_page.hpp"
+#include "pages/software_page.hpp"
 #include "pages/sound_page.hpp"
 
 #include <gdk/gdkx.h>
@@ -16,33 +19,17 @@
 #include <gtkmm/label.h>
 #include <gtkmm/separator.h>
 
+#include <algorithm>
 #include <iostream>
 
 namespace lcos {
-namespace {
-
-struct Category {
-  const char* id;
-  const char* title;
-  const char* icon;
-};
-
-const Category kCategories[] = {
-    {"display", "Display", "video-display-symbolic"},
-    {"appearance", "Appearance", "preferences-desktop-theme-symbolic"},
-    {"keyboard", "Keyboard", "input-keyboard-symbolic"},
-    {"mouse", "Mouse", "input-mouse-symbolic"},
-    {"sound", "Sound", "audio-volume-high-symbolic"},
-};
-
-}  // namespace
 
 MainWindow::MainWindow(XfconfStore& store)
     : store_(store),
       randr_(gdk_x11_display_get_xdisplay(gdk_display_get_default())),
       pointers_(gdk_x11_display_get_xdisplay(gdk_display_get_default())) {
   set_title("LCOS Command Center");
-  set_default_size(1100, 760);
+  set_default_size(1180, 820);
   set_icon_name("org.lunduke.LcosSettings");
   if (g_file_test("data/icons/hicolor/48x48/apps/org.lunduke.LcosSettings.png",
                   G_FILE_TEST_EXISTS)) {
@@ -53,20 +40,33 @@ MainWindow::MainWindow(XfconfStore& store)
   }
 
   auto* display = Gtk::manage(new DisplayPage(store_, randr_, *this));
+  auto* desktop = Gtk::manage(new DesktopPage(store_, randr_));
   auto* appearance = Gtk::manage(new AppearancePage(store_));
+  auto* power = Gtk::manage(new PowerPage(store_));
   auto* keyboard = Gtk::manage(new KeyboardPage(store_, *this));
   auto* mouse = Gtk::manage(new MousePage(store_, pointers_));
   auto* sound = Gtk::manage(new SoundPage(store_, pulse_));
-  pages_ = {display, appearance, keyboard, mouse, sound};
+  auto* software = Gtk::manage(new SoftwarePage());
+  pages_ = {display, desktop, appearance, power, keyboard, mouse, sound, software};
+  nav_ = {
+      {"display", "Display", "video-display-symbolic"},
+      {"desktop", "Desktop", "preferences-desktop-wallpaper-symbolic"},
+      {"appearance", "Appearance", "preferences-desktop-theme-symbolic"},
+      {"power", "Power", "preferences-system-power-symbolic"},
+      {"keyboard", "Keyboard", "input-keyboard-symbolic"},
+      {"mouse", "Mouse", "input-mouse-symbolic"},
+      {"sound", "Sound", "audio-volume-high-symbolic"},
+      {"default-software", "Default Software", "preferences-desktop-default-applications-symbolic"},
+  };
 
   auto* root = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   add(*root);
 
   auto* body = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
-  sidebar_.set_size_request(210, -1);
+  sidebar_.set_size_request(220, -1);
   sidebar_.get_style_context()->add_class("lcos-sidebar");
   sidebar_.set_selection_mode(Gtk::SELECTION_BROWSE);
-  for (int i = 0; i < 5; ++i) {
+  for (std::size_t i = 0; i < pages_.size(); ++i) {
     auto* row = Gtk::manage(new Gtk::ListBoxRow());
     auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
     line->set_margin_top(8);
@@ -74,14 +74,14 @@ MainWindow::MainWindow(XfconfStore& store)
     line->set_margin_start(12);
     line->set_margin_end(12);
     auto* image = Gtk::manage(new Gtk::Image());
-    image->set_from_icon_name(kCategories[i].icon, Gtk::ICON_SIZE_LARGE_TOOLBAR);
-    auto* label = Gtk::manage(new Gtk::Label(kCategories[i].title));
+    image->set_from_icon_name(nav_[i].icon, Gtk::ICON_SIZE_LARGE_TOOLBAR);
+    auto* label = Gtk::manage(new Gtk::Label(nav_[i].title));
     label->set_halign(Gtk::ALIGN_START);
     line->pack_start(*image, Gtk::PACK_SHRINK);
     line->pack_start(*label, Gtk::PACK_EXPAND_WIDGET);
     row->add(*line);
     sidebar_.append(*row);
-    stack_.add(*pages_[static_cast<std::size_t>(i)], kCategories[i].id);
+    stack_.add(*pages_[i], nav_[i].id);
   }
   sidebar_.signal_row_selected().connect([this](Gtk::ListBoxRow* row) {
     if (row == nullptr) {
@@ -118,9 +118,6 @@ MainWindow::MainWindow(XfconfStore& store)
   status_->set_hexpand(true);
   if (!store_.available()) {
     status_->set_text("Settings service is not available. Changes cannot be saved.");
-  } else {
-    status_->set_text(
-        "OK keeps this visit. Cancel, and closing the window, restores it.");
   }
   auto* ok = Gtk::manage(new Gtk::Button("OK"));
   apply_ = Gtk::manage(new Gtk::Button("Apply"));
@@ -134,10 +131,11 @@ MainWindow::MainWindow(XfconfStore& store)
 
   ok->signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::close_keep));
   apply_->signal_clicked().connect([this] {
-    if (pages_.empty()) {
-      return;
+    for (auto* page : pages_) {
+      if (page->has_pending()) {
+        page->commit_pending();
+      }
     }
-    pages_.front()->commit_pending();
     update_apply();
   });
   cancel->signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::close_revert));
@@ -149,6 +147,11 @@ MainWindow::MainWindow(XfconfStore& store)
   select_page(0);
   update_apply();
   show_all();
+  // The first expose can run before the stack has allocated the opening page.
+  Glib::signal_idle().connect([this]() {
+    queue_draw();
+    return false;
+  });
 }
 
 void MainWindow::select_page(int index) {
@@ -156,6 +159,7 @@ void MainWindow::select_page(int index) {
     return;
   }
   stack_.set_visible_child(*pages_[static_cast<std::size_t>(index)]);
+  pages_[static_cast<std::size_t>(index)]->queue_draw();
   heading_->set_text(pages_[static_cast<std::size_t>(index)]->title());
   summary_->set_text(pages_[static_cast<std::size_t>(index)]->summary());
   pages_[static_cast<std::size_t>(index)]->on_page_shown();
@@ -163,19 +167,25 @@ void MainWindow::select_page(int index) {
 }
 
 void MainWindow::update_apply() {
-  if (apply_ == nullptr || pages_.empty()) {
+  if (apply_ == nullptr) {
     return;
   }
-  apply_->set_sensitive(pages_.front()->has_pending());
+  bool pending = false;
+  for (auto* page : pages_) {
+    pending = pending || page->has_pending();
+  }
+  apply_->set_sensitive(pending);
 }
 
 void MainWindow::close_keep() {
   if (closing_) {
     return;
   }
-  if (!pages_.empty() && !pages_.front()->commit_pending()) {
-    update_apply();
-    return;
+  for (auto* page : pages_) {
+    if (page->has_pending() && !page->commit_pending()) {
+      update_apply();
+      return;
+    }
   }
   closing_ = true;
   hide();
@@ -186,12 +196,19 @@ void MainWindow::close_revert() {
     return;
   }
   closing_ = true;
-  auto* display = dynamic_cast<DisplayPage*>(pages_.empty() ? nullptr : pages_.front());
+  const bool displays = store_.channel_touched("displays");
+  DisplayPage* display = nullptr;
+  for (auto* page : pages_) {
+    if (display == nullptr) {
+      display = dynamic_cast<DisplayPage*>(page);
+    }
+    page->revert_page();
+  }
   store_.revert_session();
   if (display != nullptr) {
     display->restore_session_hardware();
   }
-  if (store_.channel_touched("displays")) {
+  if (displays) {
     store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
   }
   hide();
@@ -204,22 +221,41 @@ bool MainWindow::on_delete_event(GdkEventAny*) {
 
 void MainWindow::dump_pages(const std::string& directory) {
   dump_dir_ = directory;
-  dump_index_ = 0;
+  shots_.clear();
+  for (int page = 0; page < static_cast<int>(pages_.size()); ++page) {
+    const int frames = std::max(1, pages_[static_cast<std::size_t>(page)]->screenshot_count());
+    for (int frame = 0; frame < frames; ++frame) {
+      Shot shot;
+      shot.page = page;
+      shot.frame = frame;
+      shot.name = nav_[static_cast<std::size_t>(page)].id;
+      const std::string suffix =
+          pages_[static_cast<std::size_t>(page)]->screenshot_suffix(frame);
+      if (!suffix.empty()) {
+        shot.name += "-" + suffix;
+      }
+      shots_.push_back(shot);
+    }
+  }
+  shot_index_ = 0;
   dump_phase_ = 0;
-  resize(1100, 980);
-  Glib::signal_timeout().connect(sigc::mem_fun(*this, &MainWindow::dump_step), 400);
+  resize(1200, 1100);
+  Glib::signal_timeout().connect(sigc::mem_fun(*this, &MainWindow::dump_step), 500);
 }
 
 bool MainWindow::dump_step() {
-  if (dump_index_ >= static_cast<int>(pages_.size())) {
+  if (shot_index_ >= static_cast<int>(shots_.size())) {
     hide();
     return false;
   }
+  const Shot& shot = shots_[static_cast<std::size_t>(shot_index_)];
   if (dump_phase_ == 0) {
-    if (auto* row = sidebar_.get_row_at_index(dump_index_)) {
+    if (auto* row = sidebar_.get_row_at_index(shot.page)) {
       sidebar_.select_row(*row);
     }
-    select_page(dump_index_);
+    select_page(shot.page);
+    pages_[static_cast<std::size_t>(shot.page)]->prepare_screenshot(shot.frame);
+    pages_[static_cast<std::size_t>(shot.page)]->queue_draw();
     dump_phase_ = 1;
     return true;
   }
@@ -228,9 +264,12 @@ bool MainWindow::dump_step() {
     const int width = std::max(1, get_allocated_width());
     const int height = std::max(1, get_allocated_height());
     try {
-      auto pixbuf = Gdk::Pixbuf::create(window, 0, 0, width, height);
-      const std::string path =
-          dump_dir_ + "/" + std::string(kCategories[dump_index_].id) + ".png";
+      int origin_x = 0;
+      int origin_y = 0;
+      window->get_origin(origin_x, origin_y);
+      auto root = window->get_display()->get_default_screen()->get_root_window();
+      auto pixbuf = Gdk::Pixbuf::create(root, origin_x, origin_y, width, height);
+      const std::string path = dump_dir_ + "/" + shot.name + ".png";
       pixbuf->save(path, "png");
       std::cerr << "wrote " << path << "\n";
     } catch (const Glib::Error& error) {
@@ -238,8 +277,8 @@ bool MainWindow::dump_step() {
     }
   }
   dump_phase_ = 0;
-  ++dump_index_;
-  if (dump_index_ >= static_cast<int>(pages_.size())) {
+  ++shot_index_;
+  if (shot_index_ >= static_cast<int>(shots_.size())) {
     hide();
     return false;
   }

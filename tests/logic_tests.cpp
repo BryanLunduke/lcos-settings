@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "logic/backdrop.hpp"
 #include "logic/confirm.hpp"
 #include "logic/display_layout.hpp"
+#include "logic/mime_files.hpp"
 #include "logic/names.hpp"
+#include "logic/power.hpp"
 #include "logic/shortcuts.hpp"
 #include "logic/text.hpp"
 #include "logic/themes.hpp"
@@ -43,6 +46,43 @@ std::string fixture(const char* name) {
   }
   std::string data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   return data;
+}
+
+void test_backdrop_power_mime() {
+  EXPECT(lcos::backdrop_property(0, "HDMI 1", 2, "image-style") ==
+         "/backdrop/screen0/monitorHDMI1/workspace2/image-style");
+  EXPECT(lcos::is_backdrop_image("Beach.JPG"));
+  EXPECT(!lcos::is_backdrop_image("notes.txt"));
+  EXPECT(lcos::power_supply_type_is_battery("Battery\n"));
+  EXPECT(!lcos::power_supply_type_is_battery("Mains\n"));
+  EXPECT(lcos::brightness_delay_from_slider(0) == 9u);
+  EXPECT(lcos::brightness_delay_from_slider(6) == 60u);
+  EXPECT(lcos::brightness_slider_from_delay(9) == 0);
+  EXPECT(lcos::brightness_slider_from_delay(60) == 6);
+
+  const std::string rc = "# comment\nWebBrowser=firefox\n\n[Group]\nWebBrowser=hidden\n";
+  EXPECT(lcos::rc_lookup(rc, "WebBrowser") == "firefox");
+  const std::string assigned = lcos::rc_assign(rc, "MailReader", "thunderbird");
+  EXPECT(lcos::rc_lookup(assigned, "MailReader") == "thunderbird");
+  EXPECT(lcos::rc_lookup(assigned, "WebBrowser") == "firefox");
+  EXPECT(lcos::rc_lookup(lcos::rc_assign(assigned, "WebBrowser", ""), "WebBrowser").empty());
+
+  const std::string ini = "[Default Applications]\ntext/html=firefox.desktop\n";
+  EXPECT(lcos::ini_lookup(ini, "Default Applications", "text/html") == "firefox.desktop");
+  const std::string next =
+      lcos::ini_assign(ini, "Added Associations", "text/html", "firefox.desktop;");
+  EXPECT(lcos::ini_lookup(next, "Added Associations", "text/html") == "firefox.desktop;");
+  EXPECT(lcos::ini_entries(next, "Default Applications").size() == 1);
+
+  const lcos::DesktopFile helper = lcos::parse_desktop_file(
+      "[Desktop Entry]\nType=X-XFCE-Helper\nName=Mozilla Firefox\n"
+      "Name[fr]=Autre\nX-XFCE-Category=WebBrowser\n"
+      "X-XFCE-MimeType=text/html;text/xml;\n",
+      "firefox");
+  EXPECT(helper.helper);
+  EXPECT(helper.name == "Mozilla Firefox");
+  EXPECT(helper.category == "WebBrowser");
+  EXPECT(helper.mime_types.size() == 2 && helper.mime_types[0] == "text/html");
 }
 
 void test_names() {
@@ -252,6 +292,7 @@ void test_themes_and_xkb() {
 }  // namespace
 
 int main() {
+  test_backdrop_power_mime();
   test_names();
   test_layout();
   test_confirm_and_volume();

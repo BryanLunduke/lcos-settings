@@ -25,8 +25,8 @@ PropValue from_gvalue(const GValue* value) {
     out.type = PropType::Int;
     out.i = g_value_get_int(value);
   } else if (G_VALUE_HOLDS_UINT(value)) {
-    out.type = PropType::Int;
-    out.i = static_cast<int>(g_value_get_uint(value));
+    out.type = PropType::Uint;
+    out.u = g_value_get_uint(value);
   } else if (G_VALUE_HOLDS_DOUBLE(value)) {
     out.type = PropType::Double;
     out.d = g_value_get_double(value);
@@ -35,12 +35,19 @@ PropValue from_gvalue(const GValue* value) {
     const char* text = g_value_get_string(value);
     out.s = text != nullptr ? text : "";
   } else if (G_VALUE_TYPE(value) == G_TYPE_PTR_ARRAY) {
-    out.type = PropType::Ints;
     auto* array = static_cast<GPtrArray*>(g_value_get_boxed(value));
-    if (array != nullptr) {
+    if (array != nullptr && array->len > 0) {
+      auto* first = static_cast<GValue*>(g_ptr_array_index(array, 0));
+      const bool as_double = first != nullptr && G_VALUE_HOLDS_DOUBLE(first);
+      out.type = as_double ? PropType::Doubles : PropType::Ints;
       for (guint i = 0; i < array->len; ++i) {
         auto* element = static_cast<GValue*>(g_ptr_array_index(array, i));
-        if (element != nullptr && G_VALUE_HOLDS_INT(element)) {
+        if (element == nullptr) {
+          continue;
+        }
+        if (as_double && G_VALUE_HOLDS_DOUBLE(element)) {
+          out.doubles.push_back(g_value_get_double(element));
+        } else if (!as_double && G_VALUE_HOLDS_INT(element)) {
           out.ints.push_back(g_value_get_int(element));
         }
       }
@@ -78,12 +85,25 @@ bool PropValue::same_as(const PropValue& other) const {
       return b == other.b;
     case PropType::Int:
       return i == other.i;
+    case PropType::Uint:
+      return u == other.u;
     case PropType::Double:
       return std::fabs(d - other.d) < 1e-9;
     case PropType::String:
       return s == other.s;
     case PropType::Ints:
       return ints == other.ints;
+    case PropType::Doubles: {
+      if (doubles.size() != other.doubles.size()) {
+        return false;
+      }
+      for (std::size_t i = 0; i < doubles.size(); ++i) {
+        if (std::fabs(doubles[i] - other.doubles[i]) > 1e-6) {
+          return false;
+        }
+      }
+      return true;
+    }
   }
   return false;
 }
@@ -174,6 +194,21 @@ int XfconfStore::get_int(const std::string& channel, const std::string& prop,
   if (value.type == PropType::Int) {
     return value.i;
   }
+  if (value.type == PropType::Uint) {
+    return static_cast<int>(value.u);
+  }
+  return fallback;
+}
+
+unsigned XfconfStore::get_uint(const std::string& channel, const std::string& prop,
+                               unsigned fallback) const {
+  const PropValue value = get(channel, prop);
+  if (value.type == PropType::Uint) {
+    return value.u;
+  }
+  if (value.type == PropType::Int && value.i >= 0) {
+    return static_cast<unsigned>(value.i);
+  }
   return fallback;
 }
 
@@ -197,6 +232,18 @@ std::vector<int> XfconfStore::get_ints(const std::string& channel,
   }
   if (value.type == PropType::Int) {
     return {value.i};
+  }
+  return {};
+}
+
+std::vector<double> XfconfStore::get_doubles(const std::string& channel,
+                                             const std::string& prop) const {
+  const PropValue value = get(channel, prop);
+  if (value.type == PropType::Doubles) {
+    return value.doubles;
+  }
+  if (value.type == PropType::Double) {
+    return {value.d};
   }
   return {};
 }
@@ -240,6 +287,9 @@ bool XfconfStore::write(const std::string& channel, const std::string& prop,
     case PropType::Int:
       ok = xfconf_channel_set_int(xfchannel, prop.c_str(), value.i);
       break;
+    case PropType::Uint:
+      ok = xfconf_channel_set_uint(xfchannel, prop.c_str(), value.u);
+      break;
     case PropType::Double:
       ok = xfconf_channel_set_double(xfchannel, prop.c_str(), value.d);
       break;
@@ -252,6 +302,18 @@ bool XfconfStore::write(const std::string& channel, const std::string& prop,
         auto* element = g_new0(GValue, 1);
         g_value_init(element, G_TYPE_INT);
         g_value_set_int(element, number);
+        g_ptr_array_add(array, element);
+      }
+      ok = xfconf_channel_set_arrayv(xfchannel, prop.c_str(), array);
+      xfconf_array_free(array);
+      break;
+    }
+    case PropType::Doubles: {
+      GPtrArray* array = g_ptr_array_sized_new(static_cast<guint>(value.doubles.size()));
+      for (double number : value.doubles) {
+        auto* element = g_new0(GValue, 1);
+        g_value_init(element, G_TYPE_DOUBLE);
+        g_value_set_double(element, number);
         g_ptr_array_add(array, element);
       }
       ok = xfconf_channel_set_arrayv(xfchannel, prop.c_str(), array);
@@ -284,6 +346,13 @@ bool XfconfStore::set_int(const std::string& channel, const std::string& prop, i
   return write(channel, prop, stored, true);
 }
 
+bool XfconfStore::set_uint(const std::string& channel, const std::string& prop, unsigned value) {
+  PropValue stored;
+  stored.type = PropType::Uint;
+  stored.u = value;
+  return write(channel, prop, stored, true);
+}
+
 bool XfconfStore::set_double(const std::string& channel, const std::string& prop,
                              double value) {
   PropValue stored;
@@ -297,6 +366,14 @@ bool XfconfStore::set_ints(const std::string& channel, const std::string& prop,
   PropValue stored;
   stored.type = PropType::Ints;
   stored.ints = values;
+  return write(channel, prop, stored, true);
+}
+
+bool XfconfStore::set_doubles(const std::string& channel, const std::string& prop,
+                              const std::vector<double>& values) {
+  PropValue stored;
+  stored.type = PropType::Doubles;
+  stored.doubles = values;
   return write(channel, prop, stored, true);
 }
 

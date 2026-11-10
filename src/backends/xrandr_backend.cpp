@@ -40,6 +40,7 @@ std::string edid_checksum(Display* display, RROutput output, const XRROutputInfo
       std::string hex = sum != nullptr ? sum : "";
       g_free(sum);
       XFree(data);
+      data = nullptr;
       if (!hex.empty()) {
         return hex;
       }
