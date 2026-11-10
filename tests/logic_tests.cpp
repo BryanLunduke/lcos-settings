@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -308,6 +309,25 @@ void test_system_model() {
   const std::string updated = lcos::conf_with_autologin(conf, "guest");
   EXPECT(lcos::autologin_user_in_conf(updated) == "guest");
   EXPECT(updated.find("user-session=xfce") != std::string::npos);
+  EXPECT(updated.find("[Seat:*]\nautologin-user=guest\n") != std::string::npos);
+  std::string present;
+  EXPECT(lcos::autologin_key_present("autologin-user=\n", present));
+  EXPECT(present.empty());
+  EXPECT(!lcos::autologin_key_present("#autologin-user=lcos\n", present));
+  const auto roots = lcos::lightdm_config_roots();
+  EXPECT(!roots.empty());
+  EXPECT(roots.back().path == "/etc/lightdm/lightdm.conf");
+  EXPECT(!roots.back().directory);
+  bool saw_conf_d = false;
+  for (std::size_t i = 0; i + 1 < roots.size(); ++i) {
+    if (roots[i].path == "/etc/lightdm/lightdm.conf.d") {
+      saw_conf_d = true;
+    }
+    EXPECT(roots[i].path != "/etc/lightdm/lightdm.conf");
+  }
+  EXPECT(saw_conf_d);
+  EXPECT(lcos::effective_autologin({"autologin-user=\n", "autologin-user=tester\n"}) == "tester");
+  EXPECT(updated.find("user-session=xfce") != std::string::npos);
   EXPECT(lcos::autologin_user_in_conf(lcos::conf_with_autologin(conf, "")).empty());
 
   const std::string desktop =
@@ -350,6 +370,8 @@ void test_system_model() {
   EXPECT(lcos::enable_locale_in_gen(enabled, supported[0], supported, twice));
   EXPECT(twice.find("en_GB.UTF-8 UTF-8\n") != std::string::npos);
   EXPECT(twice.find("en_GB.UTF-8 UTF-8\nen_GB.UTF-8 UTF-8") == std::string::npos);
+  EXPECT(enabled.size() < 2 || enabled.substr(enabled.size() - 2) != "\n\n");
+  EXPECT(twice == enabled);
   lcos::SupportedLocale unknown{"zz_ZZ.UTF-8", "UTF-8"};
   EXPECT(!lcos::enable_locale_in_gen(enabled, unknown, supported, twice));
 
@@ -363,10 +385,16 @@ void test_helper_files_and_status() {
   EXPECT(lcos::xft_dpi_to_spin(-1) == -1);
   EXPECT(lcos::xft_dpi_to_spin(0) == -1);
   EXPECT(lcos::xft_dpi_to_spin(96) == 96);
+  EXPECT(lcos::xft_dpi_to_spin(120) == 120);
+  // An earlier build stored DPI * 1024. Reading that still shows plain DPI.
   EXPECT(lcos::xft_dpi_to_spin(96 * 1024) == 96);
   EXPECT(lcos::xft_dpi_to_spin(120 * 1024) == 120);
-  EXPECT(lcos::spin_to_xft_dpi(96) == 96 * 1024);
+  EXPECT(lcos::spin_to_xft_dpi(96) == 96);
+  EXPECT(lcos::spin_to_xft_dpi(120) == 120);
   EXPECT(lcos::spin_to_xft_dpi(-1) == -1);
+  EXPECT(std::abs(lcos::xfconf_scale_from_ui(2.0) - 0.5) < 0.001);
+  EXPECT(std::abs(lcos::ui_scale_from_xfconf(0.5) - 2.0) < 0.001);
+  EXPECT(std::abs(lcos::xfconf_scale_from_ui(1.0) - 1.0) < 0.001);
 
   const auto dismissed = lcos::interpret_helper_exit(1, 126 << 8, "");
   EXPECT(!dismissed.ok);
@@ -426,6 +454,36 @@ void test_helper_files_and_status() {
   struct stat link_st;
   EXPECT(lstat(link.c_str(), &link_st) == 0);
   EXPECT(S_ISLNK(link_st.st_mode));
+
+  // A locale symlink is followed only when the real path is allowlisted.
+  const fs::path locale_real = root / "locale.conf";
+  const fs::path locale_link = root / "default-locale";
+  {
+    std::ofstream out(locale_real);
+    out << "LANG=C\n";
+  }
+  EXPECT(symlink(locale_real.c_str(), locale_link.c_str()) == 0);
+  lcos::ReplaceRequest follow;
+  follow.follow_symlink = true;
+  follow.symlink_targets = {fs::canonical(locale_real).string()};
+  EXPECT(lcos::replace_regular_file(locale_link.string(), "LANG=en_US.UTF-8\n", follow, &error));
+  {
+    std::ifstream in(locale_real);
+    std::string text;
+    std::getline(in, text);
+    EXPECT(text == "LANG=en_US.UTF-8");
+  }
+  EXPECT(lstat(locale_link.c_str(), &link_st) == 0);
+  EXPECT(S_ISLNK(link_st.st_mode));
+  lcos::ReplaceRequest wrong = follow;
+  wrong.symlink_targets = {"/etc/passwd"};
+  EXPECT(!lcos::replace_regular_file(locale_link.string(), "LANG=bad\n", wrong, &error));
+  {
+    std::ifstream in(locale_real);
+    std::string text;
+    std::getline(in, text);
+    EXPECT(text == "LANG=en_US.UTF-8");
+  }
   fs::remove_all(root);
 }
 

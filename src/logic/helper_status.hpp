@@ -17,8 +17,8 @@ struct HelperExit {
 // the program cannot be started.
 HelperExit interpret_helper_exit(int wait_result, int status, const std::string& stderr_text);
 
-// Xft stores DPI in 1024ths. 96 DPI is 98304. Values of 500 or less are the
-// legacy plain number this program used to write.
+// xfconf /Xft/DPI is plain DPI. xfsettingsd multiplies by 1024 only for the
+// XSETTINGS wire value. Values above 500 are read as the old scaled form.
 int xft_dpi_to_spin(int stored);
 int spin_to_xft_dpi(int spin);
 

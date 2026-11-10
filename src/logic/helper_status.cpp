@@ -56,6 +56,8 @@ int xft_dpi_to_spin(int stored) {
   if (stored <= 0) {
     return -1;
   }
+  // xfconf /Xft/DPI is plain DPI. A value above 500 is the mistaken
+  // 1024-scaled number from an earlier build; show the usable DPI.
   if (stored > 500) {
     const int spin = stored / 1024;
     return spin > 0 ? spin : 1;
@@ -67,7 +69,9 @@ int spin_to_xft_dpi(int spin) {
   if (spin <= 0) {
     return -1;
   }
-  return spin * 1024;
+  // xfsettingsd multiplies this by 1024 when it publishes the XSETTINGS
+  // wire value. The xfconf property itself stays plain DPI.
+  return spin;
 }
 
 }  // namespace lcos

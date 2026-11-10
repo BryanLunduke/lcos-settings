@@ -8,7 +8,9 @@
 
 #include <crypt.h>
 #include <dirent.h>
+#include <fcntl.h>
 #include <grp.h>
+#include <poll.h>
 #include <pwd.h>
 #include <shadow.h>
 #include <sys/stat.h>
@@ -162,8 +164,19 @@ std::string slurp(const std::string& path) {
 }
 
 void write_file(const std::string& path, const std::string& text, mode_t mode) {
+  // The installer drop-in is never rewritten. A later file overrides it.
+  if (path == "/etc/lightdm/lightdm.conf.d/50-lcos.conf") {
+    fail("refusing to edit the installer LightDM file");
+  }
   lcos::ReplaceRequest request;
   request.mode_if_new = mode;
+  // LCOS links /etc/default/locale at ../locale.conf. Follow that link and
+  // write the regular file it names. The symlink itself stays in place.
+  // Any other symlink, including ~/.face, is still refused.
+  if (path == "/etc/default/locale") {
+    request.follow_symlink = true;
+    request.symlink_targets = {"/etc/locale.conf", "/etc/default/locale"};
+  }
   std::string error;
   if (!lcos::replace_regular_file(path, text, request, &error)) {
     fail(error.empty() ? "cannot write " + path : error);
@@ -181,6 +194,12 @@ void on_locale_term(int) {
 }
 
 bool run_locale_gen() {
+  // The desktop user cannot signal this process after pkexec has switched
+  // to root. Stdin stays a pipe the user owns. Any bytes on it mean cancel.
+  int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+  if (flags >= 0) {
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+  }
   const pid_t pid = fork();
   if (pid < 0) {
     return false;
@@ -190,9 +209,39 @@ bool run_locale_gen() {
     _exit(127);
   }
   g_locale_child = pid;
+  bool watch_stdin = true;
+  int term_tries = 0;
   int status = 0;
-  while (waitpid(pid, &status, 0) < 0) {
-    if (errno != EINTR) {
+  while (true) {
+    if (g_cancel_locale != 0) {
+      kill(pid, term_tries > 15 ? SIGKILL : SIGTERM);
+      ++term_tries;
+    }
+    if (watch_stdin) {
+      pollfd fd;
+      fd.fd = STDIN_FILENO;
+      fd.events = POLLIN;
+      fd.revents = 0;
+      const int ready = poll(&fd, 1, 200);
+      if (ready > 0) {
+        if ((fd.revents & POLLIN) != 0) {
+          char buffer[128];
+          const ssize_t n = read(STDIN_FILENO, buffer, sizeof(buffer));
+          if (n > 0) {
+            g_cancel_locale = 1;
+            kill(pid, SIGTERM);
+          }
+        }
+        if ((fd.revents & (POLLHUP | POLLERR | POLLNVAL)) != 0 && (fd.revents & POLLIN) == 0) {
+          watch_stdin = false;
+        }
+      }
+    }
+    const pid_t got = waitpid(pid, &status, watch_stdin ? WNOHANG : 0);
+    if (got == pid) {
+      break;
+    }
+    if (got < 0 && errno != EINTR) {
       g_locale_child = -1;
       return false;
     }
@@ -669,8 +718,11 @@ void action_autologin(const std::string& token, const std::string& user) {
   if (user != "none" && getpwnam(user.c_str()) == nullptr) {
     fail("that user does not exist");
   }
-  // A later drop-in overrides the installer file. 50-lcos.conf is never edited.
+  // 50-lcos.conf is never edited. The drop-in wins on systems where the main
+  // file does not set autologin-user. LightDM reads /etc/lightdm/lightdm.conf
+  // after every drop-in, so a key set there has to be changed in that file.
   const char* dropin = "/etc/lightdm/lightdm.conf.d/60-lcos-settings.conf";
+  const char* main_conf = "/etc/lightdm/lightdm.conf";
   remember_file(token, "lightdm.0", dropin);
   mkdir("/etc/lightdm", 0755);
   mkdir("/etc/lightdm/lightdm.conf.d", 0755);
@@ -679,6 +731,12 @@ void action_autologin(const std::string& token, const std::string& user) {
                            "# LCOS Command Center. The installer file is left unchanged.\n" +
                            "autologin-user=" + value + "\n" + "autologin-user-timeout=0\n";
   write_file(dropin, text, 0644);
+  const std::string main = slurp(main_conf);
+  std::string existing;
+  if (lcos::autologin_key_present(main, existing)) {
+    remember_file(token, "lightdm.1", main_conf);
+    write_file(main_conf, lcos::conf_with_autologin(main, value), 0644);
+  }
 }
 
 void restore_shadow_password(const std::string& saved_line) {
@@ -867,9 +925,10 @@ void revert_token(const std::string& token) {
           }
         }
       } else if (name.compare(0, 8, "lightdm.") == 0 && name.find(".missing") == std::string::npos) {
-        const char* paths[] = {"/etc/lightdm/lightdm.conf.d/60-lcos-settings.conf"};
+        const char* paths[] = {"/etc/lightdm/lightdm.conf.d/60-lcos-settings.conf",
+                               "/etc/lightdm/lightdm.conf"};
         const int index = std::atoi(name.c_str() + 8);
-        if (index >= 0 && index < 1) {
+        if (index >= 0 && index < 2) {
           if (access((dir + "/" + name + ".missing").c_str(), F_OK) == 0) {
             unlink(paths[index]);
           } else {

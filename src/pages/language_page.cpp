@@ -71,6 +71,7 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
   page->pack_start(*make_frame("Locale", form.grid()), Gtk::PACK_SHRINK);
   auto* busy_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
   spinner_ = Gtk::manage(new Gtk::Spinner());
+  spinner_->set_size_request(16, 16);
   status_ = make_label("");
   status_->set_line_wrap(true);
   cancel_locale_ = Gtk::manage(new Gtk::Button("Stop"));
@@ -161,6 +162,12 @@ void LanguagePage::set_busy(bool busy, const std::string& message) {
     parent_.queue_draw();
     window->process_updates(true);
   }
+  // Paint the status row before pkexec's dialog takes the screen.
+  if (busy) {
+    while (g_main_context_pending(nullptr)) {
+      g_main_context_iteration(nullptr, FALSE);
+    }
+  }
 }
 
 void LanguagePage::load() {
@@ -249,8 +256,15 @@ void LanguagePage::apply() {
     set_busy(true, "Generating " + pending + "… This can take a minute. Stop cancels it.");
     session_.run_async(args, "", [this](PrivResult result) {
       set_busy(false, "");
-      if (!result.ok && result.error != "Cancelled.") {
-        tell(result.error);
+      if (!result.ok) {
+        if (result.error == "Cancelled." || result.error.find("cancelled") != std::string::npos) {
+          Gtk::MessageDialog dialog(parent_, "Locale generation was cancelled.", false,
+                                    Gtk::MESSAGE_INFO, Gtk::BUTTONS_OK, true);
+          dialog.set_secondary_text("The locale list was restored.");
+          dialog.run();
+        } else {
+          tell(result.error);
+        }
       }
       load();
     });

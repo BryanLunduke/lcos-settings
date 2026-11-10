@@ -47,6 +47,7 @@ class DisplayPage : public SettingsPage {
   void redraw();
   int hit_test(double x, double y) const;
   void write_scheme(const std::string& scheme, bool track);
+  void clear_temp_scheme();
   void reload_profiles();
   void load_profile(const std::string& id);
   void save_profile();
@@ -64,8 +65,11 @@ class DisplayPage : public SettingsPage {
   std::vector<OutputConfig> confirmed_;
   bool dirty_ = false;
   bool applying_ = false;
+  bool confirming_ = false;
+  bool alive_ = true;
   bool screen_watch_ = false;
   bool hardware_changed_ = false;
+  GdkWindow* root_window_ = nullptr;
   int selected_index_ = 0;
   int freeze_ = 0;
   bool dragging_ = false;

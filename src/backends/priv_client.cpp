@@ -61,8 +61,10 @@ void append_read(int fd, std::string& out) {
 
 struct PrivSession::AsyncOp {
   GPid pid = 0;
+  int in_fd = -1;
   int out_fd = -1;
   int err_fd = -1;
+  std::string command;
   std::string err;
   guint out_src = 0;
   guint err_src = 0;
@@ -166,7 +168,12 @@ PrivResult PrivSession::start(const std::vector<std::string>& args, const std::s
       wrote += static_cast<std::size_t>(n);
     }
   }
-  ::close(standard_in);
+  // Sync helpers read stdin to EOF. The async locale helper keeps the pipe
+  // so the desktop user can write a cancel line after pkexec is root.
+  if (!async) {
+    ::close(standard_in);
+    standard_in = -1;
+  }
   set_nonblock(standard_out);
   set_nonblock(standard_err);
   busy_ = true;
@@ -231,8 +238,10 @@ PrivResult PrivSession::start(const std::vector<std::string>& args, const std::s
 
   async_ = new AsyncOp();
   async_->pid = pid;
+  async_->in_fd = standard_in;
   async_->out_fd = standard_out;
   async_->err_fd = standard_err;
+  async_->command = args[0];
   async_->done = std::move(done);
   PrivSession* self = this;
   async_->out_src = g_unix_fd_add(standard_out, GIOCondition(G_IO_IN | G_IO_HUP | G_IO_ERR),
@@ -299,14 +308,21 @@ PrivResult PrivSession::start(const std::vector<std::string>& args, const std::s
       g_source_remove(session->async_->err_src);
       session->async_->err_src = 0;
     }
+    if (session->async_->in_fd >= 0) {
+      ::close(session->async_->in_fd);
+      session->async_->in_fd = -1;
+    }
     PrivResult parsed;
-    if (session->cancel_requested_) {
+    const HelperExit helper_exit = interpret_helper_exit(0, status, session->async_->err);
+    // A cancel that never got past polkit stays an authentication result.
+    // A helper that already finished successfully is not reported as cancelled.
+    if (session->cancel_requested_ && !helper_exit.ok &&
+        helper_exit.error.find("Authentication") == std::string::npos) {
       parsed.ok = false;
       parsed.error = "Cancelled.";
     } else {
-      const HelperExit exit = interpret_helper_exit(0, status, session->async_->err);
-      parsed.ok = exit.ok;
-      parsed.error = exit.error;
+      parsed.ok = helper_exit.ok;
+      parsed.error = helper_exit.error;
     }
     session->finish_async(parsed);
   }, self);
@@ -324,10 +340,20 @@ void PrivSession::finish_async(const PrivResult& result) {
     async_->kill_src = 0;
   }
   auto done = std::move(async_->done);
+  const std::string command = async_->command;
+  if (async_->in_fd >= 0) {
+    ::close(async_->in_fd);
+    async_->in_fd = -1;
+  }
   delete async_;
   async_ = nullptr;
   busy_ = false;
   if (result.ok) {
+    dirty_ = true;
+  } else if (command == "set-locale" && result.error != "Cancelled." &&
+             result.error.find("Authentication") == std::string::npos) {
+    // locale-gen may have rewritten /etc/locale.gen before it failed.
+    // Window Cancel still has to restore that snapshot.
     dirty_ = true;
   }
   if (done) {
@@ -349,20 +375,16 @@ void PrivSession::cancel() {
     return;
   }
   cancel_requested_ = true;
-  // The helper is in this process group and catches SIGTERM so it can put
-  // locale.gen back before it exits.
-  kill(-async_->pid, SIGTERM);
-  if (async_->kill_src != 0) {
-    return;
+  // Before authentication, pkexec is still the desktop user's process and
+  // SIGTERM stops it. After authentication the helper is root and this
+  // signal is EPERM. The cancel line is delivered on the pipe the user
+  // owns; the helper kills locale-gen and restores locale.gen itself.
+  if (async_->in_fd >= 0) {
+    const char message[] = "cancel\n";
+    const ssize_t n = ::write(async_->in_fd, message, sizeof(message) - 1);
+    (void)n;
   }
-  async_->kill_src = g_timeout_add(2000, [](gpointer data) -> gboolean {
-    auto* session = static_cast<PrivSession*>(data);
-    if (session->async_ != nullptr && session->async_->pid != 0) {
-      kill(-session->async_->pid, SIGKILL);
-      session->async_->kill_src = 0;
-    }
-    return G_SOURCE_REMOVE;
-  }, this);
+  kill(-async_->pid, SIGTERM);
 }
 
 void PrivSession::wait_until_idle() {

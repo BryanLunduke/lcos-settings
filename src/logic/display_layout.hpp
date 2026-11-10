@@ -48,6 +48,12 @@ int rotated_height(const OutputConfig& output);
 int footprint_width(const OutputConfig& output);
 int footprint_height(const OutputConfig& output);
 
+// xfconf displays/<output>/Scale is the RandR scalex. UI scale 2 is stored
+// as 0.5, which is what xfsettingsd writes into the CRTC transform.
+// xfce4-display-settings 4.20 uses the same reciprocal.
+double xfconf_scale_from_ui(double ui_scale);
+double ui_scale_from_xfconf(double stored);
+
 ScreenBounds screen_bounds(const std::vector<OutputConfig>& outputs);
 void normalize_positions(std::vector<OutputConfig>& outputs);
 void arrange_extend(std::vector<OutputConfig>& outputs);

@@ -65,6 +65,18 @@ double ui_scale(const OutputConfig& output) {
   return output.scale > 0.05 ? output.scale : 1.0;
 }
 
+double xfconf_scale_from_ui(double ui) {
+  const double safe = ui > 0.05 ? ui : 1.0;
+  return 1.0 / safe;
+}
+
+double ui_scale_from_xfconf(double stored) {
+  if (!(stored > 0.0)) {
+    return 1.0;
+  }
+  return 1.0 / stored;
+}
+
 int footprint_width(const OutputConfig& output) {
   // XFCE 4.20 stores the RandR transform as 1/ui-scale. The framebuffer
   // footprint is the mode size divided by that ui scale.

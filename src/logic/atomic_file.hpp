@@ -3,6 +3,7 @@
 #define LCOS_LOGIC_ATOMIC_FILE_HPP
 
 #include <string>
+#include <vector>
 #include <sys/types.h>
 
 namespace lcos {
@@ -18,6 +19,11 @@ struct ReplaceRequest {
   bool force_owner = false;
   uid_t uid = 0;
   gid_t gid = 0;
+  // When the path itself is a symlink, write the real regular file it points
+  // at and leave the symlink in place. The resolved path must be one of
+  // symlink_targets. An empty list never follows.
+  bool follow_symlink = false;
+  std::vector<std::string> symlink_targets;
 };
 
 // Refuses when the destination name is a symlink or any other non-regular

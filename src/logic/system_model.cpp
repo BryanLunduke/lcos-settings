@@ -313,8 +313,8 @@ const char* clock_format_string(HourClock clock) {
   return clock == HourClock::Hour12 ? "%I:%M %p" : "%R";
 }
 
-std::string autologin_user_in_conf(const std::string& text) {
-  std::string found;
+bool autologin_key_present(const std::string& text, std::string& value) {
+  value.clear();
   bool seen = false;
   std::string line;
   for (std::size_t i = 0; i <= text.size(); ++i) {
@@ -329,22 +329,28 @@ std::string autologin_user_in_conf(const std::string& text) {
     const std::string trimmed = line.substr(start);
     const std::string key = "autologin-user=";
     if (!trimmed.empty() && trimmed[0] != '#' && trimmed.compare(0, key.size(), key) == 0) {
-      found = trimmed.substr(key.size());
-      const auto cut = found.find_first_of(" \t#");
+      value = trimmed.substr(key.size());
+      const auto cut = value.find_first_of(" \t#");
       if (cut != std::string::npos) {
-        found.resize(cut);
+        value.resize(cut);
       }
       seen = true;
     }
     line.clear();
   }
-  return seen ? found : std::string();
+  return seen;
+}
+
+std::string autologin_user_in_conf(const std::string& text) {
+  std::string value;
+  if (!autologin_key_present(text, value)) {
+    return {};
+  }
+  return value;
 }
 
 std::string conf_with_autologin(const std::string& text, const std::string& user) {
   std::string out;
-  bool wrote_user = user.empty();
-  bool wrote_timeout = user.empty();
   std::string line;
   auto flush = [&](const std::string& current) {
     std::size_t start = 0;
@@ -362,7 +368,8 @@ std::string conf_with_autologin(const std::string& text, const std::string& user
   };
   for (std::size_t i = 0; i <= text.size(); ++i) {
     if (i == text.size() || text[i] == '\n') {
-      if (!(i == text.size() && line.empty() && text.empty())) {
+      // A file that already ends in a newline must not gain a blank line.
+      if (!(i == text.size() && line.empty())) {
         flush(line);
       }
       line.clear();
@@ -370,21 +377,37 @@ std::string conf_with_autologin(const std::string& text, const std::string& user
       line.push_back(text[i]);
     }
   }
-  if (!user.empty()) {
-    if (out.empty() || out.find("[Seat:") == std::string::npos) {
-      if (!out.empty() && out.back() != '\n') {
-        out += '\n';
-      }
-      out += "[Seat:*]\n";
-    }
-    out += "autologin-user=" + user + "\n";
-    out += "autologin-user-timeout=0\n";
-    wrote_user = true;
-    wrote_timeout = true;
+  if (user.empty()) {
+    return out;
   }
-  (void)wrote_user;
-  (void)wrote_timeout;
+  const std::string keys = "autologin-user=" + user + "\nautologin-user-timeout=0\n";
+  const auto seat = out.find("[Seat:");
+  if (seat == std::string::npos) {
+    if (!out.empty() && out.back() != '\n') {
+      out += '\n';
+    }
+    out += "[Seat:*]\n";
+    out += keys;
+    return out;
+  }
+  const auto nl = out.find('\n', seat);
+  if (nl == std::string::npos) {
+    out += '\n';
+    out += keys;
+    return out;
+  }
+  out.insert(nl + 1, keys);
   return out;
+}
+
+std::vector<LightDmConfigRoot> lightdm_config_roots() {
+  // Same order LightDM uses. /etc/lightdm/lightdm.conf is loaded after every
+  // drop-in, so a key set there wins over 60-lcos-settings.conf.
+  return {{"/usr/share/lightdm/lightdm.conf", false},
+          {"/usr/share/lightdm/lightdm.conf.d", true},
+          {"/etc/xdg/lightdm/lightdm.conf.d", true},
+          {"/etc/lightdm/lightdm.conf.d", true},
+          {"/etc/lightdm/lightdm.conf", false}};
 }
 
 std::vector<AutostartEntry> merge_autostart(
@@ -572,7 +595,9 @@ bool enable_locale_in_gen(const std::string& locale_gen, const SupportedLocale& 
   };
   for (std::size_t i = 0; i <= locale_gen.size(); ++i) {
     if (i == locale_gen.size() || locale_gen[i] == '\n') {
-      if (!(i == locale_gen.size() && line.empty() && locale_gen.empty())) {
+      // A file that already ends in a newline must not gain a blank line.
+      const bool trailing_break = i == locale_gen.size() && line.empty();
+      if (!trailing_break) {
         consider(line);
       }
       line.clear();

@@ -10,6 +10,7 @@
 #include <X11/extensions/Xrandr.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <set>
@@ -22,6 +23,24 @@ int g_x_error = 0;
 int error_trap(Display*, XErrorEvent* event) {
   g_x_error = event->error_code;
   return 0;
+}
+
+bool scale_differs(double left, double right) {
+  return std::abs(left - right) > 0.01;
+}
+
+void set_crtc_matrix(Display* display, RRCrtc crtc, double matrix) {
+  XTransform transform;
+  std::memset(&transform, 0, sizeof(transform));
+  transform.matrix[0][0] = XDoubleToFixed(matrix);
+  transform.matrix[1][1] = XDoubleToFixed(matrix);
+  transform.matrix[2][2] = XDoubleToFixed(1.0);
+  // A filter name on the identity transform is rejected by some servers,
+  // including Xvfb. Non-identity scales need a filter or the picture is
+  // nearest-neighbour and, on some servers, the transform is ignored.
+  const char* filter = scale_differs(matrix, 1.0) ? "bilinear" : nullptr;
+  XRRSetCrtcTransform(display, crtc, &transform, filter, nullptr, 0);
+  XSync(display, False);
 }
 
 std::string edid_checksum(Display* display, RROutput output, const XRROutputInfo* info) {
@@ -372,6 +391,8 @@ std::string XrandrBackend::apply(const std::vector<OutputConfig>& desired) {
     int y = 0;
     RRMode mode = None;
     Rotation rotation = RR_Rotate_0;
+    double matrix = 1.0;
+    bool has_transform = false;
     std::vector<RROutput> outputs;
   };
   std::vector<CrtcSnap> saved;
@@ -388,6 +409,15 @@ std::string XrandrBackend::apply(const std::vector<OutputConfig>& desired) {
     snap.mode = info->mode;
     snap.rotation = info->rotation;
     snap.outputs.assign(info->outputs, info->outputs + info->noutput);
+    XRRCrtcTransformAttributes* transform = nullptr;
+    if (XRRGetCrtcTransform(display_, snap.crtc, &transform) && transform != nullptr) {
+      snap.matrix = XFixedToDouble(transform->currentTransform.matrix[0][0]);
+      if (snap.matrix < 0.05) {
+        snap.matrix = 1.0;
+      }
+      snap.has_transform = true;
+      XFree(transform);
+    }
     saved.push_back(std::move(snap));
     XRRFreeCrtcInfo(info);
   }
@@ -399,6 +429,12 @@ std::string XrandrBackend::apply(const std::vector<OutputConfig>& desired) {
     XRRSetScreenSize(display_, root, wide, high, millimeters_for_pixels(wide),
                      millimeters_for_pixels(high));
     for (const auto& snap : saved) {
+      // SetCrtcConfig BadMatches when a leftover scale transform does not
+      // agree with the mode. Put the saved transform back first.
+      if (snap.has_transform) {
+        set_crtc_matrix(display_, snap.crtc, snap.matrix);
+        g_x_error = 0;
+      }
       XRRSetCrtcConfig(display_, resources, snap.crtc, CurrentTime, snap.x, snap.y, snap.mode,
                        snap.rotation, snap.outputs.empty() ? nullptr : const_cast<RROutput*>(snap.outputs.data()),
                        static_cast<int>(snap.outputs.size()));
@@ -422,16 +458,18 @@ std::string XrandrBackend::apply(const std::vector<OutputConfig>& desired) {
     }
     const double ui_scale = assignment.config->scale > 0.05 ? assignment.config->scale : 1.0;
     const double matrix = 1.0 / ui_scale;
-    // Identity transforms are left alone. Xvfb rejects XRRSetCrtcTransform
-    // with BadValue, and a scale of 1 does not need a filter.
-    if (matrix < 0.99 || matrix > 1.01) {
-      XTransform transform;
-      std::memset(&transform, 0, sizeof(transform));
-      transform.matrix[0][0] = XDoubleToFixed(matrix);
-      transform.matrix[1][1] = XDoubleToFixed(matrix);
-      transform.matrix[2][2] = XDoubleToFixed(1.0);
-      XRRSetCrtcTransform(display_, assignment.crtc, &transform, "bilinear", nullptr, 0);
-      XSync(display_, False);
+    double current_matrix = 1.0;
+    for (const auto& snap : saved) {
+      if (snap.crtc == assignment.crtc && snap.has_transform) {
+        current_matrix = snap.matrix;
+        break;
+      }
+    }
+    // Identity is left alone when it is already identity: Xvfb rejects
+    // XRRSetCrtcTransform with BadValue. A scale of 1 after a scale of 2
+    // still has to clear the old matrix or SetCrtcConfig returns BadMatch.
+    if (scale_differs(current_matrix, matrix)) {
+      set_crtc_matrix(display_, assignment.crtc, matrix);
       if (g_x_error != 0 && failure.empty()) {
         failure = "The X server rejected scale " + std::to_string(ui_scale) + " for " +
                   assignment.config->name;

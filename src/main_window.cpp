@@ -312,7 +312,9 @@ void MainWindow::close_revert() {
 
 bool MainWindow::on_delete_event(GdkEventAny*) {
   close_revert();
-  return false;
+  // The window deletes itself from the hide handler. Returning false lets
+  // GTK destroy it as well, which frees the same gtkmm object twice.
+  return true;
 }
 
 void MainWindow::dump_pages(const std::string& directory) {

@@ -67,14 +67,18 @@ void append_conf_dir(const std::string& directory, std::vector<std::string>& tex
 }
 
 std::string autologin_now() {
-  // LightDM applies files in this order. 60-lcos-settings.conf sorts after
-  // the installer drop-in, so it wins without editing 50-lcos.conf.
+  // LightDM applies /etc/lightdm/lightdm.conf after every drop-in. Reading
+  // the main file first made the UI trust 60-lcos-settings.conf while
+  // LightDM still used the username in the main file. 50-lcos.conf is only
+  // read here; opening this page does not write it.
   std::vector<std::string> texts;
-  texts.push_back(read_text("/usr/share/lightdm/lightdm.conf"));
-  append_conf_dir("/usr/share/lightdm/lightdm.conf.d", texts);
-  append_conf_dir("/etc/xdg/lightdm/lightdm.conf.d", texts);
-  texts.push_back(read_text("/etc/lightdm/lightdm.conf"));
-  append_conf_dir("/etc/lightdm/lightdm.conf.d", texts);
+  for (const auto& root : lightdm_config_roots()) {
+    if (root.directory) {
+      append_conf_dir(root.path, texts);
+    } else {
+      texts.push_back(read_text(root.path));
+    }
+  }
   return effective_autologin(texts);
 }
 

@@ -36,8 +36,9 @@ class PrivSession {
   // Used for locale-gen, which has to stay off the GTK thread.
   void run_async(const std::vector<std::string>& args, const std::string& input,
                  std::function<void(PrivResult)> done);
-  // SIGTERM the running child so the helper can roll back, then SIGKILL if
-  // it is still alive. The async callback still runs.
+  // Ask the running helper to stop. Writes a cancel line on the helper's
+  // stdin and also signals the process group, which only works before
+  // pkexec becomes root. The async callback still runs.
   void cancel();
   // Pumps the main loop until an async child has finished.
   void wait_until_idle();

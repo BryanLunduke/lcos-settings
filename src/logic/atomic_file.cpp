@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+#include <limits.h>
+
 namespace lcos {
 namespace {
 
@@ -52,6 +54,37 @@ bool write_all(int fd, const std::string& data, std::string* error) {
 
 bool replace_regular_file(const std::string& path, const std::string& data,
                           const ReplaceRequest& request, std::string* error) {
+  if (request.follow_symlink) {
+    struct stat st;
+    if (::lstat(path.c_str(), &st) == 0 && S_ISLNK(st.st_mode)) {
+      char resolved[PATH_MAX];
+      if (::realpath(path.c_str(), resolved) == nullptr) {
+        if (error != nullptr) {
+          *error = errno_text("could not resolve " + path);
+        }
+        return false;
+      }
+      const std::string target(resolved);
+      bool allowed = false;
+      for (const auto& candidate : request.symlink_targets) {
+        if (target == candidate) {
+          allowed = true;
+          break;
+        }
+      }
+      struct stat target_st;
+      if (!allowed || ::lstat(target.c_str(), &target_st) != 0 || !S_ISREG(target_st.st_mode)) {
+        if (error != nullptr) {
+          *error = "refusing to replace a non-regular file";
+        }
+        return false;
+      }
+      ReplaceRequest plain = request;
+      plain.follow_symlink = false;
+      plain.symlink_targets.clear();
+      return replace_regular_file(target, data, plain, error);
+    }
+  }
   const auto slash = path.find_last_of('/');
   if (slash == std::string::npos || slash == 0 || slash + 1 >= path.size()) {
     if (error != nullptr) {

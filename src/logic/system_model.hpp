@@ -43,11 +43,23 @@ enum class HourClock { Unknown, Hour12, Hour24 };
 HourClock classify_clock_format(const std::string& format);
 const char* clock_format_string(HourClock clock);
 
-// Last uncommented autologin-user= value. Empty means autologin is off.
+// Last uncommented autologin-user= value. Empty means autologin is off
+// or the key is absent.
 std::string autologin_user_in_conf(const std::string& text);
+// True when an uncommented autologin-user= line exists. The value may be empty.
+bool autologin_key_present(const std::string& text, std::string& value);
 // Rewrites active autologin-user and autologin-user-timeout lines.
-// An empty user removes them. Other lines stay.
+// An empty user removes them. Other lines stay. New keys go in the first
+// [Seat: section so a later section cannot hide them.
 std::string conf_with_autologin(const std::string& text, const std::string& user);
+
+// LightDM reads these in order. The main file is last and overrides conf.d.
+// 50-lcos.conf is inside the etc drop-in directory and is never a write target.
+struct LightDmConfigRoot {
+  std::string path;
+  bool directory = false;
+};
+std::vector<LightDmConfigRoot> lightdm_config_roots();
 
 struct AutostartEntry {
   std::string id;
