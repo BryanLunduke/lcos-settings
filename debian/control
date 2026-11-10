@@ -28,6 +28,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, xfconf, desktop-file-utils, gtk-upd
 Description: LCOS Command Center, unified settings for LCOS
  LCOS Command Center is a GTK 3 settings window for the Lunduke Computer
  Operating System. It covers display, desktop background, appearance,
- power, keyboard, mouse, sound, and default software, using the same
- xfconf, RandR, UPower, and PulseAudio backing stores as the XFCE tools
- shipped with LCOS 1.0. The section list uses the Adwaita Legacy icons.
+ desktop, appearance, window manager, notifications, removable media,
+ accessibility, power, keyboard, mouse, sound, and default software, using
+ the same xfconf, RandR, UPower, and PulseAudio backing stores as the XFCE
+ 4.20 tools shipped with LCOS. The section list uses the Adwaita Legacy
+ icons.

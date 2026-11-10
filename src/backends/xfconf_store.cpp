@@ -39,7 +39,8 @@ PropValue from_gvalue(const GValue* value) {
     if (array != nullptr && array->len > 0) {
       auto* first = static_cast<GValue*>(g_ptr_array_index(array, 0));
       const bool as_double = first != nullptr && G_VALUE_HOLDS_DOUBLE(first);
-      out.type = as_double ? PropType::Doubles : PropType::Ints;
+      const bool as_string = first != nullptr && G_VALUE_HOLDS_STRING(first);
+      out.type = as_double ? PropType::Doubles : as_string ? PropType::Strings : PropType::Ints;
       for (guint i = 0; i < array->len; ++i) {
         auto* element = static_cast<GValue*>(g_ptr_array_index(array, i));
         if (element == nullptr) {
@@ -47,7 +48,10 @@ PropValue from_gvalue(const GValue* value) {
         }
         if (as_double && G_VALUE_HOLDS_DOUBLE(element)) {
           out.doubles.push_back(g_value_get_double(element));
-        } else if (!as_double && G_VALUE_HOLDS_INT(element)) {
+        } else if (as_string && G_VALUE_HOLDS_STRING(element)) {
+          const char* text = g_value_get_string(element);
+          out.strings.emplace_back(text != nullptr ? text : "");
+        } else if (!as_double && !as_string && G_VALUE_HOLDS_INT(element)) {
           out.ints.push_back(g_value_get_int(element));
         }
       }
@@ -104,6 +108,8 @@ bool PropValue::same_as(const PropValue& other) const {
       }
       return true;
     }
+    case PropType::Strings:
+      return strings == other.strings;
   }
   return false;
 }
@@ -248,6 +254,18 @@ std::vector<double> XfconfStore::get_doubles(const std::string& channel,
   return {};
 }
 
+std::vector<std::string> XfconfStore::get_strings(const std::string& channel,
+                                                  const std::string& prop) const {
+  const PropValue value = get(channel, prop);
+  if (value.type == PropType::Strings) {
+    return value.strings;
+  }
+  if (value.type == PropType::String) {
+    return {value.s};
+  }
+  return {};
+}
+
 void XfconfStore::remember(const std::string& channel, const std::string& prop) {
   if (!tracking_) {
     return;
@@ -270,6 +288,11 @@ bool XfconfStore::write(const std::string& channel, const std::string& prop,
   }
   const PropValue current = get(channel, prop);
   if (current.same_as(value)) {
+    return true;
+  }
+  // An empty string list is the same as a property xfconf has not stored.
+  if (value.type == PropType::Strings && value.strings.empty() &&
+      current.type == PropType::Absent) {
     return true;
   }
   if (track) {
@@ -314,6 +337,18 @@ bool XfconfStore::write(const std::string& channel, const std::string& prop,
         auto* element = g_new0(GValue, 1);
         g_value_init(element, G_TYPE_DOUBLE);
         g_value_set_double(element, number);
+        g_ptr_array_add(array, element);
+      }
+      ok = xfconf_channel_set_arrayv(xfchannel, prop.c_str(), array);
+      xfconf_array_free(array);
+      break;
+    }
+    case PropType::Strings: {
+      GPtrArray* array = g_ptr_array_sized_new(static_cast<guint>(value.strings.size()));
+      for (const auto& text : value.strings) {
+        auto* element = g_new0(GValue, 1);
+        g_value_init(element, G_TYPE_STRING);
+        g_value_set_string(element, text.c_str());
         g_ptr_array_add(array, element);
       }
       ok = xfconf_channel_set_arrayv(xfchannel, prop.c_str(), array);
@@ -374,6 +409,14 @@ bool XfconfStore::set_doubles(const std::string& channel, const std::string& pro
   PropValue stored;
   stored.type = PropType::Doubles;
   stored.doubles = values;
+  return write(channel, prop, stored, true);
+}
+
+bool XfconfStore::set_strings(const std::string& channel, const std::string& prop,
+                              const std::vector<std::string>& values) {
+  PropValue stored;
+  stored.type = PropType::Strings;
+  stored.strings = values;
   return write(channel, prop, stored, true);
 }
 

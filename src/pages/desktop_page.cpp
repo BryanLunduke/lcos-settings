@@ -12,6 +12,8 @@
 #include <gtkmm/image.h>
 #include <gtkmm/scrolledwindow.h>
 
+#include <cmath>
+
 #include <algorithm>
 #include <filesystem>
 
@@ -55,12 +57,12 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
     : store_(store),
       randr_(randr),
       folder_("Background folder", Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER) {
+  pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
   auto* page = make_vbox(8);
   page->set_border_width(12);
   scroll->add(*page);
-  pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
   workspace_.set_range(1, 1);
   workspace_.set_increments(1, 1);
@@ -237,6 +239,10 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
     write_bool("backdrop-cycle-random-order", cycle_random_.get_active());
   });
 
+  notebook_.append_page(*scroll, "Background");
+  build_icons();
+  build_menus();
+
   reload_monitors();
   {
     Freeze freeze(freeze_);
@@ -255,7 +261,28 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
   reload_fields();
 }
 
+void DesktopPage::prepare_screenshot(int index) {
+  if (index >= 0 && index < notebook_.get_n_pages()) {
+    notebook_.set_current_page(index);
+  }
+}
+
+std::string DesktopPage::screenshot_suffix(int index) const {
+  switch (index) {
+    case 0:
+      return "background";
+    case 1:
+      return "icons";
+    case 2:
+      return "menus";
+    default:
+      return {};
+  }
+}
+
 void DesktopPage::on_page_shown() {
+  load_icons();
+  load_menus();
   Freeze freeze(freeze_);
   const int count = std::max(1, store_.get_int("xfwm4", "/general/workspace_count", 1));
   const double current = workspace_.get_value();
@@ -409,6 +436,367 @@ void DesktopPage::scan_folder() {
     image_caption_->set_text("Showing the first 80 images in this folder.");
   }
   reload_fields();
+}
+
+void DesktopPage::bind_desktop_bool(Gtk::CheckButton& check, const char* prop, bool fallback) {
+  {
+    Freeze freeze(freeze_);
+    check.set_active(store_.get_bool(kChannel, prop, fallback));
+  }
+  check.signal_toggled().connect([this, &check, prop] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, prop, check.get_active());
+  });
+}
+
+void DesktopPage::set_icon_sensitivity() {
+  const bool icons = icon_style_.get_active_id() != "0";
+  const bool files = icon_style_.get_active_id() == "2";
+  icon_size_.set_sensitive(icons);
+  custom_font_.set_sensitive(icons);
+  font_size_.set_sensitive(icons && custom_font_.get_active());
+  custom_font_color_.set_sensitive(icons);
+  font_color_.set_sensitive(icons && custom_font_color_.get_active());
+  custom_label_bg_.set_sensitive(icons);
+  label_bg_.set_sensitive(icons && custom_label_bg_.get_active());
+  show_tooltips_.set_sensitive(icons);
+  tooltip_size_.set_sensitive(icons && show_tooltips_.get_active());
+  gravity_.set_sensitive(icons);
+  primary_display_.set_sensitive(icons);
+  single_click_.set_sensitive(icons);
+  single_underline_.set_sensitive(icons && single_click_.get_active());
+  confirm_sort_.set_sensitive(files);
+  if (file_icons_ != nullptr) {
+    file_icons_->set_sensitive(files);
+  }
+}
+
+void DesktopPage::build_icons() {
+  icon_style_.append("0", "None");
+  icon_style_.append("1", "Minimized application icons");
+  icon_style_.append("2", "File/launcher icons");
+  const char* gravities[] = {"Top left vertical",  "Top left horizontal",  "Top right vertical",
+                             "Top right horizontal", "Bottom left vertical", "Bottom left horizontal",
+                             "Bottom right vertical", "Bottom right horizontal"};
+  for (int i = 0; i < 8; ++i) {
+    gravity_.append(std::to_string(i), gravities[i]);
+  }
+  icon_size_.set_range(16, 256);
+  icon_size_.set_increments(1, 8);
+  icon_size_.set_digits(0);
+  font_size_.set_range(4, 96);
+  font_size_.set_increments(1, 4);
+  font_size_.set_digits(0);
+  tooltip_size_.set_range(16, 256);
+  tooltip_size_.set_increments(1, 8);
+  tooltip_size_.set_digits(0);
+  font_color_.set_use_alpha(true);
+  label_bg_.set_use_alpha(true);
+  custom_font_.set_label("Use a custom font size");
+  custom_font_color_.set_label("Use a custom label color");
+  custom_label_bg_.set_label("Use a custom label background");
+  show_tooltips_.set_label("Show tooltips");
+  primary_display_.set_label("Show icons only on the primary display");
+  single_click_.set_label("Single click to activate items");
+  single_underline_.set_label("Underline text on hover");
+  confirm_sort_.set_label("Confirm before arranging icons");
+  hidden_files_.set_label("Show hidden files on the desktop");
+  thumbnails_.set_label("Show thumbnails");
+  delete_option_.set_label("Show the Delete option in the file menu");
+  folders_first_.set_label("Arrange folders before files");
+  show_home_.set_label("Home");
+  show_filesystem_.set_label("Filesystem");
+  show_trash_.set_label("Trash");
+  show_removable_.set_label("Removable devices");
+  show_fixed_.set_label("Fixed disks");
+  show_device_removable_.set_label("Removable disks");
+  show_network_.set_label("Network volumes");
+  show_unknown_.set_label("Unknown removable devices");
+
+  auto* page = make_vbox(8);
+  page->set_border_width(12);
+  FormGrid style(180);
+  style.add("Icons", icon_style_);
+  style.add("Icon size", icon_size_);
+  style.add_control(custom_font_);
+  style.add("Font size", font_size_);
+  style.add_control(custom_font_color_);
+  style.add("Label color", font_color_);
+  style.add_control(custom_label_bg_);
+  style.add("Label background", label_bg_);
+  style.add_control(show_tooltips_);
+  style.add("Tooltip size", tooltip_size_);
+  style.add("Arrangement", gravity_);
+  style.add_control(primary_display_);
+  style.add_control(single_click_);
+  style.add_control(single_underline_);
+  page->pack_start(*make_frame("Appearance", style.grid()), Gtk::PACK_SHRINK);
+
+  file_icons_ = make_vbox(6);
+  file_icons_->pack_start(confirm_sort_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(hidden_files_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(thumbnails_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(delete_option_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(folders_first_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(show_home_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(show_filesystem_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(show_trash_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(show_removable_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(show_fixed_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(show_device_removable_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(show_network_, Gtk::PACK_SHRINK);
+  file_icons_->pack_start(show_unknown_, Gtk::PACK_SHRINK);
+  page->pack_start(*make_frame("File and launcher icons", *file_icons_), Gtk::PACK_SHRINK);
+  notebook_.append_page(*make_page_scroll(*page), "Icons");
+
+  icon_style_.signal_changed().connect([this] {
+    if (freeze_ > 0 || icon_style_.get_active_id().empty()) {
+      return;
+    }
+    store_.set_int(kChannel, "/desktop-icons/style", std::stoi(std::string(icon_style_.get_active_id())));
+    set_icon_sensitivity();
+  });
+  icon_size_.signal_value_changed().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_uint(kChannel, "/desktop-icons/icon-size",
+                    static_cast<unsigned>(std::max(0, icon_size_.get_value_as_int())));
+  });
+  custom_font_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/desktop-icons/use-custom-font-size", custom_font_.get_active());
+    set_icon_sensitivity();
+  });
+  font_size_.signal_value_changed().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_double(kChannel, "/desktop-icons/font-size", font_size_.get_value());
+  });
+  custom_font_color_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/desktop-icons/use-custom-label-text-color",
+                    custom_font_color_.get_active());
+    set_icon_sensitivity();
+  });
+  font_color_.signal_color_set().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    const auto color = font_color_.get_rgba();
+    store_.set_doubles(kChannel, "/desktop-icons/label-text-color",
+                       {color.get_red(), color.get_green(), color.get_blue(), color.get_alpha()});
+  });
+  custom_label_bg_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/desktop-icons/use-custom-label-background-color",
+                    custom_label_bg_.get_active());
+    set_icon_sensitivity();
+  });
+  label_bg_.signal_color_set().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    const auto color = label_bg_.get_rgba();
+    store_.set_doubles(kChannel, "/desktop-icons/label-background-color",
+                       {color.get_red(), color.get_green(), color.get_blue(), color.get_alpha()});
+  });
+  show_tooltips_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/desktop-icons/show-tooltips", show_tooltips_.get_active());
+    set_icon_sensitivity();
+  });
+  tooltip_size_.signal_value_changed().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_double(kChannel, "/desktop-icons/tooltip-size", tooltip_size_.get_value());
+  });
+  gravity_.signal_changed().connect([this] {
+    if (freeze_ > 0 || gravity_.get_active_id().empty()) {
+      return;
+    }
+    store_.set_int(kChannel, "/desktop-icons/gravity", std::stoi(std::string(gravity_.get_active_id())));
+  });
+  bind_desktop_bool(primary_display_, "/desktop-icons/primary", false);
+  single_click_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/desktop-icons/single-click", single_click_.get_active());
+    set_icon_sensitivity();
+  });
+  bind_desktop_bool(single_underline_, "/desktop-icons/single-click-underline-hover", false);
+  bind_desktop_bool(confirm_sort_, "/desktop-icons/confirm-sorting", true);
+  bind_desktop_bool(hidden_files_, "/desktop-icons/show-hidden-files", false);
+  bind_desktop_bool(thumbnails_, "/desktop-icons/show-thumbnails", true);
+  bind_desktop_bool(delete_option_, "/desktop-menu/show-delete", true);
+  bind_desktop_bool(folders_first_, "/desktop-icons/sort-folders-before-files", true);
+  bind_desktop_bool(show_home_, "/desktop-icons/file-icons/show-home", true);
+  bind_desktop_bool(show_filesystem_, "/desktop-icons/file-icons/show-filesystem", true);
+  bind_desktop_bool(show_trash_, "/desktop-icons/file-icons/show-trash", true);
+  bind_desktop_bool(show_removable_, "/desktop-icons/file-icons/show-removable", true);
+  bind_desktop_bool(show_fixed_, "/desktop-icons/file-icons/show-device-fixed", true);
+  bind_desktop_bool(show_device_removable_, "/desktop-icons/file-icons/show-device-removable", true);
+  bind_desktop_bool(show_network_, "/desktop-icons/file-icons/show-network-removable", true);
+  bind_desktop_bool(show_unknown_, "/desktop-icons/file-icons/show-unknown-removable", true);
+  load_icons();
+}
+
+void DesktopPage::load_icons() {
+  Freeze freeze(freeze_);
+  const int style = store_.get_int(kChannel, "/desktop-icons/style", 2);
+  icon_style_.set_active_id(std::to_string(style));
+  if (icon_style_.get_active_row_number() < 0) {
+    icon_style_.set_active_id("2");
+  }
+  icon_size_.set_value(store_.get_uint(kChannel, "/desktop-icons/icon-size", 48));
+  custom_font_.set_active(store_.get_bool(kChannel, "/desktop-icons/use-custom-font-size", false));
+  font_size_.set_value(store_.get_double(kChannel, "/desktop-icons/font-size", 12));
+  custom_font_color_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/use-custom-label-text-color", false));
+  font_color_.set_rgba(
+      color_from(store_.get_doubles(kChannel, "/desktop-icons/label-text-color"), 1, 1, 1));
+  custom_label_bg_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/use-custom-label-background-color", false));
+  label_bg_.set_rgba(
+      color_from(store_.get_doubles(kChannel, "/desktop-icons/label-background-color"), 0, 0, 0));
+  show_tooltips_.set_active(store_.get_bool(kChannel, "/desktop-icons/show-tooltips", true));
+  tooltip_size_.set_value(store_.get_double(kChannel, "/desktop-icons/tooltip-size", 64));
+  const int gravity = store_.get_int(kChannel, "/desktop-icons/gravity", 0);
+  gravity_.set_active_id(std::to_string(std::max(0, std::min(7, gravity))));
+  primary_display_.set_active(store_.get_bool(kChannel, "/desktop-icons/primary", false));
+  single_click_.set_active(store_.get_bool(kChannel, "/desktop-icons/single-click", false));
+  single_underline_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/single-click-underline-hover", false));
+  confirm_sort_.set_active(store_.get_bool(kChannel, "/desktop-icons/confirm-sorting", true));
+  hidden_files_.set_active(store_.get_bool(kChannel, "/desktop-icons/show-hidden-files", false));
+  thumbnails_.set_active(store_.get_bool(kChannel, "/desktop-icons/show-thumbnails", true));
+  delete_option_.set_active(store_.get_bool(kChannel, "/desktop-menu/show-delete", true));
+  folders_first_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/sort-folders-before-files", true));
+  show_home_.set_active(store_.get_bool(kChannel, "/desktop-icons/file-icons/show-home", true));
+  show_filesystem_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/file-icons/show-filesystem", true));
+  show_trash_.set_active(store_.get_bool(kChannel, "/desktop-icons/file-icons/show-trash", true));
+  show_removable_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/file-icons/show-removable", true));
+  show_fixed_.set_active(store_.get_bool(kChannel, "/desktop-icons/file-icons/show-device-fixed", true));
+  show_device_removable_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/file-icons/show-device-removable", true));
+  show_network_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/file-icons/show-network-removable", true));
+  show_unknown_.set_active(
+      store_.get_bool(kChannel, "/desktop-icons/file-icons/show-unknown-removable", true));
+  set_icon_sensitivity();
+}
+
+void DesktopPage::build_menus() {
+  menu_show_.set_label("Show desktop menu on right click");
+  menu_icons_.set_label("Show application icons in the menu");
+  winlist_show_.set_label("Show window list menu on middle click");
+  winlist_icons_.set_label("Show application icons");
+  winlist_all_.set_label("Show windows from all workspaces");
+  winlist_sticky_.set_label("Show sticky windows only in the active workspace");
+  winlist_urgent_.set_label("Show an urgent windows section");
+  winlist_names_.set_label("Show workspace names");
+  winlist_submenus_.set_label("Show windows in workspace submenus");
+  winlist_add_.set_label("Show add and remove workspace options");
+
+  auto* page = make_vbox(8);
+  page->set_border_width(12);
+  page->pack_start(menu_show_, Gtk::PACK_SHRINK);
+  menu_options_ = make_vbox(6);
+  menu_options_->pack_start(menu_icons_, Gtk::PACK_SHRINK);
+  menu_options_->set_margin_start(18);
+  page->pack_start(*menu_options_, Gtk::PACK_SHRINK);
+  page->pack_start(winlist_show_, Gtk::PACK_SHRINK);
+  winlist_options_ = make_vbox(6);
+  winlist_options_->set_margin_start(18);
+  winlist_options_->pack_start(winlist_icons_, Gtk::PACK_SHRINK);
+  winlist_options_->pack_start(winlist_all_, Gtk::PACK_SHRINK);
+  winlist_options_->pack_start(winlist_sticky_, Gtk::PACK_SHRINK);
+  winlist_options_->pack_start(winlist_urgent_, Gtk::PACK_SHRINK);
+  winlist_options_->pack_start(winlist_names_, Gtk::PACK_SHRINK);
+  winlist_name_options_ = make_vbox(6);
+  winlist_name_options_->set_margin_start(18);
+  winlist_name_options_->pack_start(winlist_submenus_, Gtk::PACK_SHRINK);
+  winlist_options_->pack_start(*winlist_name_options_, Gtk::PACK_SHRINK);
+  winlist_options_->pack_start(winlist_add_, Gtk::PACK_SHRINK);
+  page->pack_start(*winlist_options_, Gtk::PACK_SHRINK);
+  notebook_.append_page(*make_page_scroll(*page), "Menus");
+
+  menu_show_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/desktop-menu/show", menu_show_.get_active());
+    if (menu_options_ != nullptr) {
+      menu_options_->set_sensitive(menu_show_.get_active());
+    }
+  });
+  bind_desktop_bool(menu_icons_, "/desktop-menu/show-icons", true);
+  winlist_show_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/windowlist-menu/show", winlist_show_.get_active());
+    if (winlist_options_ != nullptr) {
+      winlist_options_->set_sensitive(winlist_show_.get_active());
+    }
+  });
+  bind_desktop_bool(winlist_icons_, "/windowlist-menu/show-icons", true);
+  bind_desktop_bool(winlist_all_, "/windowlist-menu/show-all-workspaces", false);
+  bind_desktop_bool(winlist_sticky_, "/windowlist-menu/show-sticky-once", false);
+  bind_desktop_bool(winlist_urgent_, "/windowlist-menu/show-urgent-windows-section", true);
+  winlist_names_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/windowlist-menu/show-workspace-names", winlist_names_.get_active());
+    if (winlist_name_options_ != nullptr) {
+      winlist_name_options_->set_sensitive(winlist_names_.get_active());
+    }
+  });
+  bind_desktop_bool(winlist_submenus_, "/windowlist-menu/show-submenus", false);
+  bind_desktop_bool(winlist_add_, "/windowlist-menu/show-add-remove-workspaces", false);
+  load_menus();
+}
+
+void DesktopPage::load_menus() {
+  Freeze freeze(freeze_);
+  menu_show_.set_active(store_.get_bool(kChannel, "/desktop-menu/show", true));
+  menu_icons_.set_active(store_.get_bool(kChannel, "/desktop-menu/show-icons", true));
+  winlist_show_.set_active(store_.get_bool(kChannel, "/windowlist-menu/show", true));
+  winlist_icons_.set_active(store_.get_bool(kChannel, "/windowlist-menu/show-icons", true));
+  winlist_all_.set_active(store_.get_bool(kChannel, "/windowlist-menu/show-all-workspaces", false));
+  winlist_sticky_.set_active(store_.get_bool(kChannel, "/windowlist-menu/show-sticky-once", false));
+  winlist_urgent_.set_active(
+      store_.get_bool(kChannel, "/windowlist-menu/show-urgent-windows-section", true));
+  winlist_names_.set_active(store_.get_bool(kChannel, "/windowlist-menu/show-workspace-names", true));
+  winlist_submenus_.set_active(store_.get_bool(kChannel, "/windowlist-menu/show-submenus", false));
+  winlist_add_.set_active(
+      store_.get_bool(kChannel, "/windowlist-menu/show-add-remove-workspaces", false));
+  if (menu_options_ != nullptr) {
+    menu_options_->set_sensitive(menu_show_.get_active());
+  }
+  if (winlist_options_ != nullptr) {
+    winlist_options_->set_sensitive(winlist_show_.get_active());
+  }
+  if (winlist_name_options_ != nullptr) {
+    winlist_name_options_->set_sensitive(winlist_names_.get_active());
+  }
 }
 
 }  // namespace lcos

@@ -95,6 +95,11 @@ void test_xfconf(lcos::XfconfStore& store) {
       "xfce4-desktop", "/backdrop/screen0/monitorXvfb/workspace0/rgba1");
   EXPECT(doubles.size() == 4);
   EXPECT(doubles.size() == 4 && doubles[0] > 0.09 && doubles[0] < 0.11 && doubles[3] > 0.9);
+  EXPECT(store.set_strings("xfce4-notifyd", "/applications/muted_applications",
+                           {"lcos-settings", "thunar"}));
+  const auto muted = store.get_strings("xfce4-notifyd", "/applications/muted_applications");
+  EXPECT(muted.size() == 2 && muted[0] == "lcos-settings" && muted[1] == "thunar");
+  EXPECT(store.set_strings("xfce4-notifyd", "/applications/muted_applications", muted));
   EXPECT(store.set_ints("pointers", "/TestPad/Properties/libinput_Scroll_Method_Enabled",
                         {1, 0, 0}));
   const auto ints =

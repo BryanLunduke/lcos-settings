@@ -8,13 +8,17 @@ for the individual XFCE settings dialogs.
 - **License:** GPL-3.0-or-later
 - **Stack:** C++17, Meson, gtkmm-3.0
 
-Categories in this pass: Display, Appearance, Keyboard, Mouse (including
-touchpad), and Sound. The window writes the same xfconf channels
-`xfsettingsd` and `xfwm4` already watch (`xsettings`, `xfwm4`, `keyboards`,
-`keyboard-layout`, `xfce4-keyboard-shortcuts`, `pointers`, `displays`), so a
-change made here shows up in the existing XFCE tools and is still there after
-logout. Sound levels go through PulseAudio, which keeps them in its own
-database, the same way `pavucontrol` does.
+Categories: Display, Desktop (background, icons, and menus), Appearance,
+Window Manager, Window Manager Tweaks, Keyboard, Mouse (including touchpad),
+Accessibility, Power, Notifications, Removable Drives and Media, Sound, and
+Default Software. The window writes the same xfconf channels the XFCE 4.20
+tools already watch (`displays`, `xfce4-desktop`, `xsettings`, `xfwm4`,
+`keyboards`, `keyboard-layout`, `xfce4-keyboard-shortcuts`, `pointers`,
+`accessibility`, `xfce4-session`, `xfce4-power-manager`, `xfce4-notifyd`,
+`thunar-volman`), so a change made here shows up in those tools and is still
+there after logout. Sound levels go through PulseAudio, which keeps them in
+its own database, the same way `pavucontrol` does. There is no Workspaces
+page and no workspace-count control.
 
 ## Build
 

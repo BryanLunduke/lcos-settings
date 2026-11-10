@@ -1,7 +1,8 @@
 lcos-settings (1.1~dev) unstable; urgency=medium
 
   * First development snapshot of LCOS Command Center.
-  * Display, appearance, keyboard, mouse, and sound categories.
-  * Settings are stored in the xfconf channels used by xfce4-settings 4.20.
+  * Display, desktop, appearance, window manager, notifications, removable
+    media, accessibility, power, keyboard, mouse, sound, and default software.
+  * Settings are stored in the xfconf channels used by the XFCE 4.20 tools.
 
  -- LCOS <lcos@lunduke.com>  Mon, 09 Nov 2026 20:40:00 +0000

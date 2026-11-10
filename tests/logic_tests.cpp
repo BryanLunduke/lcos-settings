@@ -10,6 +10,7 @@
 #include "logic/text.hpp"
 #include "logic/themes.hpp"
 #include "logic/volume.hpp"
+#include "logic/wm_shortcuts.hpp"
 #include "logic/xkb_rules.hpp"
 
 #include <glib.h>
@@ -216,6 +217,27 @@ void test_shortcuts() {
   };
   const auto rows = lcos::merge_shortcuts(values);
   EXPECT(rows.size() == 3);
+  const auto wm = lcos::merge_wm_shortcuts(values);
+  const lcos::WmBinding* close = nullptr;
+  for (const auto& row : wm) {
+    if (row.feature == "close_window_key") {
+      close = &row;
+    }
+  }
+  EXPECT(close != nullptr && close->accel == "<Alt>F4" && !close->custom);
+  EXPECT(lcos::wm_feature_label("tile_left_key") != nullptr);
+  const auto moved = lcos::plan_wm_shortcut(values, "close_window_key", "<Primary>q");
+  EXPECT(moved.size() == 2);
+  EXPECT(moved[0].action == lcos::WmShortcutAction::Set && moved[0].value.empty());
+  EXPECT(moved[0].property == "/xfwm4/custom/<Alt>F4");
+  EXPECT(moved[1].action == lcos::WmShortcutAction::Set && moved[1].value == "close_window_key");
+  EXPECT(moved[1].property == "/xfwm4/custom/<Primary>q");
+  EXPECT(lcos::plan_wm_shortcut(values, "close_window_key", "<Alt>F4").empty());
+  std::map<std::string, std::string> custom_only{
+      {"/xfwm4/custom/<Primary>w", "close_window_key"},
+  };
+  const auto cleared = lcos::plan_wm_shortcut(custom_only, "close_window_key", "");
+  EXPECT(cleared.size() == 1 && cleared[0].action == lcos::WmShortcutAction::Reset);
   const lcos::Shortcut* f2 = nullptr;
   const lcos::Shortcut* term = nullptr;
   const lcos::Shortcut* files = nullptr;

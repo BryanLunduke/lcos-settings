@@ -7,9 +7,11 @@
   <summary>Unified settings for the Lunduke Computer Operating System</summary>
   <description>
     <p>
-      LCOS Command Center is the first pass of a single settings window for
-      LCOS. It covers display, appearance, keyboard, mouse, and sound, and
-      writes the same xfconf channels the XFCE settings tools use.
+      LCOS Command Center is a single settings window for LCOS. It covers
+      display, desktop, appearance, window manager, accessibility,
+      notifications, removable media, power, keyboard, mouse, sound, and
+      default software, and writes the same xfconf channels the XFCE 4.20
+      settings tools use.
     </p>
   </description>
   <url type="homepage">https://lunduke.com</url>

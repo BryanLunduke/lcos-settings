@@ -9,7 +9,7 @@
 
 namespace lcos {
 
-enum class PropType { Absent, Bool, Int, Uint, Double, String, Ints, Doubles };
+enum class PropType { Absent, Bool, Int, Uint, Double, String, Ints, Doubles, Strings };
 
 struct PropValue {
   PropType type = PropType::Absent;
@@ -20,6 +20,7 @@ struct PropValue {
   std::string s;
   std::vector<int> ints;
   std::vector<double> doubles;
+  std::vector<std::string> strings;
 
   bool same_as(const PropValue& other) const;
 };
@@ -54,6 +55,8 @@ class XfconfStore {
   std::vector<int> get_ints(const std::string& channel, const std::string& prop) const;
   std::vector<double> get_doubles(const std::string& channel,
                                   const std::string& prop) const;
+  std::vector<std::string> get_strings(const std::string& channel,
+                                       const std::string& prop) const;
 
   bool set_string(const std::string& channel, const std::string& prop,
                   const std::string& value);
@@ -65,6 +68,8 @@ class XfconfStore {
                 const std::vector<int>& values);
   bool set_doubles(const std::string& channel, const std::string& prop,
                    const std::vector<double>& values);
+  bool set_strings(const std::string& channel, const std::string& prop,
+                   const std::vector<std::string>& values);
   bool reset(const std::string& channel, const std::string& prop, bool recursive);
 
   // Writes that should survive Cancel (the display preview profile, and the

@@ -2,14 +2,19 @@
 
 #include "main_window.hpp"
 
+#include "pages/accessibility_page.hpp"
 #include "pages/appearance_page.hpp"
 #include "pages/desktop_page.hpp"
 #include "pages/display_page.hpp"
 #include "pages/keyboard_page.hpp"
+#include "pages/media_page.hpp"
 #include "pages/mouse_page.hpp"
+#include "pages/notifications_page.hpp"
 #include "pages/power_page.hpp"
 #include "pages/software_page.hpp"
 #include "pages/sound_page.hpp"
+#include "pages/window_page.hpp"
+#include "pages/window_tweaks_page.hpp"
 
 #include <gdk/gdkx.h>
 #include <gdkmm/general.h>
@@ -47,19 +52,30 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* display = Gtk::manage(new DisplayPage(store_, randr_, *this));
   auto* desktop = Gtk::manage(new DesktopPage(store_, randr_));
   auto* appearance = Gtk::manage(new AppearancePage(store_));
-  auto* power = Gtk::manage(new PowerPage(store_, randr_));
+  auto* windows = Gtk::manage(new WindowPage(store_, *this));
+  auto* tweaks = Gtk::manage(new WindowTweaksPage(store_));
   auto* keyboard = Gtk::manage(new KeyboardPage(store_, *this));
   auto* mouse = Gtk::manage(new MousePage(store_, pointers_));
+  auto* accessibility = Gtk::manage(new AccessibilityPage(store_));
+  auto* power = Gtk::manage(new PowerPage(store_, randr_));
+  auto* notifications = Gtk::manage(new NotificationsPage(store_, *this));
+  auto* media = Gtk::manage(new MediaPage(store_));
   auto* sound = Gtk::manage(new SoundPage(store_, pulse_));
   auto* software = Gtk::manage(new SoftwarePage());
-  pages_ = {display, desktop, appearance, power, keyboard, mouse, sound, software};
+  pages_ = {display, desktop, appearance, windows, tweaks, keyboard, mouse, accessibility,
+            power, notifications, media, sound, software};
   nav_ = {
       {"display", "Display", "preferences-desktop-display"},
       {"desktop", "Desktop", "preferences-desktop-wallpaper"},
       {"appearance", "Appearance", "preferences-desktop-theme"},
-      {"power", "Power", "battery"},
+      {"window-manager", "Window Manager", "preferences-system-windows"},
+      {"window-tweaks", "Window Manager Tweaks", "preferences-system"},
       {"keyboard", "Keyboard", "preferences-desktop-keyboard"},
       {"mouse", "Mouse", "preferences-desktop-peripherals"},
+      {"accessibility", "Accessibility", "preferences-desktop-accessibility"},
+      {"power", "Power", "battery"},
+      {"notifications", "Notifications", "preferences-system-notifications"},
+      {"removable-media", "Removable Drives and Media", "drive-removable-media"},
       {"sound", "Sound", "audio-volume-high"},
       {"default-software", "Default Software", "applications-other"},
   };
@@ -68,7 +84,7 @@ MainWindow::MainWindow(XfconfStore& store)
   add(*root);
 
   auto* body = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
-  sidebar_.set_size_request(220, -1);
+  sidebar_.set_size_request(248, -1);
   sidebar_.get_style_context()->add_class("lcos-sidebar");
   sidebar_.set_selection_mode(Gtk::SELECTION_BROWSE);
   for (std::size_t i = 0; i < pages_.size(); ++i) {
@@ -86,6 +102,9 @@ MainWindow::MainWindow(XfconfStore& store)
     auto* label = Gtk::manage(new Gtk::Label(nav_[i].title));
     label->set_halign(Gtk::ALIGN_START);
     label->set_valign(Gtk::ALIGN_CENTER);
+    label->set_line_wrap(true);
+    label->set_max_width_chars(22);
+    label->set_xalign(0);
     line->set_valign(Gtk::ALIGN_CENTER);
     line->pack_start(*image, Gtk::PACK_SHRINK);
     line->pack_start(*label, Gtk::PACK_EXPAND_WIDGET);
