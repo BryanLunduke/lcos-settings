@@ -27,7 +27,7 @@ class WindowPage : public SettingsPage {
 
   Glib::ustring title() const override { return "Window Manager"; }
   Glib::ustring summary() const override {
-    return "Focus, window-manager shortcuts, and advanced behavior. Changes apply immediately.";
+    return "Focus, window-manager shortcuts, and advanced behavior. OK and Apply keep changes. Cancel puts them back.";
   }
   void on_page_shown() override;
   int screenshot_count() const override { return 3; }

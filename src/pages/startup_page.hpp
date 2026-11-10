@@ -79,7 +79,6 @@ class StartupPage : public SettingsPage {
   Gtk::CheckButton prompt_;
   Gtk::CheckButton save_;
   Gtk::CheckButton chooser_;
-  Gtk::CheckButton lock_;
   Gtk::CheckButton gnome_;
   Gtk::CheckButton kde_;
   Gtk::CheckButton tcp_;

@@ -15,6 +15,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
@@ -365,13 +366,88 @@ void action_ntp(const std::string& token, const std::string& state) {
   }
 }
 
+std::string capture_command(const std::vector<std::string>& args) {
+  if (args.empty()) {
+    return {};
+  }
+  int pipes[2] = {-1, -1};
+  if (pipe(pipes) != 0) {
+    return {};
+  }
+  const pid_t pid = fork();
+  if (pid < 0) {
+    close(pipes[0]);
+    close(pipes[1]);
+    return {};
+  }
+  if (pid == 0) {
+    dup2(pipes[1], STDOUT_FILENO);
+    close(pipes[0]);
+    close(pipes[1]);
+    std::vector<char*> argv;
+    for (const auto& arg : args) {
+      argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+    argv.push_back(nullptr);
+    execvp(argv[0], argv.data());
+    _exit(127);
+  }
+  close(pipes[1]);
+  std::string output;
+  char buffer[512];
+  while (true) {
+    const ssize_t n = read(pipes[0], buffer, sizeof(buffer));
+    if (n <= 0) {
+      break;
+    }
+    output.append(buffer, buffer + n);
+  }
+  close(pipes[0]);
+  int status = 0;
+  waitpid(pid, &status, 0);
+  return output;
+}
+
+bool builtin_locale(const std::string& name) {
+  return name == "C" || name == "C.UTF-8" || name == "POSIX";
+}
+
 void action_locale(const std::string& token, const std::vector<std::string>& locales) {
   if (locales.size() != 4) {
     fail("invalid locale request");
   }
+  const auto supported = lcos::parse_supported_locales(slurp("/usr/share/i18n/SUPPORTED"));
+  if (supported.empty()) {
+    fail("the supported locale list is not available");
+  }
+  const auto generated = lcos::generated_locale_names(capture_command({"locale", "-a"}));
+  std::string locale_gen = slurp("/etc/locale.gen");
+  bool need_generate = false;
   for (const auto& name : locales) {
+    if (name.empty() || builtin_locale(name)) {
+      continue;
+    }
     if (!lcos::valid_locale_name(name)) {
       fail("invalid locale");
+    }
+    const lcos::SupportedLocale* locale = lcos::find_supported_locale(supported, name);
+    if (locale == nullptr) {
+      fail("that locale is not in the supported list");
+    }
+    if (std::find(generated.begin(), generated.end(), name) != generated.end()) {
+      continue;
+    }
+    std::string updated;
+    if (!lcos::enable_locale_in_gen(locale_gen, *locale, supported, updated)) {
+      fail("that locale is not in the supported list");
+    }
+    locale_gen = std::move(updated);
+    need_generate = true;
+  }
+  if (need_generate) {
+    write_file("/etc/locale.gen", locale_gen, 0644);
+    if (!run_command({"/usr/sbin/locale-gen"}, "")) {
+      fail("could not generate the locale");
     }
   }
   remember_file(token, "locale", "/etc/default/locale");
@@ -528,11 +604,6 @@ void action_avatar(const std::string& token, const std::string& name, const std:
   chown(dest.c_str(), entry->pw_uid, entry->pw_gid);
 }
 
-void rewrite_autologin(const std::string& path, const std::string& user) {
-  const std::string text = slurp(path);
-  write_file(path, lcos::conf_with_autologin(text, user), 0644);
-}
-
 void action_autologin(const std::string& token, const std::string& user) {
   if (!(user == "none" || lcos::valid_username(user))) {
     fail("invalid automatic login");
@@ -540,25 +611,16 @@ void action_autologin(const std::string& token, const std::string& user) {
   if (user != "none" && getpwnam(user.c_str()) == nullptr) {
     fail("that user does not exist");
   }
-  const char* paths[] = {"/etc/lightdm/lightdm.conf.d/50-lcos.conf", "/etc/lightdm/lightdm.conf"};
-  int index = 0;
-  for (const char* path : paths) {
-    if (access(path, F_OK) == 0) {
-      remember_file(token, "lightdm." + std::to_string(index), path);
-    }
-    ++index;
-  }
+  // A later drop-in overrides the installer file. 50-lcos.conf is never edited.
+  const char* dropin = "/etc/lightdm/lightdm.conf.d/60-lcos-settings.conf";
+  remember_file(token, "lightdm.0", dropin);
+  mkdir("/etc/lightdm", 0755);
+  mkdir("/etc/lightdm/lightdm.conf.d", 0755);
   const std::string value = user == "none" ? std::string() : user;
-  const char* primary = "/etc/lightdm/lightdm.conf.d/50-lcos.conf";
-  if (access(primary, F_OK) != 0) {
-    mkdir("/etc/lightdm", 0755);
-    mkdir("/etc/lightdm/lightdm.conf.d", 0755);
-    write_file(primary, "", 0644);
-  }
-  rewrite_autologin(primary, value);
-  if (user == "none" && access("/etc/lightdm/lightdm.conf", F_OK) == 0) {
-    rewrite_autologin("/etc/lightdm/lightdm.conf", "");
-  }
+  const std::string text = std::string("[Seat:*]\n") +
+                           "# LCOS Command Center. The installer file is left unchanged.\n" +
+                           "autologin-user=" + value + "\n" + "autologin-user-timeout=0\n";
+  write_file(dropin, text, 0644);
 }
 
 void restore_shadow_password(const std::string& saved_line) {
@@ -711,9 +773,9 @@ void revert_token(const std::string& token) {
           }
         }
       } else if (name.compare(0, 8, "lightdm.") == 0 && name.find(".missing") == std::string::npos) {
-        const char* paths[] = {"/etc/lightdm/lightdm.conf.d/50-lcos.conf", "/etc/lightdm/lightdm.conf"};
+        const char* paths[] = {"/etc/lightdm/lightdm.conf.d/60-lcos-settings.conf"};
         const int index = std::atoi(name.c_str() + 8);
-        if (index >= 0 && index < 2) {
+        if (index >= 0 && index < 1) {
           if (access((dir + "/" + name + ".missing").c_str(), F_OK) == 0) {
             unlink(paths[index]);
           } else {

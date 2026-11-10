@@ -73,6 +73,25 @@ std::string autostart_desktop_text(const std::string& name, const std::string& c
 // Generated locale names from `locale -a` output, normalized and sorted.
 std::vector<std::string> generated_locale_names(const std::string& locale_a_output);
 
+struct SupportedLocale {
+  std::string name;
+  std::string charset;
+};
+
+// Rows from /usr/share/i18n/SUPPORTED. Comments and blank lines are skipped.
+std::vector<SupportedLocale> parse_supported_locales(const std::string& text);
+const SupportedLocale* find_supported_locale(const std::vector<SupportedLocale>& locales,
+                                            const std::string& name);
+
+// Uncomments or appends the supported line in an /etc/locale.gen document.
+// Returns false when `locale` is not one of `supported`.
+bool enable_locale_in_gen(const std::string& locale_gen, const SupportedLocale& locale,
+                          const std::vector<SupportedLocale>& supported, std::string& updated);
+
+// Last uncommented autologin-user= across LightDM files, earlier files first.
+// A later empty value turns automatic login off.
+std::string effective_autologin(const std::vector<std::string>& confs_in_order);
+
 }  // namespace lcos
 
 #endif

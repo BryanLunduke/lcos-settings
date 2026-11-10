@@ -407,6 +407,154 @@ std::string autostart_desktop_text(const std::string& name, const std::string& c
   return text;
 }
 
+std::vector<SupportedLocale> parse_supported_locales(const std::string& text) {
+  std::vector<SupportedLocale> locales;
+  std::string line;
+  for (std::size_t i = 0; i <= text.size(); ++i) {
+    if (i != text.size() && text[i] != '\n') {
+      line.push_back(text[i]);
+      continue;
+    }
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    std::size_t start = 0;
+    while (start < line.size() && (line[start] == ' ' || line[start] == '\t')) {
+      ++start;
+    }
+    if (start < line.size() && line[start] != '#') {
+      const auto gap = line.find_first_of(" \t", start);
+      if (gap != std::string::npos) {
+        SupportedLocale locale;
+        locale.name = line.substr(start, gap - start);
+        std::size_t charset = gap;
+        while (charset < line.size() && (line[charset] == ' ' || line[charset] == '\t')) {
+          ++charset;
+        }
+        const auto end = line.find_first_of(" \t#", charset);
+        locale.charset = line.substr(charset, end == std::string::npos ? std::string::npos : end - charset);
+        if (valid_locale_name(locale.name) && !locale.charset.empty()) {
+          locales.push_back(std::move(locale));
+        }
+      }
+    }
+    line.clear();
+  }
+  return locales;
+}
+
+const SupportedLocale* find_supported_locale(const std::vector<SupportedLocale>& locales,
+                                            const std::string& name) {
+  for (const auto& locale : locales) {
+    if (locale.name == name) {
+      return &locale;
+    }
+  }
+  return nullptr;
+}
+
+bool enable_locale_in_gen(const std::string& locale_gen, const SupportedLocale& locale,
+                          const std::vector<SupportedLocale>& supported, std::string& updated) {
+  if (find_supported_locale(supported, locale.name) == nullptr || locale.charset.empty()) {
+    return false;
+  }
+  const std::string wanted = locale.name + " " + locale.charset;
+  std::string out;
+  bool enabled = false;
+  bool uncommented = false;
+  std::string line;
+  auto consider = [&](const std::string& current) {
+    std::size_t start = 0;
+    while (start < current.size() && (current[start] == ' ' || current[start] == '\t')) {
+      ++start;
+    }
+    std::string body = current.substr(start);
+    bool comment = false;
+    if (!body.empty() && body[0] == '#') {
+      comment = true;
+      body.erase(0, 1);
+      std::size_t body_start = 0;
+      while (body_start < body.size() && (body[body_start] == ' ' || body[body_start] == '\t')) {
+        ++body_start;
+      }
+      body = body.substr(body_start);
+    }
+    const auto end = body.find_first_of(" \t#");
+    const std::string first = body.substr(0, end);
+    std::string charset;
+    if (end != std::string::npos) {
+      std::size_t charset_at = end;
+      while (charset_at < body.size() && (body[charset_at] == ' ' || body[charset_at] == '\t')) {
+        ++charset_at;
+      }
+      const auto charset_end = body.find_first_of(" \t#", charset_at);
+      charset = body.substr(charset_at, charset_end == std::string::npos ? std::string::npos
+                                                                        : charset_end - charset_at);
+    }
+    if (first == locale.name && charset == locale.charset) {
+      if (!comment) {
+        enabled = true;
+        out += current + "\n";
+      } else if (!uncommented && !enabled) {
+        out += wanted + "\n";
+        uncommented = true;
+      } else {
+        out += current + "\n";
+      }
+      return;
+    }
+    out += current + "\n";
+  };
+  for (std::size_t i = 0; i <= locale_gen.size(); ++i) {
+    if (i == locale_gen.size() || locale_gen[i] == '\n') {
+      if (!(i == locale_gen.size() && line.empty() && locale_gen.empty())) {
+        consider(line);
+      }
+      line.clear();
+    } else {
+      line.push_back(locale_gen[i]);
+    }
+  }
+  if (!enabled && !uncommented) {
+    if (!out.empty() && out.back() != '\n') {
+      out += '\n';
+    }
+    out += wanted + "\n";
+  }
+  updated = out;
+  return true;
+}
+
+std::string effective_autologin(const std::vector<std::string>& confs_in_order) {
+  bool seen = false;
+  std::string value;
+  for (const auto& text : confs_in_order) {
+    std::string line;
+    for (std::size_t i = 0; i <= text.size(); ++i) {
+      if (i != text.size() && text[i] != '\n') {
+        line.push_back(text[i]);
+        continue;
+      }
+      std::size_t start = 0;
+      while (start < line.size() && (line[start] == ' ' || line[start] == '\t')) {
+        ++start;
+      }
+      const std::string trimmed = line.substr(start);
+      const std::string key = "autologin-user=";
+      if (!trimmed.empty() && trimmed[0] != '#' && trimmed.compare(0, key.size(), key) == 0) {
+        value = trimmed.substr(key.size());
+        const auto cut = value.find_first_of(" \t#");
+        if (cut != std::string::npos) {
+          value.resize(cut);
+        }
+        seen = true;
+      }
+      line.clear();
+    }
+  }
+  return seen ? value : std::string();
+}
+
 std::vector<std::string> generated_locale_names(const std::string& locale_a_output) {
   std::set<std::string> names;
   std::string line;

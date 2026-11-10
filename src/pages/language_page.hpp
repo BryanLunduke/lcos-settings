@@ -6,6 +6,8 @@
 #include "pages/settings_page.hpp"
 
 #include <gtkmm/comboboxtext.h>
+#include <gtkmm/label.h>
+#include <gtkmm/spinner.h>
 
 #include <string>
 #include <vector>
@@ -29,12 +31,22 @@ class LanguagePage : public SettingsPage {
   void load();
   void apply();
   void tell(const std::string& message);
+  struct LocaleChoice {
+    std::string name;
+    bool generated = false;
+  };
+
   void fill(Gtk::ComboBoxText& combo, bool same_as_language);
+  bool needs_generation(const std::string& name) const;
+  void set_busy(bool busy, const std::string& message);
 
   PrivSession& session_;
   Gtk::Window& parent_;
   int freeze_ = 0;
-  std::vector<std::string> locales_;
+  bool busy_ = false;
+  std::vector<LocaleChoice> locales_;
+  Gtk::Label* status_ = nullptr;
+  Gtk::Spinner* spinner_ = nullptr;
   Gtk::ComboBoxText language_;
   Gtk::ComboBoxText dates_;
   Gtk::ComboBoxText numbers_;

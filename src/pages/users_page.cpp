@@ -15,9 +15,12 @@
 #include <gtkmm/messagedialog.h>
 #include <gtkmm/scrolledwindow.h>
 
+#include <dirent.h>
 #include <fstream>
 #include <pwd.h>
 #include <unistd.h>
+
+#include <algorithm>
 
 namespace lcos {
 namespace {
@@ -44,16 +47,35 @@ std::string sudo_members() {
   return {};
 }
 
-std::string autologin_now() {
-  const char* paths[] = {"/etc/lightdm/lightdm.conf.d/50-lcos.conf", "/etc/lightdm/lightdm.conf"};
-  std::string user;
-  for (const char* path : paths) {
-    const std::string found = autologin_user_in_conf(read_text(path));
-    if (!found.empty()) {
-      user = found;
+void append_conf_dir(const std::string& directory, std::vector<std::string>& texts) {
+  DIR* dir = opendir(directory.c_str());
+  if (dir == nullptr) {
+    return;
+  }
+  std::vector<std::string> names;
+  while (const dirent* item = readdir(dir)) {
+    const std::string name = item->d_name;
+    if (name.size() > 5 && name.compare(name.size() - 5, 5, ".conf") == 0) {
+      names.push_back(name);
     }
   }
-  return user;
+  closedir(dir);
+  std::sort(names.begin(), names.end());
+  for (const auto& name : names) {
+    texts.push_back(read_text(directory + "/" + name));
+  }
+}
+
+std::string autologin_now() {
+  // LightDM applies files in this order. 60-lcos-settings.conf sorts after
+  // the installer drop-in, so it wins without editing 50-lcos.conf.
+  std::vector<std::string> texts;
+  texts.push_back(read_text("/usr/share/lightdm/lightdm.conf"));
+  append_conf_dir("/usr/share/lightdm/lightdm.conf.d", texts);
+  append_conf_dir("/etc/xdg/lightdm/lightdm.conf.d", texts);
+  texts.push_back(read_text("/etc/lightdm/lightdm.conf"));
+  append_conf_dir("/etc/lightdm/lightdm.conf.d", texts);
+  return effective_autologin(texts);
 }
 
 bool ask_text(Gtk::Window& parent, const Glib::ustring& title, const Glib::ustring& caption,

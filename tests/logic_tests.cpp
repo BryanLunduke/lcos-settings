@@ -305,6 +305,29 @@ void test_system_model() {
   EXPECT(rows.size() == 1 && !rows[0].enabled && !rows[0].removable);
   const auto added = lcos::generated_locale_names("C\nen_US.utf8\n");
   EXPECT(added.size() == 2);
+
+  const auto supported = lcos::parse_supported_locales(
+      "# comment\nen_GB.UTF-8 UTF-8\nen_US ISO-8859-1\n");
+  EXPECT(supported.size() == 2);
+  EXPECT(lcos::find_supported_locale(supported, "en_GB.UTF-8") != nullptr);
+  EXPECT(lcos::find_supported_locale(supported, "en_GB") == nullptr);
+  std::string enabled;
+  EXPECT(lcos::enable_locale_in_gen("# en_GB.UTF-8 UTF-8\nen_US.UTF-8 UTF-8\n", supported[0],
+                                   supported, enabled));
+  EXPECT(enabled.find("# en_GB.UTF-8 UTF-8") == std::string::npos);
+  EXPECT(enabled.find("en_GB.UTF-8 UTF-8\n") != std::string::npos);
+  EXPECT(enabled.find("en_US.UTF-8 UTF-8\n") != std::string::npos);
+  std::string twice;
+  EXPECT(lcos::enable_locale_in_gen(enabled, supported[0], supported, twice));
+  EXPECT(twice.find("en_GB.UTF-8 UTF-8\n") != std::string::npos);
+  EXPECT(twice.find("en_GB.UTF-8 UTF-8\nen_GB.UTF-8 UTF-8") == std::string::npos);
+  lcos::SupportedLocale unknown{"zz_ZZ.UTF-8", "UTF-8"};
+  EXPECT(!lcos::enable_locale_in_gen(enabled, unknown, supported, twice));
+
+  EXPECT(lcos::effective_autologin({"autologin-user=lcos\n", "autologin-user=guest\n"}) == "guest");
+  EXPECT(lcos::effective_autologin({"autologin-user=lcos\nuser-session=xfce\n", "autologin-user=\n"})
+             .empty());
+  EXPECT(lcos::effective_autologin({"#autologin-user=lcos\n"}).empty());
 }
 
 void test_themes_and_xkb() {

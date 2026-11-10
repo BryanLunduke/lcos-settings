@@ -104,7 +104,6 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   prompt_.set_label("Prompt on logout");
   save_.set_label("Automatically save session on logout");
   chooser_.set_label("Display the session chooser on login");
-  lock_.set_label("Lock the screen before sleep");
   gnome_.set_label("Launch GNOME services on startup");
   kde_.set_label("Launch KDE services on startup");
   tcp_.set_label("Manage remote applications");
@@ -167,14 +166,11 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   session_page->pack_start(*make_frame("Saved sessions", *saved), Gtk::PACK_SHRINK);
 
   auto* advanced = make_vbox(6);
+  // GNOME and KDE toggles stay hidden unless those desktops are installed.
+  // LCOS does not ship them, so an installed system does not show the toggles.
   const bool gnome = command_exists("/usr/bin/gnome-keyring-daemon") ||
                      command_exists("/usr/bin/gnome-session");
   const bool kde = command_exists("/usr/bin/startplasma-x11") || command_exists("/usr/bin/startkde");
-  const bool locker = command_exists("/usr/bin/xfce4-screensaver") ||
-                      command_exists("/usr/bin/xflock4") || command_exists("/usr/bin/light-locker");
-  if (locker) {
-    advanced->pack_start(lock_, Gtk::PACK_SHRINK);
-  }
   if (gnome) {
     advanced->pack_start(gnome_, Gtk::PACK_SHRINK);
   }
@@ -207,7 +203,6 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   bind(prompt_, "/general/PromptOnLogout", true);
   bind(save_, "/general/SaveOnExit", false);
   bind(chooser_, "/chooser/AlwaysDisplay", false);
-  bind(lock_, "/shutdown/LockScreen", false);
   bind(gnome_, "/compat/LaunchGNOME", false);
   bind(kde_, "/compat/LaunchKDE", false);
   bind(tcp_, "/security/EnableTcp", false);

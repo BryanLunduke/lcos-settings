@@ -7,12 +7,15 @@
 
 #include <glib.h>
 
+#include <gdkmm/cursor.h>
+#include <gdkmm/window.h>
 #include <gtkmm/box.h>
-#include <gtkmm/label.h>
 #include <gtkmm/messagedialog.h>
 
+#include <algorithm>
 #include <fstream>
 #include <map>
+#include <set>
 
 namespace lcos {
 namespace {
@@ -66,10 +69,19 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
   form.add("Numbers", numbers_);
   form.add("Currency", currency_);
   page->pack_start(*make_frame("Locale", form.grid()), Gtk::PACK_SHRINK);
+  auto* busy_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+  spinner_ = Gtk::manage(new Gtk::Spinner());
+  status_ = make_label("");
+  status_->set_line_wrap(true);
+  busy_row->pack_start(*spinner_, Gtk::PACK_SHRINK);
+  busy_row->pack_start(*status_, Gtk::PACK_EXPAND_WIDGET);
+  busy_row->set_no_show_all(true);
+  busy_row->hide();
+  page->pack_start(*busy_row, Gtk::PACK_SHRINK);
   auto* note = make_label(
-      "Only locales that are already generated are listed. Generate another with "
-      "\"sudo dpkg-reconfigure locales\" or \"sudo locale-gen en_GB.UTF-8\", then open this page again. "
-      "Keyboard layouts are set on the Keyboard page.");
+      "Every locale in the supported list is offered. Choosing one that is not generated yet "
+      "enables it in /etc/locale.gen and runs locale-gen. Cancel restores the language choice and "
+      "leaves the generated locale in place. Keyboard layouts are set on the Keyboard page.");
   note->set_line_wrap(true);
   page->pack_start(*note, Gtk::PACK_SHRINK);
   pack_start(*make_page_scroll(*page), Gtk::PACK_EXPAND_WIDGET);
@@ -94,19 +106,85 @@ void LanguagePage::fill(Gtk::ComboBoxText& combo, bool same_as_language) {
     combo.append("", "Same as the system language");
   }
   for (const auto& locale : locales_) {
-    combo.append(locale, locale);
+    const std::string label = locale.generated ? locale.name : locale.name + " (not generated)";
+    combo.append(locale.name, label);
   }
   if (!selected.empty()) {
     combo.set_active_id(selected);
   }
 }
 
+bool LanguagePage::needs_generation(const std::string& name) const {
+  if (name.empty() || name == "C" || name == "C.UTF-8" || name == "POSIX") {
+    return false;
+  }
+  for (const auto& locale : locales_) {
+    if (locale.name == name) {
+      return !locale.generated;
+    }
+  }
+  return true;
+}
+
+void LanguagePage::set_busy(bool busy, const std::string& message) {
+  busy_ = busy;
+  language_.set_sensitive(!busy);
+  dates_.set_sensitive(!busy);
+  numbers_.set_sensitive(!busy);
+  currency_.set_sensitive(!busy);
+  if (spinner_ != nullptr) {
+    if (busy) {
+      spinner_->start();
+      spinner_->get_parent()->set_no_show_all(false);
+      spinner_->get_parent()->show_all();
+    } else {
+      spinner_->stop();
+      spinner_->get_parent()->hide();
+    }
+  }
+  if (status_ != nullptr) {
+    status_->set_text(message);
+  }
+  if (auto window = parent_.get_window()) {
+    if (busy) {
+      window->set_cursor(Gdk::Cursor::create(window->get_display(), "wait"));
+    } else {
+      window->set_cursor();
+    }
+    parent_.queue_draw();
+    window->process_updates(true);
+  }
+}
+
 void LanguagePage::load() {
   Freeze freeze(freeze_);
-  locales_ = generated_locale_names(command_output("locale -a"));
-  if (locales_.empty()) {
-    locales_.push_back("C.UTF-8");
+  const auto generated = generated_locale_names(command_output("locale -a"));
+  std::set<std::string> ready(generated.begin(), generated.end());
+  const auto supported = parse_supported_locales(read_text("/usr/share/i18n/SUPPORTED"));
+  locales_.clear();
+  auto add_choice = [&](const std::string& name) {
+    for (const auto& locale : locales_) {
+      if (locale.name == name) {
+        return;
+      }
+    }
+    LocaleChoice choice;
+    choice.name = name;
+    choice.generated = name == "C" || name == "C.UTF-8" || name == "POSIX" || ready.count(name) != 0;
+    locales_.push_back(std::move(choice));
+  };
+  add_choice("C");
+  add_choice("C.UTF-8");
+  for (const auto& locale : supported) {
+    add_choice(locale.name);
   }
+  if (supported.empty()) {
+    for (const auto& name : generated) {
+      add_choice(name);
+    }
+  }
+  std::sort(locales_.begin(), locales_.end(),
+            [](const LocaleChoice& a, const LocaleChoice& b) { return a.name < b.name; });
   fill(language_, false);
   fill(dates_, true);
   fill(numbers_, true);
@@ -139,7 +217,7 @@ void LanguagePage::load() {
 }
 
 void LanguagePage::apply() {
-  if (language_.get_active_id().empty()) {
+  if (busy_ || language_.get_active_id().empty()) {
     return;
   }
   const std::string lang = language_.get_active_id();
@@ -147,10 +225,29 @@ void LanguagePage::apply() {
     const std::string id = combo.get_active_id();
     return id.empty() ? lang : std::string(id);
   };
-  const PrivResult result =
-      session_.run({"set-locale", lang, regional(dates_), regional(numbers_), regional(currency_)});
+  const std::string dates = regional(dates_);
+  const std::string numbers = regional(numbers_);
+  const std::string currency = regional(currency_);
+  std::string pending;
+  for (const std::string& name : {lang, dates, numbers, currency}) {
+    if (needs_generation(name) && pending.find(name) == std::string::npos) {
+      if (!pending.empty()) {
+        pending += ", ";
+      }
+      pending += name;
+    }
+  }
+  if (!pending.empty()) {
+    set_busy(true, "Generating " + pending + "… This can take a minute.");
+  }
+  const PrivResult result = session_.run({"set-locale", lang, dates, numbers, currency});
+  if (!pending.empty()) {
+    set_busy(false, "");
+  }
   if (!result.ok) {
     tell(result.error);
+    load();
+  } else if (!pending.empty()) {
     load();
   }
 }
