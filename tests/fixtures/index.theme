@@ -1,0 +1,7 @@
+[Icon Theme]
+Name=Sample Theme
+Comment=A fixture
+Hidden=false
+
+[X-Icon]
+Name=Ignored because Name is already set

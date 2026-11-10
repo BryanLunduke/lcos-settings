@@ -1,0 +1,14 @@
+#!/usr/bin/make -f
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+# Ubuntu 24.04's dwz rejects the .debug_addr section GCC 13 emits.
+# Skipping the size optimization keeps the package buildable there and on trixie.
+override_dh_dwz:
+	true
+
+# fakeroot makes the session bus reject credentials, so xfconf cannot start.
+override_dh_auto_test:
+	LD_PRELOAD= dh_auto_test

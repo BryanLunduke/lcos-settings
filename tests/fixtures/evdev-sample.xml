@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xkbConfigRegistry SYSTEM "xkb.dtd">
+<xkbConfigRegistry version="1.1">
+  <modelList>
+    <model>
+      <configItem>
+        <name>pc105</name>
+        <description>Generic 105-key PC</description>
+        <vendor>Generic</vendor>
+      </configItem>
+    </model>
+  </modelList>
+  <layoutList>
+    <layout>
+      <configItem>
+        <name>us</name>
+        <description>English (US)</description>
+      </configItem>
+      <variantList>
+        <variant>
+          <configItem>
+            <name>dvorak</name>
+            <description>English (Dvorak)</description>
+          </configItem>
+        </variant>
+      </variantList>
+    </layout>
+    <layout>
+      <configItem>
+        <name>de</name>
+        <description>German</description>
+      </configItem>
+      <variantList>
+        <variant>
+          <configItem>
+            <name>nodeadkeys</name>
+            <description>German (no dead keys)</description>
+          </configItem>
+        </variant>
+      </variantList>
+    </layout>
+  </layoutList>
+  <optionList>
+    <group>
+      <configItem>
+        <name>grp</name>
+        <description>Switching to another layout</description>
+      </configItem>
+      <option>
+        <configItem>
+          <name>grp:alt_shift_toggle</name>
+          <description>Alt+Shift</description>
+        </configItem>
+      </option>
+    </group>
+    <group>
+      <configItem>
+        <name>compose</name>
+        <description>Position of the Compose key</description>
+      </configItem>
+      <option>
+        <configItem>
+          <name>compose:ralt</name>
+          <description>Right Alt</description>
+        </configItem>
+      </option>
+    </group>
+  </optionList>
+</xkbConfigRegistry>
