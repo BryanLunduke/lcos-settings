@@ -134,13 +134,13 @@ SoftwarePage::SoftwarePage() {
   note->set_line_wrap(true);
   note->set_max_width_chars(72);
   utilities->pack_start(*note, Gtk::PACK_SHRINK);
-  notebook_.append_page(*utilities, "Utilities");
+  notebook_.append_page(*make_page_scroll(*utilities), "Utilities");
 
   auto* others = make_vbox(8);
   others->set_border_width(12);
   filter_.set_placeholder_text("Filter file types or applications");
   others->pack_start(filter_, Gtk::PACK_SHRINK);
-  notebook_.append_page(*others, "Others");
+  notebook_.append_page(*make_page_scroll(*others), "Others");
 
   load_helpers();
   load_applications();
@@ -166,9 +166,9 @@ SoftwarePage::SoftwarePage() {
   mime_view_.get_column(0)->set_expand(true);
   mime_view_.get_column(1)->set_expand(true);
   auto* list_scroll = Gtk::manage(new Gtk::ScrolledWindow());
-  list_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+  prepare_page_scroll(*list_scroll);
   list_scroll->set_shadow_type(Gtk::SHADOW_IN);
-  list_scroll->set_min_content_height(280);
+  list_scroll->set_vexpand(true);
   list_scroll->add(mime_view_);
   others->pack_start(*list_scroll, Gtk::PACK_EXPAND_WIDGET);
   auto* choose = Gtk::manage(new Gtk::Button("Set default application…"));
@@ -296,7 +296,6 @@ void SoftwarePage::load_helpers() {
 
 void SoftwarePage::load_applications() {
   std::set<std::string> seen;
-  std::size_t budget = 800;
   for (const auto& root : data_dirs()) {
     const std::string dir = Glib::build_filename(root, "applications");
     std::vector<std::string> names;
@@ -310,9 +309,6 @@ void SoftwarePage::load_applications() {
     }
     std::sort(names.begin(), names.end());
     for (const auto& name : names) {
-      if (budget == 0) {
-        return;
-      }
       if (name.size() <= 8 || name.substr(name.size() - 8) != ".desktop") {
         continue;
       }
@@ -326,7 +322,6 @@ void SoftwarePage::load_applications() {
           continue;
         }
         applications_.push_back(std::move(file));
-        --budget;
       } catch (const Glib::Error&) {
       }
     }
@@ -350,13 +345,12 @@ std::string SoftwarePage::app_name(const std::string& desktop_id) const {
 void SoftwarePage::rebuild_mime_rows() {
   mime_rows_.clear();
   std::set<std::string> types;
-  for (const auto& entry : ini_entries(mime_text_, "Default Applications")) {
-    types.insert(entry.first);
+  for (const char* group : {"Default Applications", "Added Associations"}) {
+    for (const auto& entry : ini_entries(mime_text_, group)) {
+      types.insert(entry.first);
+    }
   }
   for (const auto& app : applications_) {
-    if (app.no_display) {
-      continue;
-    }
     for (const auto& type : app.mime_types) {
       types.insert(type);
     }
@@ -381,19 +375,14 @@ void SoftwarePage::refill_mime_view() {
   }
   mime_store_->clear();
   const std::string needle = lower_copy(filter_.get_text());
-  int shown = 0;
   for (const auto& row : mime_rows_) {
     if (!needle.empty() && lower_copy(row.type).find(needle) == std::string::npos &&
         lower_copy(row.app_name).find(needle) == std::string::npos) {
       continue;
     }
-    if (shown >= 400) {
-      break;
-    }
     auto iter = mime_store_->append();
     iter->set_value(0, Glib::ustring(row.type));
     iter->set_value(1, Glib::ustring(row.app_name.empty() ? "—" : row.app_name));
-    ++shown;
   }
 }
 

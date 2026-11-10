@@ -17,6 +17,7 @@
 #include <gtkmm/dialog.h>
 #include <gdkmm/pixbuf.h>
 #include <gtkmm/entry.h>
+#include <gtkmm/scrollbar.h>
 #include <gtkmm/label.h>
 #include <gtkmm/messagedialog.h>
 #include <gtkmm/scrolledwindow.h>
@@ -93,18 +94,19 @@ void rounded_rect(const Cairo::RefPtr<Cairo::Context>& context, double x, double
 DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& parent)
     : store_(store), randr_(randr), parent_(parent) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
-  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-  scroll->set_shadow_type(Gtk::SHADOW_NONE);
+  prepare_page_scroll(*scroll);
   auto* right = make_vbox(10);
   right->set_border_width(12);
   right->set_hexpand(true);
   scroll->add(*right);
   scroll_ = scroll;
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
-  Glib::signal_timeout().connect([this]() {
-    paint_now();
-    return false;
-  }, 700);
+  signal_size_allocate().connect([this](Gtk::Allocation&) {
+    Glib::signal_idle().connect([this]() {
+      paint_now();
+      return false;
+    });
+  });
 
   FormGrid form;
   form.add("Display", output_combo_);
@@ -156,7 +158,6 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   right->pack_start(*arrange, Gtk::PACK_SHRINK);
 
   preview_.set_halign(Gtk::ALIGN_CENTER);
-  preview_.set_size_request(-1, preview_height_);
   right->pack_start(preview_, Gtk::PACK_SHRINK);
   preview_.add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK |
                       Gdk::POINTER_MOTION_MASK | Gdk::BUTTON_MOTION_MASK);
@@ -534,12 +535,29 @@ void DisplayPage::paint_now() {
     return;
   }
   auto* child = scroll_->get_child();
+  int minimum_height = 0;
+  int natural_height = 0;
+  child->get_preferred_height(minimum_height, natural_height);
+  const bool overflow = natural_height > scroll_->get_allocated_height() + 8;
+  scroll_->set_policy(Gtk::POLICY_AUTOMATIC,
+                      overflow ? Gtk::POLICY_ALWAYS : Gtk::POLICY_AUTOMATIC);
+  if (overflow) {
+    auto* bar = scroll_->get_vscrollbar();
+    bar->set_size_request(14, -1);
+    bar->show();
+  }
   auto context = child->get_window()->create_cairo_context();
-  context->set_operator(Cairo::OPERATOR_SOURCE);
+  const auto allocation = child->get_allocation();
+  const int scrollbar_gutter = overflow ? 14 : 0;
+  context->save();
+  context->rectangle(allocation.get_x(), allocation.get_y(),
+                     std::max(1, allocation.get_width() - scrollbar_gutter), allocation.get_height());
+  context->clip();
+  context->translate(allocation.get_x(), allocation.get_y());
   context->set_source_rgb(0.965, 0.961, 0.957);
   context->paint();
-  context->set_operator(Cairo::OPERATOR_OVER);
   gtk_widget_draw(GTK_WIDGET(child->gobj()), context->cobj());
+  context->restore();
 }
 
 void DisplayPage::redraw() {

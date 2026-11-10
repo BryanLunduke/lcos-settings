@@ -56,8 +56,7 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
       randr_(randr),
       folder_("Background folder", Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
-  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-  scroll->set_shadow_type(Gtk::SHADOW_NONE);
+  prepare_page_scroll(*scroll);
   auto* page = make_vbox(8);
   page->set_border_width(12);
   scroll->add(*page);
@@ -84,8 +83,8 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
   images_.set_min_children_per_line(4);
   images_.set_max_children_per_line(8);
   auto* image_scroll = Gtk::manage(new Gtk::ScrolledWindow());
+  prepare_page_scroll(*image_scroll);
   image_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-  image_scroll->set_min_content_height(168);
   image_scroll->set_shadow_type(Gtk::SHADOW_IN);
   image_scroll->add(images_);
   pictures->pack_start(*image_scroll, Gtk::PACK_SHRINK);

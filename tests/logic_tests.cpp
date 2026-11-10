@@ -59,6 +59,15 @@ void test_backdrop_power_mime() {
   EXPECT(lcos::brightness_delay_from_slider(6) == 60u);
   EXPECT(lcos::brightness_slider_from_delay(9) == 0);
   EXPECT(lcos::brightness_slider_from_delay(60) == 6);
+  EXPECT(!lcos::backlight_directory_has_device("/no/such/backlight"));
+  EXPECT(lcos::upower_kind_name(2) == "Battery");
+  EXPECT(lcos::upower_state_name(1) == "Charging");
+  EXPECT(lcos::upower_technology_name(1) == "Lithium ion");
+  EXPECT(lcos::format_upower_duration(0).empty());
+  EXPECT(lcos::format_upower_duration(90) == "1 min");
+  EXPECT(lcos::format_upower_duration(3660) == "1 h 1 min");
+  EXPECT(lcos::format_upower_measure(0, "Wh").empty());
+  EXPECT(lcos::format_upower_measure(12.5, "Wh") == "12.50 Wh");
 
   const std::string rc = "# comment\nWebBrowser=firefox\n\n[Group]\nWebBrowser=hidden\n";
   EXPECT(lcos::rc_lookup(rc, "WebBrowser") == "firefox");

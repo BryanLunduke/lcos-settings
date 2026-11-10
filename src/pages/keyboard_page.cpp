@@ -106,8 +106,7 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
       delay_(Gtk::ORIENTATION_HORIZONTAL),
       rate_(Gtk::ORIENTATION_HORIZONTAL) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
-  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-  scroll->set_shadow_type(Gtk::SHADOW_NONE);
+  prepare_page_scroll(*scroll);
   auto* page = make_vbox(4);
   page->set_border_width(12);
   scroll->add(*page);
@@ -154,8 +153,8 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
   layouts_view_.set_headers_visible(true);
   layouts_view_.get_selection()->set_mode(Gtk::SELECTION_SINGLE);
   auto* layout_scroll = Gtk::manage(new Gtk::ScrolledWindow());
-  layout_scroll->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
-  layout_scroll->set_size_request(-1, 88);
+  prepare_page_scroll(*layout_scroll);
+  layout_scroll->set_size_request(-1, -1);
   layout_scroll->add(layouts_view_);
   layout->pack_start(*layout_scroll, Gtk::PACK_SHRINK);
   auto* layout_buttons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
@@ -182,8 +181,8 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
   shortcuts_view_.append_column("Command", shortcut_columns_.command);
   shortcuts_view_.append_column("From", shortcut_columns_.origin);
   auto* shortcut_scroll = Gtk::manage(new Gtk::ScrolledWindow());
-  shortcut_scroll->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
-  shortcut_scroll->set_size_request(-1, 140);
+  prepare_page_scroll(*shortcut_scroll);
+  shortcut_scroll->set_size_request(-1, -1);
   shortcut_scroll->add(shortcuts_view_);
   shortcuts->pack_start(*shortcut_scroll, Gtk::PACK_SHRINK);
   auto* shortcut_buttons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));

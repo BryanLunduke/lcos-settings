@@ -23,6 +23,8 @@ class XrandrBackend {
   std::vector<OutputConfig> read();
   // Empty string on success, otherwise a reason the configuration was rejected.
   std::string apply(const std::vector<OutputConfig>& desired);
+  // True when any output advertises the RandR Backlight or BACKLIGHT property.
+  bool outputs_have_backlight() const;
 
  private:
   Display* display_ = nullptr;

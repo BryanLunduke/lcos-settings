@@ -12,6 +12,7 @@
 #include "pages/sound_page.hpp"
 
 #include <gdk/gdkx.h>
+#include <gdkmm/general.h>
 #include <gdkmm/pixbuf.h>
 #include <glibmm/main.h>
 #include <gtkmm/box.h>
@@ -29,7 +30,11 @@ MainWindow::MainWindow(XfconfStore& store)
       randr_(gdk_x11_display_get_xdisplay(gdk_display_get_default())),
       pointers_(gdk_x11_display_get_xdisplay(gdk_display_get_default())) {
   set_title("LCOS Command Center");
-  set_default_size(1180, 820);
+  set_default_size(1100, 760);
+  Gdk::Geometry hints;
+  hints.min_width = 760;
+  hints.min_height = 520;
+  set_geometry_hints(*this, hints, Gdk::HINT_MIN_SIZE);
   set_icon_name("org.lunduke.LcosSettings");
   if (g_file_test("data/icons/hicolor/48x48/apps/org.lunduke.LcosSettings.png",
                   G_FILE_TEST_EXISTS)) {
@@ -42,21 +47,21 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* display = Gtk::manage(new DisplayPage(store_, randr_, *this));
   auto* desktop = Gtk::manage(new DesktopPage(store_, randr_));
   auto* appearance = Gtk::manage(new AppearancePage(store_));
-  auto* power = Gtk::manage(new PowerPage(store_));
+  auto* power = Gtk::manage(new PowerPage(store_, randr_));
   auto* keyboard = Gtk::manage(new KeyboardPage(store_, *this));
   auto* mouse = Gtk::manage(new MousePage(store_, pointers_));
   auto* sound = Gtk::manage(new SoundPage(store_, pulse_));
   auto* software = Gtk::manage(new SoftwarePage());
   pages_ = {display, desktop, appearance, power, keyboard, mouse, sound, software};
   nav_ = {
-      {"display", "Display", "video-display-symbolic"},
-      {"desktop", "Desktop", "preferences-desktop-wallpaper-symbolic"},
-      {"appearance", "Appearance", "preferences-desktop-theme-symbolic"},
-      {"power", "Power", "preferences-system-power-symbolic"},
-      {"keyboard", "Keyboard", "input-keyboard-symbolic"},
-      {"mouse", "Mouse", "input-mouse-symbolic"},
-      {"sound", "Sound", "audio-volume-high-symbolic"},
-      {"default-software", "Default Software", "preferences-desktop-default-applications-symbolic"},
+      {"display", "Display", "preferences-desktop-display"},
+      {"desktop", "Desktop", "preferences-desktop-wallpaper"},
+      {"appearance", "Appearance", "preferences-desktop-theme"},
+      {"power", "Power", "battery"},
+      {"keyboard", "Keyboard", "preferences-desktop-keyboard"},
+      {"mouse", "Mouse", "preferences-desktop-peripherals"},
+      {"sound", "Sound", "audio-volume-high"},
+      {"default-software", "Default Software", "applications-other"},
   };
 
   auto* root = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
@@ -74,9 +79,14 @@ MainWindow::MainWindow(XfconfStore& store)
     line->set_margin_start(12);
     line->set_margin_end(12);
     auto* image = Gtk::manage(new Gtk::Image());
-    image->set_from_icon_name(nav_[i].icon, Gtk::ICON_SIZE_LARGE_TOOLBAR);
+    image->set_halign(Gtk::ALIGN_CENTER);
+    image->set_valign(Gtk::ALIGN_CENTER);
+    image->set_size_request(24, 24);
+    nav_images_.push_back(image);
     auto* label = Gtk::manage(new Gtk::Label(nav_[i].title));
     label->set_halign(Gtk::ALIGN_START);
+    label->set_valign(Gtk::ALIGN_CENTER);
+    line->set_valign(Gtk::ALIGN_CENTER);
     line->pack_start(*image, Gtk::PACK_SHRINK);
     line->pack_start(*label, Gtk::PACK_EXPAND_WIDGET);
     row->add(*line);
@@ -147,11 +157,42 @@ MainWindow::MainWindow(XfconfStore& store)
   select_page(0);
   update_apply();
   show_all();
+  load_nav_icons();
+  signal_realize().connect(sigc::mem_fun(*this, &MainWindow::load_nav_icons));
+  property_scale_factor().signal_changed().connect(
+      sigc::mem_fun(*this, &MainWindow::load_nav_icons));
   // The first expose can run before the stack has allocated the opening page.
   Glib::signal_idle().connect([this]() {
     queue_draw();
     return false;
   });
+}
+
+void MainWindow::load_nav_icons() {
+  const int scale = std::max(1, get_scale_factor());
+  auto legacy = Gtk::IconTheme::create();
+  legacy->set_custom_theme("AdwaitaLegacy");
+  auto fallback = Gtk::IconTheme::get_default();
+  auto load = [&](const Glib::RefPtr<Gtk::IconTheme>& theme, const Glib::ustring& name) {
+    if (!theme) {
+      return Glib::RefPtr<Gdk::Pixbuf>();
+    }
+    try {
+      return theme->load_icon(name, 24, scale, Gtk::ICON_LOOKUP_FORCE_SIZE);
+    } catch (const Glib::Error&) {
+      return Glib::RefPtr<Gdk::Pixbuf>();
+    }
+  };
+  for (std::size_t i = 0; i < nav_images_.size() && i < nav_.size(); ++i) {
+    auto pixbuf = load(legacy, nav_[i].icon);
+    if (!pixbuf) {
+      pixbuf = load(fallback, nav_[i].icon);
+    }
+    if (!pixbuf) {
+      continue;
+    }
+    nav_images_[i]->set(Gdk::Cairo::create_surface_from_pixbuf(pixbuf, scale));
+  }
 }
 
 void MainWindow::select_page(int index) {
@@ -237,9 +278,16 @@ void MainWindow::dump_pages(const std::string& directory) {
       shots_.push_back(shot);
     }
   }
+  Shot compact;
+  compact.page = static_cast<int>(pages_.size()) - 1;
+  compact.frame = 1;
+  compact.name = "window-short";
+  compact.width = 1000;
+  compact.height = 550;
+  shots_.push_back(compact);
   shot_index_ = 0;
   dump_phase_ = 0;
-  resize(1200, 1100);
+  resize(1200, 1040);
   Glib::signal_timeout().connect(sigc::mem_fun(*this, &MainWindow::dump_step), 500);
 }
 
@@ -252,6 +300,11 @@ bool MainWindow::dump_step() {
   if (dump_phase_ == 0) {
     if (auto* row = sidebar_.get_row_at_index(shot.page)) {
       sidebar_.select_row(*row);
+    }
+    if (shot.width > 0 && shot.height > 0) {
+      resize(shot.width, shot.height);
+    } else if (shot_index_ == 0) {
+      resize(1200, 1040);
     }
     select_page(shot.page);
     pages_[static_cast<std::size_t>(shot.page)]->prepare_screenshot(shot.frame);

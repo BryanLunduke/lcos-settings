@@ -44,6 +44,7 @@ backend_sources = files(
   'src/backends/xrandr_backend.cpp',
   'src/backends/pointer_backend.cpp',
   'src/backends/pulse_client.cpp',
+  'src/backends/upower_client.cpp',
 )
 
 page_sources = files(

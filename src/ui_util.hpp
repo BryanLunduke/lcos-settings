@@ -6,6 +6,7 @@
 #include <gtkmm/frame.h>
 #include <gtkmm/grid.h>
 #include <gtkmm/label.h>
+#include <gtkmm/scrolledwindow.h>
 
 namespace lcos {
 
@@ -19,6 +20,26 @@ inline Gtk::Label* make_label(const Glib::ustring& text) {
 inline Gtk::Box* make_vbox(int spacing = 8) {
   auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, spacing));
   return box;
+}
+
+// A page body that can shrink with the window. The scrollbar appears only
+// when the contents do not fit. The minimum stays small so the window can
+// be about half the default height.
+inline void prepare_page_scroll(Gtk::ScrolledWindow& scroll) {
+  scroll.set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
+  scroll.set_shadow_type(Gtk::SHADOW_NONE);
+  scroll.set_overlay_scrolling(false);
+  scroll.set_propagate_natural_height(false);
+  scroll.set_propagate_natural_width(false);
+  scroll.set_min_content_height(0);
+  scroll.set_min_content_width(0);
+}
+
+inline Gtk::ScrolledWindow* make_page_scroll(Gtk::Widget& child) {
+  auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
+  prepare_page_scroll(*scroll);
+  scroll->add(child);
+  return scroll;
 }
 
 inline Gtk::Frame* make_frame(const Glib::ustring& title, Gtk::Widget& child) {

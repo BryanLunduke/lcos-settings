@@ -24,9 +24,10 @@ Build-Depends: debhelper-compat (= 13),
 
 Package: lcos-settings
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}, xfconf, desktop-file-utils, gtk-update-icon-cache
+Depends: ${shlibs:Depends}, ${misc:Depends}, xfconf, desktop-file-utils, gtk-update-icon-cache, adwaita-icon-theme-legacy
 Description: LCOS Command Center, unified settings for LCOS
  LCOS Command Center is a GTK 3 settings window for the Lunduke Computer
- Operating System. This pre-release covers display, appearance, keyboard,
- mouse, and sound, using the same xfconf, RandR, and PulseAudio backing
- stores as the XFCE tools shipped with LCOS 1.0.
+ Operating System. It covers display, desktop background, appearance,
+ power, keyboard, mouse, sound, and default software, using the same
+ xfconf, RandR, UPower, and PulseAudio backing stores as the XFCE tools
+ shipped with LCOS 1.0. The section list uses the Adwaita Legacy icons.

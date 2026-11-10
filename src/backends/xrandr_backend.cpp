@@ -411,4 +411,35 @@ std::string XrandrBackend::apply(const std::vector<OutputConfig>& desired) {
   return failure;
 }
 
+bool XrandrBackend::outputs_have_backlight() const {
+  if (!ready_ || display_ == nullptr) {
+    return false;
+  }
+  Window root = DefaultRootWindow(display_);
+  XRRScreenResources* resources = XRRGetScreenResources(display_, root);
+  if (resources == nullptr) {
+    return false;
+  }
+  bool found = false;
+  for (int i = 0; i < resources->noutput && !found; ++i) {
+    int count = 0;
+    Atom* atoms = XRRListOutputProperties(display_, resources->outputs[i], &count);
+    for (int j = 0; j < count; ++j) {
+      char* name = XGetAtomName(display_, atoms[j]);
+      if (name != nullptr &&
+          (std::strcmp(name, "Backlight") == 0 || std::strcmp(name, "BACKLIGHT") == 0)) {
+        found = true;
+      }
+      if (name != nullptr) {
+        XFree(name);
+      }
+    }
+    if (atoms != nullptr) {
+      XFree(atoms);
+    }
+  }
+  XRRFreeScreenResources(resources);
+  return found;
+}
+
 }  // namespace lcos

@@ -28,7 +28,9 @@ void install_css() {
       ".lcos-title { font-size: 18px; font-weight: 700; }"
       ".lcos-subtitle { color: #5c564c; margin-bottom: 4px; }"
       "notebook header tabs tab { padding: 6px 14px; }"
-      "frame > label { font-weight: 600; }");
+      "frame > label { font-weight: 600; }"
+      "scrollbar { background-color: #e6dfd4; min-width: 12px; min-height: 12px; }"
+      "scrollbar slider { background-color: #5c564c; min-width: 8px; min-height: 28px; border-radius: 4px; margin: 2px; }");
   Gtk::StyleContext::add_provider_for_screen(screen, css,
                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }

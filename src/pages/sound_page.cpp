@@ -16,8 +16,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       output_volume_(Gtk::ORIENTATION_HORIZONTAL),
       input_volume_(Gtk::ORIENTATION_HORIZONTAL) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
-  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-  scroll->set_shadow_type(Gtk::SHADOW_NONE);
+  prepare_page_scroll(*scroll);
   auto* page = make_vbox(4);
   page->set_border_width(12);
   scroll->add(*page);

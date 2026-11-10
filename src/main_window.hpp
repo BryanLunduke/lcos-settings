@@ -10,6 +10,8 @@
 
 #include <gtkmm/applicationwindow.h>
 #include <gtkmm/button.h>
+#include <gtkmm/icontheme.h>
+#include <gtkmm/image.h>
 #include <gtkmm/listbox.h>
 #include <gtkmm/stack.h>
 
@@ -25,6 +27,7 @@ class MainWindow : public Gtk::ApplicationWindow {
 
  private:
   void select_page(int index);
+  void load_nav_icons();
   void update_apply();
   void close_keep();
   void close_revert();
@@ -44,10 +47,13 @@ class MainWindow : public Gtk::ApplicationWindow {
     int page = 0;
     int frame = 0;
     std::string name;
+    int width = 0;
+    int height = 0;
   };
 
   std::vector<SettingsPage*> pages_;
   std::vector<NavItem> nav_;
+  std::vector<Gtk::Image*> nav_images_;
   Gtk::ListBox sidebar_;
   Gtk::Stack stack_;
   Gtk::Label* heading_ = nullptr;

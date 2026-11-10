@@ -31,8 +31,7 @@ MousePage::MousePage(XfconfStore& store, PointerBackend& pointers)
       threshold_(Gtk::ORIENTATION_HORIZONTAL) {
   left_handed_.join_group(right_handed_);
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
-  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-  scroll->set_shadow_type(Gtk::SHADOW_NONE);
+  prepare_page_scroll(*scroll);
   auto* page = make_vbox(4);
   page->set_border_width(12);
   scroll->add(*page);
