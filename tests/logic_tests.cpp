@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -191,6 +192,28 @@ void test_layout() {
   EXPECT(lcos::millimeters_for_pixels(1920) == 508);
   const auto bounds = lcos::screen_bounds(outputs);
   EXPECT(bounds.width > 0 && bounds.height > 0);
+
+  // Scale 2 keeps the 1280x800 mode and uses a 640x400 framebuffer. The old
+  // CRTC does not fit, so it has to be disabled before the screen shrinks.
+  EXPECT(!lcos::crtc_fits_framebuffer(0, 0, 1280, 800, 640, 400));
+  EXPECT(lcos::crtc_fits_framebuffer(0, 0, 640, 400, 640, 400));
+  EXPECT(lcos::crtc_fits_framebuffer(0, 0, 1024, 768, 1280, 800));
+  EXPECT(lcos::crtc_fits_framebuffer(0, 0, 0, 0, 640, 400));
+
+  lcos::OutputConfig scaled = left;
+  scaled.name = "Virtual-1";
+  scaled.width = 1280;
+  scaled.height = 800;
+  scaled.scale = 2.0;
+  lcos::OutputConfig restored = scaled;
+  restored.scale = 1.0;
+  EXPECT(!lcos::layouts_equivalent({scaled}, {restored}));
+  restored.scale = 2.0;
+  restored.reflection = "0";
+  scaled.reflection = "";
+  EXPECT(lcos::layouts_equivalent({scaled}, {restored}));
+  restored.width = 1024;
+  EXPECT(!lcos::layouts_equivalent({scaled}, {restored}));
 }
 
 void test_confirm_and_volume() {
@@ -595,6 +618,51 @@ void test_review_fixes() {
   const auto added = lcos::restore_shadow_line("other:x:::::::\n", full, true);
   EXPECT(added.ok);
   EXPECT(added.text.find(full) != std::string::npos);
+
+  // glibc stores a blank shadow flag as ULONG_MAX. Writing that decimal makes
+  // getent, pwck, and su reject the account. Cancel must put a blank flag back.
+  lcos::ShadowRecord blank_flag;
+  blank_flag.name = "qarm1";
+  blank_flag.hash = "$y$hash";
+  blank_flag.last_change = 20768;
+  blank_flag.minimum = 1;
+  blank_flag.maximum = 90;
+  blank_flag.warning = 10;
+  blank_flag.inactive = 5;
+  blank_flag.expire = 21915;
+  blank_flag.flag = std::numeric_limits<unsigned long>::max();
+  const std::string formatted = lcos::format_shadow_record(blank_flag);
+  EXPECT(formatted == "qarm1:$y$hash:20768:1:90:10:5:21915:");
+  EXPECT(formatted.find("18446744073709551615") == std::string::npos);
+  blank_flag.flag = 0;
+  EXPECT(lcos::format_shadow_record(blank_flag) == formatted);
+  blank_flag.flag = 4;
+  EXPECT(lcos::format_shadow_record(blank_flag) == "qarm1:$y$hash:20768:1:90:10:5:21915:4");
+  EXPECT(lcos::shadow_flag_text(std::numeric_limits<unsigned long>::max()).empty());
+  EXPECT(lcos::shadow_flag_text(0).empty());
+  EXPECT(lcos::shadow_flag_text(4) == "4");
+
+  const std::string corrupt =
+      "qarm1:$y$hash:20768:1:90:10:5:21915:18446744073709551615";
+  EXPECT(lcos::normalize_shadow_line(corrupt) == "qarm1:$y$hash:20768:1:90:10:5:21915:");
+  const auto repaired = lcos::restore_shadow_line("qarm1:locked:1:0:99999:7:::\n", corrupt, true);
+  EXPECT(repaired.ok);
+  EXPECT(repaired.text.find("18446744073709551615") == std::string::npos);
+  EXPECT(repaired.text.find("qarm1:$y$hash:20768:1:90:10:5:21915:\n") != std::string::npos);
+  const std::string shadow_file = "root:!:19000::::::\n" + std::string(formatted) + "\nother:x:::::::\n";
+  EXPECT(lcos::shadow_line_for_user(shadow_file, "qarm1") == formatted);
+  EXPECT(lcos::shadow_line_for_user(shadow_file, "missing").empty());
+  EXPECT(lcos::shadow_line_for_user(shadow_file, "qa").empty());
+
+  // Real-name Cancel restores GECOS from the saved passwd line. An empty
+  // GECOS is a real field, not a missing one.
+  const std::string passwd = "qarm1:x:1001:1001:QA User:/home/qarm1:/bin/bash";
+  EXPECT(lcos::passwd_field_count(passwd) == 7);
+  EXPECT(lcos::passwd_field(passwd, 0) == "qarm1");
+  EXPECT(lcos::passwd_field(passwd, 4) == "QA User");
+  EXPECT(lcos::passwd_field("qarm1:x:1001:1001::/home/qarm1:/bin/bash", 4).empty());
+  EXPECT(lcos::passwd_field_count("short:x") == 2);
+  EXPECT(lcos::passwd_field("short:x", 4).empty());
 
   EXPECT(lcos::valid_timezone_name("UTC"));
   EXPECT(lcos::timezone_from_localtime("/usr/share/zoneinfo/Europe/Oslo") == "Europe/Oslo");

@@ -256,6 +256,66 @@ int millimeters_for_pixels(int pixels) {
   return std::max(1, static_cast<int>(std::lround((pixels / 96.0) * 25.4)));
 }
 
+bool crtc_fits_framebuffer(int x, int y, int fb_width, int fb_height, int screen_width,
+                           int screen_height) {
+  if (fb_width <= 0 || fb_height <= 0) {
+    return true;
+  }
+  if (screen_width <= 0 || screen_height <= 0) {
+    return false;
+  }
+  return x >= 0 && y >= 0 && x <= screen_width - fb_width && y <= screen_height - fb_height;
+}
+
+namespace {
+
+std::string reflection_key(const std::string& value) {
+  return value.empty() || value == "0" ? std::string("0") : value;
+}
+
+const OutputConfig* output_named(const std::vector<OutputConfig>& outputs, const std::string& name) {
+  for (const auto& output : outputs) {
+    if (output.name == name) {
+      return &output;
+    }
+  }
+  return nullptr;
+}
+
+bool output_geometry_matches(const OutputConfig& left, const OutputConfig& right) {
+  if (left.active != right.active || left.primary != right.primary) {
+    return false;
+  }
+  if (!left.active) {
+    return true;
+  }
+  if (left.x != right.x || left.y != right.y || left.width != right.width ||
+      left.height != right.height || left.rotation != right.rotation) {
+    return false;
+  }
+  if (reflection_key(left.reflection) != reflection_key(right.reflection)) {
+    return false;
+  }
+  const double left_scale = left.scale > 0.05 ? left.scale : 1.0;
+  const double right_scale = right.scale > 0.05 ? right.scale : 1.0;
+  return std::abs(left_scale - right_scale) <= 0.02;
+}
+
+}  // namespace
+
+bool layouts_equivalent(const std::vector<OutputConfig>& left, const std::vector<OutputConfig>& right) {
+  if (left.size() != right.size()) {
+    return false;
+  }
+  for (const auto& output : left) {
+    const OutputConfig* match = output_named(right, output.name);
+    if (match == nullptr || !output_geometry_matches(output, *match)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 namespace {
 
 std::vector<std::string> path_parts(const std::string& path) {

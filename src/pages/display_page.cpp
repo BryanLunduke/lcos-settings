@@ -345,8 +345,10 @@ DisplayPage::~DisplayPage() {
 
 GdkFilterReturn DisplayPage::screen_filter(GdkXEvent* xevent, GdkEvent*, gpointer data) {
   auto* self = static_cast<DisplayPage*>(data);
+  // hardware_changed_ covers the gap after Apply and before the confirm
+  // dialog. Reloading there would treat the rejected mode as the baseline.
   if (self == nullptr || !self->alive_ || self->applying_ || self->confirming_ || self->dirty_ ||
-      !self->randr_.is_screen_change(xevent)) {
+      self->hardware_changed_ || !self->randr_.is_screen_change(xevent)) {
     return GDK_FILTER_CONTINUE;
   }
   self->load_hardware();
@@ -362,16 +364,19 @@ void DisplayPage::load_hardware() {
                                              : randr_.error());
     return;
   }
+  const bool preserve_baseline = dirty_ || hardware_changed_ || confirming_ || !pending_revert_.empty();
   outputs_ = std::move(next);
   if (outputs_.empty()) {
     status_->set_text(randr_.error().empty()
                           ? "No connected displays were found."
                           : randr_.error());
-  } else {
+  } else if (!preserve_baseline) {
     status_->set_text("Drag a display to move it. Mirror and Extend update the layout. Apply asks you to keep it.");
   }
-  session_open_ = outputs_;
-  confirmed_ = outputs_;
+  if (!preserve_baseline) {
+    session_open_ = outputs_;
+    confirmed_ = outputs_;
+  }
   selected_index_ = 0;
   rebuild_output_combo();
   show_selected();
@@ -829,11 +834,19 @@ bool DisplayPage::commit_pending() {
   normalize_positions(outputs_);
   show_selected();
   redraw();
+  // Read the live layout now. confirmed_ is not used: a screen event can
+  // replace it with the mode we are about to try.
+  std::vector<OutputConfig> revert_to = randr_.read();
+  if (revert_to.empty()) {
+    revert_to = confirmed_.empty() ? session_open_ : confirmed_;
+  }
+  pending_revert_ = revert_to;
   applying_ = true;
   const std::string error = randr_.apply(outputs_);
   applying_ = false;
   if (!error.empty()) {
-    clear_temp_scheme();
+    pending_revert_.clear();
+    clear_temp_scheme(false);
     Gtk::MessageDialog dialog(parent_, "Could not apply the display layout.", false,
                               Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
     dialog.set_secondary_text(error);
@@ -860,6 +873,7 @@ bool DisplayPage::commit_pending() {
     confirmed_ = outputs_;
     session_open_ = outputs_;
     hardware_changed_ = false;
+    pending_revert_.clear();
     // Keep confirmed the layout. A later Cancel must not put the old one back.
     store_.drop_channel("displays");
     dirty_ = false;
@@ -868,42 +882,81 @@ bool DisplayPage::commit_pending() {
     reload_profiles();
     return true;
   }
-  if (!confirmed_.empty()) {
-    applying_ = true;
-    const std::string revert_error = randr_.apply(confirmed_);
-    applying_ = false;
-    if (!revert_error.empty()) {
-      clear_temp_scheme();
-      status_->set_text(revert_error);
-      show_selected();
-      redraw();
-      return false;
-    }
+  // Drop Temp without asking xfsettingsd to apply Default. A profile with no
+  // Default scheme has nothing for it to restore, and that request used to
+  // leave the rejected mode on screen while this window said it had reverted.
+  clear_temp_scheme(false);
+  std::string revert_error;
+  if (!apply_saved_layout(revert_to, revert_error)) {
+    status_->set_text(revert_error.empty() ? "The previous layout was not restored." : revert_error);
+    show_selected();
+    redraw();
+    return false;
   }
-  clear_temp_scheme();
+  outputs_ = confirmed_;
+  session_open_ = confirmed_;
+  hardware_changed_ = false;
+  pending_revert_.clear();
+  dirty_ = false;
+  pending_changed.emit();
+  selected_index_ = outputs_.empty()
+                        ? 0
+                        : std::clamp(selected_index_, 0, static_cast<int>(outputs_.size()) - 1);
+  rebuild_output_combo();
   status_->set_text("Reverted to the previous layout. Adjust it and press Apply to try again.");
   show_selected();
   redraw();
   return false;
 }
 
-void DisplayPage::clear_temp_scheme() {
+void DisplayPage::clear_temp_scheme(bool trigger_apply) {
   store_.reset_untracked("displays", "/Temp", true);
   if (store_.get_string("displays", "/ActiveProfile", "") == "Temp") {
     store_.set_string_untracked("displays", "/ActiveProfile", "Default");
   }
-  store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
+  if (trigger_apply) {
+    store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
+  }
+}
+
+bool DisplayPage::apply_saved_layout(const std::vector<OutputConfig>& layout, std::string& error) {
+  if (layout.empty()) {
+    error = "The previous layout was not restored.";
+    return false;
+  }
+  applying_ = true;
+  error = randr_.apply(layout);
+  applying_ = false;
+  if (!error.empty()) {
+    return false;
+  }
+  const auto now = randr_.read();
+  if (!layouts_equivalent(now, layout)) {
+    error = "The previous layout was not restored.";
+    return false;
+  }
+  confirmed_ = now.empty() ? layout : now;
+  return true;
 }
 
 void DisplayPage::restore_session_hardware() {
   if (!hardware_changed_) {
     return;
   }
-  if (!session_open_.empty()) {
-    randr_.apply(session_open_);
+  const std::vector<OutputConfig> target = !pending_revert_.empty() ? pending_revert_ : session_open_;
+  // RandR is last. /Schemes/Apply is not set here; a missing Default scheme
+  // must not run after the restore and put the rejected mode back.
+  clear_temp_scheme(false);
+  std::string error;
+  if (apply_saved_layout(target, error)) {
+    outputs_ = confirmed_;
+    session_open_ = confirmed_;
+    rebuild_output_combo();
+    show_selected();
+    redraw();
   }
-  clear_temp_scheme();
   hardware_changed_ = false;
+  pending_revert_.clear();
 }
 
 namespace {

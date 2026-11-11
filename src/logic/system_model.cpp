@@ -7,8 +7,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <set>
+#include <sstream>
 
 namespace lcos {
 namespace {
@@ -905,13 +909,128 @@ std::vector<std::string> split_fields(const std::string& line) {
   return fields;
 }
 
+std::string join_fields(const std::vector<std::string>& fields) {
+  std::string out;
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    if (i != 0) {
+      out.push_back(':');
+    }
+    out += fields[i];
+  }
+  return out;
+}
+
+// glibc stores a blank shadow flag as ~0ul. Writing that decimal makes
+// getent, pwck, and su reject the account.
+bool shadow_flag_text_is_sentinel(const std::string& text) {
+  if (text.empty()) {
+    return false;
+  }
+  errno = 0;
+  char* end = nullptr;
+  const unsigned long value = std::strtoul(text.c_str(), &end, 10);
+  if (end == text.c_str() || (end != nullptr && *end != '\0')) {
+    return false;
+  }
+  return value == std::numeric_limits<unsigned long>::max();
+}
+
+std::string shadow_number(long value) { return value < 0 ? std::string() : std::to_string(value); }
+
 }  // namespace
+
+std::string shadow_flag_text(unsigned long flag) {
+  if (flag == 0 || flag == std::numeric_limits<unsigned long>::max()) {
+    return {};
+  }
+  return std::to_string(flag);
+}
+
+std::string format_shadow_record(const ShadowRecord& record) {
+  std::ostringstream out;
+  out << record.name << ':' << record.hash << ':' << shadow_number(record.last_change) << ':'
+      << shadow_number(record.minimum) << ':' << shadow_number(record.maximum) << ':'
+      << shadow_number(record.warning) << ':' << shadow_number(record.inactive) << ':'
+      << shadow_number(record.expire) << ':' << shadow_flag_text(record.flag);
+  return out.str();
+}
+
+std::string shadow_line_for_user(const std::string& shadow_text, const std::string& user) {
+  if (user.empty() || user.find(':') != std::string::npos || user.find('\n') != std::string::npos) {
+    return {};
+  }
+  const std::string prefix = user + ":";
+  std::string line;
+  for (std::size_t i = 0; i <= shadow_text.size(); ++i) {
+    if (i == shadow_text.size() || shadow_text[i] == '\n') {
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+      if (line.compare(0, prefix.size(), prefix) == 0) {
+        return line;
+      }
+      line.clear();
+    } else {
+      line.push_back(shadow_text[i]);
+    }
+  }
+  return {};
+}
+
+std::string normalize_shadow_line(const std::string& saved_line) {
+  const std::string saved = trim_copy_local(saved_line);
+  auto fields = split_fields(saved);
+  if (fields.size() < 9 || !shadow_flag_text_is_sentinel(fields.back())) {
+    return saved;
+  }
+  fields.back().clear();
+  return join_fields(fields);
+}
+
+std::string passwd_field(const std::string& line, int index) {
+  if (index < 0) {
+    return {};
+  }
+  int current = 0;
+  std::string field;
+  for (char c : line) {
+    if (c == '\n' || c == '\r') {
+      break;
+    }
+    if (c == ':') {
+      if (current == index) {
+        return field;
+      }
+      field.clear();
+      ++current;
+      continue;
+    }
+    field.push_back(c);
+  }
+  return current == index ? field : std::string();
+}
+
+int passwd_field_count(const std::string& line) {
+  if (line.empty() || line[0] == '\n') {
+    return 0;
+  }
+  int count = 1;
+  for (char c : line) {
+    if (c == '\n' || c == '\r') {
+      break;
+    }
+    if (c == ':') {
+      ++count;
+    }
+  }
+  return count;
+}
 
 ShadowRestore restore_shadow_line(const std::string& shadow_text, const std::string& saved_line,
                                   bool account_exists) {
   ShadowRestore result;
   result.text = shadow_text;
-  const std::string saved = trim_copy_local(saved_line);
+  const std::string saved = normalize_shadow_line(saved_line);
   const auto fields = split_fields(saved);
   if (fields.size() < 9 || fields[0].empty()) {
     result.error = "the saved password entry is incomplete";

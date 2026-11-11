@@ -752,18 +752,33 @@ void action_locale(const std::string& token, const std::vector<std::string>& loc
   write_file("/etc/default/locale", text, 0644);
 }
 
-std::string shadow_field(long value) { return value < 0 ? std::string() : std::to_string(value); }
-
-std::string format_shadow(const spwd* shadow) {
-  const std::string flag =
-      shadow->sp_flag == 0 ? std::string() : std::to_string(static_cast<unsigned long>(shadow->sp_flag));
-  std::ostringstream out;
-  out << (shadow->sp_namp != nullptr ? shadow->sp_namp : "") << ':'
-      << (shadow->sp_pwdp != nullptr ? shadow->sp_pwdp : "") << ':' << shadow_field(shadow->sp_lstchg)
-      << ':' << shadow_field(shadow->sp_min) << ':' << shadow_field(shadow->sp_max) << ':'
-      << shadow_field(shadow->sp_warn) << ':' << shadow_field(shadow->sp_inact) << ':'
-      << shadow_field(shadow->sp_expire) << ':' << flag;
-  return out.str();
+std::string saved_shadow_line(const std::string& user) {
+  // Copy the on-disk line. getspnam turns a blank flag into ULONG_MAX, and
+  // writing that decimal breaks getent, pwck, and su.
+  if (lckpwdf() != 0) {
+    fail("could not lock the password file");
+  }
+  const std::string saved =
+      lcos::normalize_shadow_line(lcos::shadow_line_for_user(slurp("/etc/shadow"), user));
+  ulckpwdf();
+  if (!saved.empty()) {
+    return saved;
+  }
+  const spwd* shadow = getspnam(user.c_str());
+  if (shadow == nullptr || shadow->sp_namp == nullptr) {
+    return {};
+  }
+  lcos::ShadowRecord record;
+  record.name = shadow->sp_namp;
+  record.hash = shadow->sp_pwdp != nullptr ? shadow->sp_pwdp : "";
+  record.last_change = shadow->sp_lstchg;
+  record.minimum = shadow->sp_min;
+  record.maximum = shadow->sp_max;
+  record.warning = shadow->sp_warn;
+  record.inactive = shadow->sp_inact;
+  record.expire = shadow->sp_expire;
+  record.flag = shadow->sp_flag;
+  return lcos::format_shadow_record(record);
 }
 
 void remember_account(const std::string& token, const std::string& name) {
@@ -782,11 +797,11 @@ void remember_account(const std::string& token, const std::string& name) {
   passwd_line << user << ":" << passwd_field << ":" << uid << ":" << gid << ":" << gecos << ":"
               << home << ":" << shell << "\n";
   remember_text(token, "passwd." + user, passwd_line.str());
-  const spwd* shadow = getspnam(user.c_str());
-  if (shadow == nullptr || shadow->sp_namp == nullptr) {
+  const std::string saved_shadow = saved_shadow_line(user);
+  if (saved_shadow.empty()) {
     fail("could not read the password entry");
   }
-  remember_text(token, "shadow." + user, format_shadow(shadow) + "\n");
+  remember_text(token, "shadow." + user, saved_shadow + "\n");
   std::string primary_name;
   if (const group* primary = getgrgid(gid)) {
     if (primary->gr_name != nullptr) {
@@ -1220,10 +1235,27 @@ bool revert_token(const std::string& token, lcos::PrivDomain domain) {
         continue;
       }
       const std::string user = name.substr(7);
+      const std::string line = first_line(slurp(dir + "/" + name));
       if (getpwnam(user.c_str()) != nullptr) {
+        // The account is still there (real name, password, or type). useradd
+        // is only for a removed account. chfn's GECOS change has to be put
+        // back itself; skipping this file left the new name in place.
+        endpwent();
+        if (lcos::passwd_field_count(line) < 7 || lcos::passwd_field(line, 0).empty()) {
+          report.errors.push_back("the saved account is incomplete");
+          continue;
+        }
+        const passwd* live = getpwnam(user.c_str());
+        const std::string current = live != nullptr && live->pw_gecos != nullptr ? live->pw_gecos : "";
+        const std::string saved_gecos = lcos::passwd_field(line, 4);
+        endpwent();
+        if (current != saved_gecos &&
+            !run_command({"usermod", "--comment", saved_gecos, user}, "")) {
+          report.errors.push_back("could not restore the real name");
+        }
         continue;
       }
-      const std::string line = first_line(slurp(dir + "/" + name));
+      endpwent();
       std::vector<std::string> fields;
       std::string field;
       for (char c : line) {

@@ -150,9 +150,36 @@ std::string locale_file_with_values(const std::string& original, const std::stri
                                     const std::string& lc_time, const std::string& lc_numeric,
                                     const std::string& lc_monetary);
 
+// One /etc/shadow record. Aging fields use -1 for "empty". An unset flag is
+// 0 or ULONG_MAX: glibc's getspnam stores a blank flag as ~0ul.
+struct ShadowRecord {
+  std::string name;
+  std::string hash;
+  long last_change = -1;
+  long minimum = -1;
+  long maximum = -1;
+  long warning = -1;
+  long inactive = -1;
+  long expire = -1;
+  unsigned long flag = static_cast<unsigned long>(-1);
+};
+
+// Empty string when the flag is unset. Never the decimal form of ULONG_MAX.
+std::string shadow_flag_text(unsigned long flag);
+// Shadow line without a trailing newline. An unset flag is a blank field.
+std::string format_shadow_record(const ShadowRecord& record);
+// The user's line from a shadow file, without the newline. Empty if absent.
+std::string shadow_line_for_user(const std::string& shadow_text, const std::string& user);
+// Rewrites a flag field of 18446744073709551615 to empty. Other fields stay.
+std::string normalize_shadow_line(const std::string& saved_line);
+// Colon field from a passwd line, or empty when the line is shorter.
+std::string passwd_field(const std::string& line, int index);
+int passwd_field_count(const std::string& line);
+
 // Puts a full shadow line back. A saved line with fewer than nine fields is
 // refused. When the account is not in passwd, the file is left unchanged and
-// ok is false: a short name:hash line is never appended.
+// ok is false: a short name:hash line is never appended. A sentinel flag is
+// blanked before the line is written.
 struct ShadowRestore {
   bool ok = false;
   std::string text;

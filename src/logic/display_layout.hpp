@@ -56,6 +56,15 @@ double xfconf_scale_from_ui(double ui_scale);
 double ui_scale_from_xfconf(double stored);
 
 ScreenBounds screen_bounds(const std::vector<OutputConfig>& outputs);
+// True when the CRTC's framebuffer rectangle lies inside the screen.
+// A disabled CRTC (non-positive size) fits. Used before shrinking the screen
+// for a scale change: the old mode must be turned off first or the server
+// returns BadMatch.
+bool crtc_fits_framebuffer(int x, int y, int fb_width, int fb_height, int screen_width,
+                           int screen_height);
+// Same active outputs, geometry, rotation, reflection, and UI scale.
+bool layouts_equivalent(const std::vector<OutputConfig>& left,
+                        const std::vector<OutputConfig>& right);
 void normalize_positions(std::vector<OutputConfig>& outputs);
 void arrange_extend(std::vector<OutputConfig>& outputs);
 void arrange_mirror(std::vector<OutputConfig>& outputs);
