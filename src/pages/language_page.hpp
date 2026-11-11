@@ -5,6 +5,7 @@
 #include "backends/priv_client.hpp"
 #include "pages/settings_page.hpp"
 
+#include <gtkmm/button.h>
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/label.h>
 #include <gtkmm/spinner.h>
@@ -22,9 +23,6 @@ class LanguagePage : public SettingsPage {
   Glib::ustring summary() const override {
     return "System language and regional formats. Keyboard layouts stay on the Keyboard page.";
   }
-  bool has_pending() const override { return session_.dirty(); }
-  bool commit_pending() override;
-  void revert_page() override;
   void on_page_shown() override;
 
  private:
@@ -47,6 +45,7 @@ class LanguagePage : public SettingsPage {
   std::vector<LocaleChoice> locales_;
   Gtk::Label* status_ = nullptr;
   Gtk::Spinner* spinner_ = nullptr;
+  Gtk::Button* cancel_locale_ = nullptr;
   Gtk::ComboBoxText language_;
   Gtk::ComboBoxText dates_;
   Gtk::ComboBoxText numbers_;

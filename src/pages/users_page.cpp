@@ -30,7 +30,13 @@ std::string read_text(const std::string& path) {
   return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-std::string sudo_members() {
+struct SudoGroup {
+  std::string members;
+  unsigned gid = 0;
+};
+
+SudoGroup sudo_group() {
+  SudoGroup group;
   const std::string text = read_text("/etc/group");
   std::string line;
   for (std::size_t i = 0; i <= text.size(); ++i) {
@@ -39,12 +45,30 @@ std::string sudo_members() {
       continue;
     }
     if (line.compare(0, 5, "sudo:") == 0) {
-      const auto last = line.rfind(':');
-      return last == std::string::npos ? std::string() : line.substr(last + 1);
+      std::vector<std::string> fields;
+      std::string field;
+      for (char c : line) {
+        if (c == ':') {
+          fields.push_back(field);
+          field.clear();
+        } else {
+          field.push_back(c);
+        }
+      }
+      fields.push_back(field);
+      if (fields.size() >= 4) {
+        try {
+          group.gid = static_cast<unsigned>(std::stoul(fields[2]));
+        } catch (const std::exception&) {
+          group.gid = 0;
+        }
+        group.members = fields[3];
+      }
+      return group;
     }
     line.clear();
   }
-  return {};
+  return group;
 }
 
 void append_conf_dir(const std::string& directory, std::vector<std::string>& texts) {
@@ -67,14 +91,18 @@ void append_conf_dir(const std::string& directory, std::vector<std::string>& tex
 }
 
 std::string autologin_now() {
-  // LightDM applies files in this order. 60-lcos-settings.conf sorts after
-  // the installer drop-in, so it wins without editing 50-lcos.conf.
+  // LightDM applies /etc/lightdm/lightdm.conf after every drop-in. Reading
+  // the main file first made the UI trust 60-lcos-settings.conf while
+  // LightDM still used the username in the main file. 50-lcos.conf is only
+  // read here; opening this page does not write it.
   std::vector<std::string> texts;
-  texts.push_back(read_text("/usr/share/lightdm/lightdm.conf"));
-  append_conf_dir("/usr/share/lightdm/lightdm.conf.d", texts);
-  append_conf_dir("/etc/xdg/lightdm/lightdm.conf.d", texts);
-  texts.push_back(read_text("/etc/lightdm/lightdm.conf"));
-  append_conf_dir("/etc/lightdm/lightdm.conf.d", texts);
+  for (const auto& root : lightdm_config_roots()) {
+    if (root.directory) {
+      append_conf_dir(root.path, texts);
+    } else {
+      texts.push_back(read_text(root.path));
+    }
+  }
   return effective_autologin(texts);
 }
 
@@ -144,13 +172,22 @@ UsersPage::UsersPage(PrivSession& session, Gtk::Window& parent)
   auto* detail = make_vbox(6);
   detail->pack_start(picture_, Gtk::PACK_SHRINK);
   FormGrid form(160);
-  form.add("Account type", type_);
-  form.add("Log in automatically", autologin_combo_);
+  form.add("_Account type", type_);
   detail->pack_start(form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Selected account", *detail), Gtk::PACK_SHRINK);
+
+  auto* login = make_vbox(6);
+  FormGrid login_form(160);
+  login_form.add("_Log in automatically", autologin_combo_);
+  login->pack_start(login_form.grid(), Gtk::PACK_SHRINK);
+  auto* login_note = make_label(
+      "Automatic login is one setting for the computer, not for the account selected above. "
+      "It asks before it changes, and only offers accounts that can sign in.");
+  login_note->set_line_wrap(true);
+  login->pack_start(*login_note, Gtk::PACK_SHRINK);
+  page->pack_start(*make_frame("Login", *login), Gtk::PACK_SHRINK);
   auto* note = make_label(
       "Pictures are stored as ~/.face because LCOS does not ship AccountsService. "
-      "Automatic login stays as the installer left it until you change it here. "
       "The current user and the last administrator cannot be removed.");
   note->set_line_wrap(true);
   page->pack_start(*note, Gtk::PACK_SHRINK);
@@ -192,7 +229,8 @@ const Account* UsersPage::selected() {
 
 void UsersPage::reload() {
   const std::string keep = selected_name();
-  accounts_ = human_accounts(read_text("/etc/passwd"), sudo_members(), 1000);
+  const SudoGroup sudo = sudo_group();
+  accounts_ = human_accounts(read_text("/etc/passwd"), sudo.members, 1000, sudo.gid);
   autologin_ = autologin_now();
   Freeze freeze(freeze_);
   store_->clear();
@@ -314,7 +352,8 @@ void UsersPage::remove_user() {
   }
   Gtk::MessageDialog confirm(parent_, "Remove " + account->name + "?", false, Gtk::MESSAGE_QUESTION,
                              Gtk::BUTTONS_YES_NO, true);
-  confirm.set_secondary_text("Cancel puts the account back. Files from the home directory are restored too.");
+  confirm.set_secondary_text(
+      "Cancel puts the account back. The home directory stays in place either way.");
   if (confirm.run() != Gtk::RESPONSE_YES) {
     return;
   }
@@ -456,16 +495,22 @@ void UsersPage::change_autologin() {
   if (chosen == current) {
     return;
   }
+  const std::string question = chosen == "none" ? "Stop automatic login?"
+                                                : "Log in automatically as " + chosen + "?";
+  Gtk::MessageDialog confirm(parent_, question, false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO,
+                             true);
+  confirm.set_secondary_text(
+      "This changes the login screen for everyone on this computer. Cancel can put it back.");
+  if (confirm.run() != Gtk::RESPONSE_YES) {
+    reload();
+    return;
+  }
   const PrivResult result = session_.run({"set-autologin", chosen});
   if (!result.ok) {
     tell(result.error);
   }
   reload();
 }
-
-bool UsersPage::commit_pending() { return session_.commit().ok; }
-
-void UsersPage::revert_page() { session_.revert(); }
 
 void UsersPage::on_page_shown() { reload(); }
 

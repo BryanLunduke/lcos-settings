@@ -10,6 +10,7 @@
 #include <X11/extensions/Xrandr.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <map>
 #include <set>
@@ -22,6 +23,26 @@ int g_x_error = 0;
 int error_trap(Display*, XErrorEvent* event) {
   g_x_error = event->error_code;
   return 0;
+}
+
+bool scale_differs(double left, double right) {
+  return std::abs(left - right) > 0.01;
+}
+
+void set_crtc_matrix(Display* display, RRCrtc crtc, double matrix) {
+  XTransform transform;
+  std::memset(&transform, 0, sizeof(transform));
+  transform.matrix[0][0] = XDoubleToFixed(matrix);
+  transform.matrix[1][1] = XDoubleToFixed(matrix);
+  transform.matrix[2][2] = XDoubleToFixed(1.0);
+  // libXrandr calls strlen on the filter. NULL crashes (Revert and scale 1
+  // both did). xfsettingsd 4.20 uses "nearest" for an identity transform and
+  // "bilinear" otherwise. The call is skipped when the matrix is already
+  // identity, so Xvfb's BadValue on XRRSetCrtcTransform stays off the
+  // session test.
+  const char* filter = scale_differs(matrix, 1.0) ? "bilinear" : "nearest";
+  XRRSetCrtcTransform(display, crtc, &transform, filter, nullptr, 0);
+  XSync(display, False);
 }
 
 std::string edid_checksum(Display* display, RROutput output, const XRROutputInfo* info) {
@@ -115,13 +136,27 @@ XrandrBackend::XrandrBackend(Display* display) : display_(display) {
     error_ = "No X display";
     return;
   }
-  int event_base = 0;
   int error_base = 0;
-  if (!XRRQueryExtension(display_, &event_base, &error_base)) {
+  if (!XRRQueryExtension(display_, &event_base_, &error_base)) {
     error_ = "This X server has no RandR extension";
     return;
   }
   ready_ = true;
+}
+
+void XrandrBackend::select_screen_events() {
+  if (!ready_ || display_ == nullptr) {
+    return;
+  }
+  XRRSelectInput(display_, RootWindow(display_, DefaultScreen(display_)), RRScreenChangeNotifyMask);
+}
+
+bool XrandrBackend::is_screen_change(const void* xevent) const {
+  if (!ready_ || xevent == nullptr) {
+    return false;
+  }
+  const auto* event = static_cast<const XEvent*>(xevent);
+  return event->type == event_base_ + RRScreenChangeNotify;
 }
 
 std::vector<OutputConfig> XrandrBackend::read() {
@@ -204,10 +239,9 @@ std::vector<OutputConfig> XrandrBackend::read() {
       }
       XRRCrtcTransformAttributes* transform = nullptr;
       if (XRRGetCrtcTransform(display_, info->crtc, &transform) && transform != nullptr) {
-        output.scale = XFixedToDouble(transform->currentTransform.matrix[0][0]);
-        if (output.scale < 0.05) {
-          output.scale = 1.0;
-        }
+        // The RandR matrix is 1/ui-scale, matching xfce4-settings 4.20.
+        const double matrix = XFixedToDouble(transform->currentTransform.matrix[0][0]);
+        output.scale = matrix > 0.05 ? 1.0 / matrix : 1.0;
         XFree(transform);
       }
     } else if (!output.modes.empty()) {
@@ -350,64 +384,201 @@ std::string XrandrBackend::apply(const std::vector<OutputConfig>& desired) {
   XErrorHandler previous = XSetErrorHandler(error_trap);
   XGrabServer(display_);
 
+  // Snapshot every CRTC before changing anything. The new layout is already
+  // validated above, so a rejection from the server can be rolled back
+  // instead of leaving every output disabled.
+  struct CrtcSnap {
+    RRCrtc crtc = None;
+    int x = 0;
+    int y = 0;
+    int fb_width = 0;
+    int fb_height = 0;
+    RRMode mode = None;
+    Rotation rotation = RR_Rotate_0;
+    double matrix = 1.0;
+    bool has_transform = false;
+    std::vector<RROutput> outputs;
+  };
+  std::vector<CrtcSnap> saved;
+  saved.reserve(static_cast<std::size_t>(resources->ncrtc));
   for (int i = 0; i < resources->ncrtc; ++i) {
-    XRRSetCrtcConfig(display_, resources, resources->crtcs[i], CurrentTime, 0, 0,
-                     None, RR_Rotate_0, nullptr, 0);
-  }
-  XRRSetScreenSize(display_, root, bounds.width, bounds.height,
-                   millimeters_for_pixels(bounds.width),
-                   millimeters_for_pixels(bounds.height));
-
-  std::string failure;
-  RROutput primary = None;
-  for (const auto& assignment : plan) {
-    if (!assignment.config->active) {
+    XRRCrtcInfo* info = XRRGetCrtcInfo(display_, resources, resources->crtcs[i]);
+    if (info == nullptr) {
       continue;
     }
-    const double scale = assignment.config->scale > 0 ? assignment.config->scale : 1.0;
-    // Identity transforms are left alone. Xvfb rejects XRRSetCrtcTransform
-    // with BadValue, and a scale of 1 does not need a filter.
-    if (scale < 0.99 || scale > 1.01) {
-      XTransform transform;
-      std::memset(&transform, 0, sizeof(transform));
-      transform.matrix[0][0] = XDoubleToFixed(scale);
-      transform.matrix[1][1] = XDoubleToFixed(scale);
-      transform.matrix[2][2] = XDoubleToFixed(1.0);
-      XRRSetCrtcTransform(display_, assignment.crtc, &transform, "bilinear", nullptr, 0);
+    CrtcSnap snap;
+    snap.crtc = resources->crtcs[i];
+    snap.x = info->x;
+    snap.y = info->y;
+    snap.fb_width = static_cast<int>(info->width);
+    snap.fb_height = static_cast<int>(info->height);
+    snap.mode = info->mode;
+    snap.rotation = info->rotation;
+    snap.outputs.assign(info->outputs, info->outputs + info->noutput);
+    XRRCrtcTransformAttributes* transform = nullptr;
+    if (XRRGetCrtcTransform(display_, snap.crtc, &transform) && transform != nullptr) {
+      snap.matrix = XFixedToDouble(transform->currentTransform.matrix[0][0]);
+      if (snap.matrix < 0.05) {
+        snap.matrix = 1.0;
+      }
+      snap.has_transform = true;
+      XFree(transform);
+    }
+    saved.push_back(std::move(snap));
+    XRRFreeCrtcInfo(info);
+  }
+  const int old_width = DisplayWidth(display_, DefaultScreen(display_));
+  const int old_height = DisplayHeight(display_, DefaultScreen(display_));
+  auto restore = [&]() {
+    const int wide = std::max(old_width, bounds.width);
+    const int high = std::max(old_height, bounds.height);
+    XRRSetScreenSize(display_, root, wide, high, millimeters_for_pixels(wide),
+                     millimeters_for_pixels(high));
+    for (const auto& snap : saved) {
+      // SetCrtcConfig BadMatches when a leftover scale transform does not
+      // agree with the mode. Put the saved transform back first.
+      if (snap.has_transform) {
+        set_crtc_matrix(display_, snap.crtc, snap.matrix);
+        g_x_error = 0;
+      }
+      XRRSetCrtcConfig(display_, resources, snap.crtc, CurrentTime, snap.x, snap.y, snap.mode,
+                       snap.rotation, snap.outputs.empty() ? nullptr : const_cast<RROutput*>(snap.outputs.data()),
+                       static_cast<int>(snap.outputs.size()));
+    }
+    XRRSetScreenSize(display_, root, old_width, old_height, millimeters_for_pixels(old_width),
+                     millimeters_for_pixels(old_height));
+  };
+
+  std::string failure;
+  // Set after a failed shrink disables the CRTCs and clears their transforms.
+  bool transforms_cleared = false;
+  auto set_screen = [&](int width, int height) {
+    XRRSetScreenSize(display_, root, width, height, millimeters_for_pixels(width),
+                     millimeters_for_pixels(height));
+    XSync(display_, False);
+  };
+  auto take_x_error = [&](const std::string& message) {
+    if (g_x_error != 0 && failure.empty()) {
+      failure = message + " (error " + std::to_string(g_x_error) + ")";
+    }
+    g_x_error = 0;
+  };
+  auto program_outputs = [&]() {
+    for (const auto& assignment : plan) {
+      if (!assignment.config->active || !failure.empty()) {
+        continue;
+      }
+      const double ui_scale = assignment.config->scale > 0.05 ? assignment.config->scale : 1.0;
+      const double matrix = 1.0 / ui_scale;
+      double current_matrix = 1.0;
+      if (!transforms_cleared) {
+        for (const auto& snap : saved) {
+          if (snap.crtc == assignment.crtc && snap.has_transform) {
+            current_matrix = snap.matrix;
+            break;
+          }
+        }
+      }
+      // Identity is left alone when it is already identity: Xvfb rejects
+      // XRRSetCrtcTransform with BadValue. A scale of 1 after a scale of 2
+      // still has to clear the old matrix or SetCrtcConfig returns BadMatch.
+      // The filter is never NULL: libXrandr calls strlen on it.
+      if (scale_differs(current_matrix, matrix)) {
+        set_crtc_matrix(display_, assignment.crtc, matrix);
+        if (g_x_error != 0 && failure.empty()) {
+          failure = "The X server rejected scale " + std::to_string(ui_scale) + " for " +
+                    assignment.config->name;
+        }
+        g_x_error = 0;
+      }
+      if (!failure.empty()) {
+        continue;
+      }
+      const Rotation rotation = rotation_bits(*assignment.config);
+      RROutput output_id = assignment.output;
+      const Status status = XRRSetCrtcConfig(
+          display_, resources, assignment.crtc, CurrentTime, assignment.config->x,
+          assignment.config->y, assignment.mode, rotation, &output_id, 1);
+      if (status != RRSetConfigSuccess && failure.empty()) {
+        failure = "The X server rejected the layout for " + assignment.config->name +
+                  " (status " + std::to_string(static_cast<int>(status)) + ")";
+      }
+      take_x_error("The X server reported an error while applying the layout");
+    }
+  };
+
+  // Keep the framebuffer large enough to program the new modes, then shrink.
+  // Scale 2 is a 1280x800 mode on a 640x400 framebuffer. SetScreenSize
+  // returns BadMatch while a CRTC still covers the old pixels.
+  const int wide = std::max(old_width, bounds.width);
+  const int high = std::max(old_height, bounds.height);
+  if (wide != old_width || high != old_height) {
+    set_screen(wide, high);
+    take_x_error("The X server reported an error while sizing the screen");
+  }
+  if (failure.empty()) {
+    program_outputs();
+  }
+
+  const bool shrink = bounds.width < wide || bounds.height < high;
+  if (failure.empty() && shrink) {
+    set_screen(bounds.width, bounds.height);
+    if (g_x_error != 0) {
+      g_x_error = 0;
+      for (const auto& assignment : plan) {
+        if (!assignment.config->active) {
+          continue;
+        }
+        XRRSetCrtcConfig(display_, resources, assignment.crtc, CurrentTime, 0, 0, None, RR_Rotate_0,
+                         nullptr, 0);
+      }
       XSync(display_, False);
       g_x_error = 0;
-    }
-
-    const Rotation rotation = rotation_bits(*assignment.config);
-    RROutput output_id = assignment.output;
-    const Status status = XRRSetCrtcConfig(
-        display_, resources, assignment.crtc, CurrentTime, assignment.config->x,
-        assignment.config->y, assignment.mode, rotation, &output_id, 1);
-    if (status != RRSetConfigSuccess && failure.empty()) {
-      failure = "The X server rejected the layout for " + assignment.config->name +
-                " (status " + std::to_string(static_cast<int>(status)) + ")";
-    }
-    if (assignment.config->primary) {
-      primary = assignment.output;
-    }
-  }
-  if (primary == None) {
-    for (const auto& assignment : plan) {
-      if (assignment.config->active) {
-        primary = assignment.output;
-        break;
+      set_screen(bounds.width, bounds.height);
+      take_x_error("The X server reported an error while sizing the screen");
+      if (failure.empty()) {
+        transforms_cleared = true;
+        program_outputs();
       }
     }
   }
-  XRRSetOutputPrimary(display_, root, primary);
+
+  RROutput primary = None;
+  if (failure.empty()) {
+    for (int i = 0; i < resources->ncrtc; ++i) {
+      if (used.count(resources->crtcs[i]) != 0) {
+        continue;
+      }
+      XRRSetCrtcConfig(display_, resources, resources->crtcs[i], CurrentTime, 0, 0, None, RR_Rotate_0,
+                       nullptr, 0);
+    }
+    for (const auto& assignment : plan) {
+      if (assignment.config->active && (primary == None || assignment.config->primary)) {
+        primary = assignment.output;
+        if (assignment.config->primary) {
+          break;
+        }
+      }
+    }
+    XRRSetOutputPrimary(display_, root, primary);
+    take_x_error("The X server reported an error while applying the layout");
+  }
+  if (!failure.empty()) {
+    g_x_error = 0;
+    restore();
+    g_x_error = 0;
+  }
   XUngrabServer(display_);
   XSync(display_, False);
-  XSetErrorHandler(previous);
-  XRRFreeScreenResources(resources);
   if (g_x_error != 0 && failure.empty()) {
     failure = "The X server reported error " + std::to_string(g_x_error) +
               " while applying the layout";
+    g_x_error = 0;
+    restore();
+    g_x_error = 0;
   }
+  XSetErrorHandler(previous);
+  XRRFreeScreenResources(resources);
   return failure;
 }
 

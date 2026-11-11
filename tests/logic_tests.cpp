@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+#include "logic/atomic_file.hpp"
 #include "logic/backdrop.hpp"
 #include "logic/confirm.hpp"
 #include "logic/display_layout.hpp"
+#include "logic/helper_status.hpp"
 #include "logic/mime_files.hpp"
 #include "logic/names.hpp"
 #include "logic/power.hpp"
 #include "logic/shortcuts.hpp"
+#include "logic/sound_edit.hpp"
 #include "logic/system_model.hpp"
 #include "logic/text.hpp"
 #include "logic/themes.hpp"
@@ -16,10 +19,16 @@
 
 #include <glib.h>
 
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <cmath>
+#include <ctime>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <string>
 
 namespace fs = std::filesystem;
@@ -145,8 +154,10 @@ void test_layout() {
   right.rotation = 90;
   right.scale = 2;
   EXPECT(lcos::rotated_width(right) == 1080);
-  EXPECT(lcos::footprint_width(right) == 2160);
-  EXPECT(lcos::footprint_height(right) == 3840);
+  // UI scale 2 keeps a framebuffer of mode/2, which is what XFCE's RandR
+  // transform of 1/scale describes.
+  EXPECT(lcos::footprint_width(right) == 540);
+  EXPECT(lcos::footprint_height(right) == 960);
 
   std::vector<lcos::OutputConfig> outputs{left, right};
   lcos::arrange_extend(outputs);
@@ -181,6 +192,28 @@ void test_layout() {
   EXPECT(lcos::millimeters_for_pixels(1920) == 508);
   const auto bounds = lcos::screen_bounds(outputs);
   EXPECT(bounds.width > 0 && bounds.height > 0);
+
+  // Scale 2 keeps the 1280x800 mode and uses a 640x400 framebuffer. The old
+  // CRTC does not fit, so it has to be disabled before the screen shrinks.
+  EXPECT(!lcos::crtc_fits_framebuffer(0, 0, 1280, 800, 640, 400));
+  EXPECT(lcos::crtc_fits_framebuffer(0, 0, 640, 400, 640, 400));
+  EXPECT(lcos::crtc_fits_framebuffer(0, 0, 1024, 768, 1280, 800));
+  EXPECT(lcos::crtc_fits_framebuffer(0, 0, 0, 0, 640, 400));
+
+  lcos::OutputConfig scaled = left;
+  scaled.name = "Virtual-1";
+  scaled.width = 1280;
+  scaled.height = 800;
+  scaled.scale = 2.0;
+  lcos::OutputConfig restored = scaled;
+  restored.scale = 1.0;
+  EXPECT(!lcos::layouts_equivalent({scaled}, {restored}));
+  restored.scale = 2.0;
+  restored.reflection = "0";
+  scaled.reflection = "";
+  EXPECT(lcos::layouts_equivalent({scaled}, {restored}));
+  restored.width = 1024;
+  EXPECT(!lcos::layouts_equivalent({scaled}, {restored}));
 }
 
 void test_confirm_and_volume() {
@@ -204,6 +237,11 @@ void test_confirm_and_volume() {
   EXPECT(lcos::percent_to_volume(150) == lcos::kPaVolumeNorm / 2 * 3);
   EXPECT(lcos::volume_to_percent(lcos::percent_to_volume(73)) == 73);
   EXPECT(lcos::percent_to_volume(400) == lcos::percent_to_volume(150));
+  const auto balanced =
+      lcos::scale_channel_volumes({lcos::kPaVolumeNorm, lcos::kPaVolumeNorm / 2}, 50);
+  EXPECT(balanced.size() == 2);
+  EXPECT(balanced[0] == lcos::percent_to_volume(50));
+  EXPECT(balanced[1] == lcos::percent_to_volume(25));
 }
 
 void test_shortcuts() {
@@ -296,6 +334,25 @@ void test_system_model() {
   const std::string updated = lcos::conf_with_autologin(conf, "guest");
   EXPECT(lcos::autologin_user_in_conf(updated) == "guest");
   EXPECT(updated.find("user-session=xfce") != std::string::npos);
+  EXPECT(updated.find("[Seat:*]\nautologin-user=guest\n") != std::string::npos);
+  std::string present;
+  EXPECT(lcos::autologin_key_present("autologin-user=\n", present));
+  EXPECT(present.empty());
+  EXPECT(!lcos::autologin_key_present("#autologin-user=lcos\n", present));
+  const auto roots = lcos::lightdm_config_roots();
+  EXPECT(!roots.empty());
+  EXPECT(roots.back().path == "/etc/lightdm/lightdm.conf");
+  EXPECT(!roots.back().directory);
+  bool saw_conf_d = false;
+  for (std::size_t i = 0; i + 1 < roots.size(); ++i) {
+    if (roots[i].path == "/etc/lightdm/lightdm.conf.d") {
+      saw_conf_d = true;
+    }
+    EXPECT(roots[i].path != "/etc/lightdm/lightdm.conf");
+  }
+  EXPECT(saw_conf_d);
+  EXPECT(lcos::effective_autologin({"autologin-user=\n", "autologin-user=tester\n"}) == "tester");
+  EXPECT(updated.find("user-session=xfce") != std::string::npos);
   EXPECT(lcos::autologin_user_in_conf(lcos::conf_with_autologin(conf, "")).empty());
 
   const std::string desktop =
@@ -303,6 +360,23 @@ void test_system_model() {
   const auto rows = lcos::merge_autostart({{"example.desktop", desktop}},
                                           {{"example.desktop", desktop + "Hidden=true\n"}});
   EXPECT(rows.size() == 1 && !rows[0].enabled && !rows[0].removable);
+  const std::string sparse = "[Desktop Entry]\nHidden=true\n";
+  const auto overlaid = lcos::merge_autostart({{"example.desktop", desktop}},
+                                              {{"example.desktop", sparse}});
+  EXPECT(overlaid.size() == 1);
+  EXPECT(!overlaid[0].enabled);
+  EXPECT(overlaid[0].command == "/bin/true");
+  EXPECT(overlaid[0].name == "Example");
+  const std::string missing_exec = desktop + "TryExec=/no/such/lcos-tryexec\n";
+  EXPECT(lcos::merge_autostart({{"example.desktop", missing_exec}}, {}).empty());
+  const auto xfce_off = lcos::autostart_toggle_keys(true, true);
+  EXPECT(xfce_off.set_hidden && xfce_off.hidden && !xfce_off.set_override);
+  const auto xfce_on = lcos::autostart_toggle_keys(true, false);
+  EXPECT(xfce_on.set_hidden && !xfce_on.hidden);
+  const auto other_off = lcos::autostart_toggle_keys(false, true);
+  EXPECT(!other_off.set_hidden && other_off.set_override && !other_off.override_on);
+  const auto other_on = lcos::autostart_toggle_keys(false, false);
+  EXPECT(other_on.set_hidden && !other_on.hidden && other_on.set_override && other_on.override_on);
   const auto added = lcos::generated_locale_names("C\nen_US.utf8\n");
   EXPECT(added.size() == 2);
 
@@ -321,6 +395,8 @@ void test_system_model() {
   EXPECT(lcos::enable_locale_in_gen(enabled, supported[0], supported, twice));
   EXPECT(twice.find("en_GB.UTF-8 UTF-8\n") != std::string::npos);
   EXPECT(twice.find("en_GB.UTF-8 UTF-8\nen_GB.UTF-8 UTF-8") == std::string::npos);
+  EXPECT(enabled.size() < 2 || enabled.substr(enabled.size() - 2) != "\n\n");
+  EXPECT(twice == enabled);
   lcos::SupportedLocale unknown{"zz_ZZ.UTF-8", "UTF-8"};
   EXPECT(!lcos::enable_locale_in_gen(enabled, unknown, supported, twice));
 
@@ -328,6 +404,112 @@ void test_system_model() {
   EXPECT(lcos::effective_autologin({"autologin-user=lcos\nuser-session=xfce\n", "autologin-user=\n"})
              .empty());
   EXPECT(lcos::effective_autologin({"#autologin-user=lcos\n"}).empty());
+}
+
+void test_helper_files_and_status() {
+  EXPECT(lcos::xft_dpi_to_spin(-1) == -1);
+  EXPECT(lcos::xft_dpi_to_spin(0) == -1);
+  EXPECT(lcos::xft_dpi_to_spin(96) == 96);
+  EXPECT(lcos::xft_dpi_to_spin(120) == 120);
+  // An earlier build stored DPI * 1024. Reading that still shows plain DPI.
+  EXPECT(lcos::xft_dpi_to_spin(96 * 1024) == 96);
+  EXPECT(lcos::xft_dpi_to_spin(120 * 1024) == 120);
+  EXPECT(lcos::spin_to_xft_dpi(96) == 96);
+  EXPECT(lcos::spin_to_xft_dpi(120) == 120);
+  EXPECT(lcos::spin_to_xft_dpi(-1) == -1);
+  EXPECT(std::abs(lcos::xfconf_scale_from_ui(2.0) - 0.5) < 0.001);
+  EXPECT(std::abs(lcos::ui_scale_from_xfconf(0.5) - 2.0) < 0.001);
+  EXPECT(std::abs(lcos::xfconf_scale_from_ui(1.0) - 1.0) < 0.001);
+
+  const auto dismissed = lcos::interpret_helper_exit(1, 126 << 8, "");
+  EXPECT(!dismissed.ok);
+  EXPECT(dismissed.error.find("dismissed") != std::string::npos);
+  const auto denied = lcos::interpret_helper_exit(1, 127 << 8, "");
+  EXPECT(!denied.ok);
+  EXPECT(denied.error.find("denied") != std::string::npos);
+  const auto helper_failed = lcos::interpret_helper_exit(1, 1 << 8, "could not set the password\n");
+  EXPECT(!helper_failed.ok);
+  EXPECT(helper_failed.error == "could not set the password");
+  const auto lost = lcos::interpret_helper_exit(-1, 0, "");
+  EXPECT(!lost.ok);
+  const auto kept = lcos::interpret_helper_exit(1, 0, "ignored");
+  EXPECT(kept.ok);
+
+  const fs::path root = fs::temp_directory_path() / "lcos-atomic-file";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  const fs::path regular = root / "shadow-like";
+  {
+    std::ofstream out(regular);
+    out << "before\n";
+  }
+  EXPECT(chmod(regular.c_str(), 0640) == 0);
+  struct stat before;
+  EXPECT(stat(regular.c_str(), &before) == 0);
+  lcos::ReplaceRequest request;
+  request.mode_if_new = 0644;
+  std::string error;
+  EXPECT(lcos::replace_regular_file(regular.string(), "after\n", request, &error));
+  struct stat after;
+  EXPECT(stat(regular.c_str(), &after) == 0);
+  EXPECT((after.st_mode & 0777) == 0640);
+  EXPECT(after.st_uid == before.st_uid);
+  EXPECT(after.st_gid == before.st_gid);
+  {
+    std::ifstream in(regular);
+    std::string text;
+    std::getline(in, text);
+    EXPECT(text == "after");
+  }
+
+  const fs::path secret = root / "secret";
+  const fs::path link = root / "face";
+  {
+    std::ofstream out(secret);
+    out << "SECRET";
+  }
+  EXPECT(symlink(secret.c_str(), link.c_str()) == 0);
+  EXPECT(!lcos::replace_regular_file(link.string(), "PWNED", request, &error));
+  {
+    std::ifstream in(secret);
+    std::string text;
+    std::getline(in, text);
+    EXPECT(text == "SECRET");
+  }
+  struct stat link_st;
+  EXPECT(lstat(link.c_str(), &link_st) == 0);
+  EXPECT(S_ISLNK(link_st.st_mode));
+
+  // A locale symlink is followed only when the real path is allowlisted.
+  const fs::path locale_real = root / "locale.conf";
+  const fs::path locale_link = root / "default-locale";
+  {
+    std::ofstream out(locale_real);
+    out << "LANG=C\n";
+  }
+  EXPECT(symlink(locale_real.c_str(), locale_link.c_str()) == 0);
+  lcos::ReplaceRequest follow;
+  follow.follow_symlink = true;
+  follow.symlink_targets = {fs::canonical(locale_real).string()};
+  EXPECT(lcos::replace_regular_file(locale_link.string(), "LANG=en_US.UTF-8\n", follow, &error));
+  {
+    std::ifstream in(locale_real);
+    std::string text;
+    std::getline(in, text);
+    EXPECT(text == "LANG=en_US.UTF-8");
+  }
+  EXPECT(lstat(locale_link.c_str(), &link_st) == 0);
+  EXPECT(S_ISLNK(link_st.st_mode));
+  lcos::ReplaceRequest wrong = follow;
+  wrong.symlink_targets = {"/etc/passwd"};
+  EXPECT(!lcos::replace_regular_file(locale_link.string(), "LANG=bad\n", wrong, &error));
+  {
+    std::ifstream in(locale_real);
+    std::string text;
+    std::getline(in, text);
+    EXPECT(text == "LANG=en_US.UTF-8");
+  }
+  fs::remove_all(root);
 }
 
 void test_themes_and_xkb() {
@@ -394,6 +576,199 @@ void test_themes_and_xkb() {
 
 }  // namespace
 
+void test_review_fixes() {
+  lcos::SoundEdit clean;
+  EXPECT(!clean.any());
+  EXPECT(!lcos::sound_revert_touches(clean, "output-volume"));
+  lcos::SoundEdit volume;
+  volume.output_volume = true;
+  EXPECT(volume.any());
+  EXPECT(lcos::sound_revert_touches(volume, "output-volume"));
+  EXPECT(!lcos::sound_revert_touches(volume, "output-port"));
+  EXPECT(!lcos::sound_revert_touches(volume, "input-device"));
+
+  const std::time_t restored = lcos::restored_wall_clock(1'700'000'000, 1000, 1300);
+  EXPECT(restored == 1'700'000'300);
+
+  const std::string locale =
+      "# kept\nLANGUAGE=en_GB:en\nLANG=en_US.UTF-8\nLC_TIME=en_GB.UTF-8\nLC_PAPER=en_GB.UTF-8\n";
+  const std::string rewritten =
+      lcos::locale_file_with_values(locale, "de_DE.UTF-8", "de_DE.UTF-8", "fr_FR.UTF-8", "");
+  EXPECT(rewritten.find("LANGUAGE=en_GB:en") != std::string::npos);
+  EXPECT(rewritten.find("LC_PAPER=en_GB.UTF-8") != std::string::npos);
+  EXPECT(rewritten.find("# kept") != std::string::npos);
+  EXPECT(rewritten.find("LANG=de_DE.UTF-8") != std::string::npos);
+  EXPECT(rewritten.find("LC_NUMERIC=fr_FR.UTF-8") != std::string::npos);
+  EXPECT(rewritten.find("LC_TIME=") == std::string::npos);
+  EXPECT(rewritten.find("LC_MONETARY=") == std::string::npos);
+
+  const std::string full = "alice:$y$abc:19000:0:99999:7:::";
+  const auto missing = lcos::restore_shadow_line("bob:x:::::::\n", full, false);
+  EXPECT(!missing.ok);
+  EXPECT(missing.text.find("alice:") == std::string::npos);
+  const auto appended = lcos::restore_shadow_line("bob:x:::::::\n", "alice:$y$abc", true);
+  EXPECT(!appended.ok);
+  EXPECT(appended.text.find("alice:") == std::string::npos);
+  const auto replaced =
+      lcos::restore_shadow_line("alice:locked:1:0:99999:7:::\nother:x:::::::\n", full, true);
+  EXPECT(replaced.ok);
+  EXPECT(replaced.text.find(full) != std::string::npos);
+  EXPECT(replaced.text.find("alice:locked") == std::string::npos);
+  EXPECT(replaced.text.find("other:x:") != std::string::npos);
+  const auto added = lcos::restore_shadow_line("other:x:::::::\n", full, true);
+  EXPECT(added.ok);
+  EXPECT(added.text.find(full) != std::string::npos);
+
+  // glibc stores a blank shadow flag as ULONG_MAX. Writing that decimal makes
+  // getent, pwck, and su reject the account. Cancel must put a blank flag back.
+  lcos::ShadowRecord blank_flag;
+  blank_flag.name = "qarm1";
+  blank_flag.hash = "$y$hash";
+  blank_flag.last_change = 20768;
+  blank_flag.minimum = 1;
+  blank_flag.maximum = 90;
+  blank_flag.warning = 10;
+  blank_flag.inactive = 5;
+  blank_flag.expire = 21915;
+  blank_flag.flag = std::numeric_limits<unsigned long>::max();
+  const std::string formatted = lcos::format_shadow_record(blank_flag);
+  EXPECT(formatted == "qarm1:$y$hash:20768:1:90:10:5:21915:");
+  EXPECT(formatted.find("18446744073709551615") == std::string::npos);
+  blank_flag.flag = 0;
+  EXPECT(lcos::format_shadow_record(blank_flag) == formatted);
+  blank_flag.flag = 4;
+  EXPECT(lcos::format_shadow_record(blank_flag) == "qarm1:$y$hash:20768:1:90:10:5:21915:4");
+  EXPECT(lcos::shadow_flag_text(std::numeric_limits<unsigned long>::max()).empty());
+  EXPECT(lcos::shadow_flag_text(0).empty());
+  EXPECT(lcos::shadow_flag_text(4) == "4");
+
+  const std::string corrupt =
+      "qarm1:$y$hash:20768:1:90:10:5:21915:18446744073709551615";
+  EXPECT(lcos::normalize_shadow_line(corrupt) == "qarm1:$y$hash:20768:1:90:10:5:21915:");
+  const auto repaired = lcos::restore_shadow_line("qarm1:locked:1:0:99999:7:::\n", corrupt, true);
+  EXPECT(repaired.ok);
+  EXPECT(repaired.text.find("18446744073709551615") == std::string::npos);
+  EXPECT(repaired.text.find("qarm1:$y$hash:20768:1:90:10:5:21915:\n") != std::string::npos);
+  const std::string shadow_file = "root:!:19000::::::\n" + std::string(formatted) + "\nother:x:::::::\n";
+  EXPECT(lcos::shadow_line_for_user(shadow_file, "qarm1") == formatted);
+  EXPECT(lcos::shadow_line_for_user(shadow_file, "missing").empty());
+  EXPECT(lcos::shadow_line_for_user(shadow_file, "qa").empty());
+
+  // Real-name Cancel restores GECOS from the saved passwd line. An empty
+  // GECOS is a real field, not a missing one.
+  const std::string passwd = "qarm1:x:1001:1001:QA User:/home/qarm1:/bin/bash";
+  EXPECT(lcos::passwd_field_count(passwd) == 7);
+  EXPECT(lcos::passwd_field(passwd, 0) == "qarm1");
+  EXPECT(lcos::passwd_field(passwd, 4) == "QA User");
+  EXPECT(lcos::passwd_field("qarm1:x:1001:1001::/home/qarm1:/bin/bash", 4).empty());
+  EXPECT(lcos::passwd_field_count("short:x") == 2);
+  EXPECT(lcos::passwd_field("short:x", 4).empty());
+
+  EXPECT(lcos::valid_timezone_name("UTC"));
+  EXPECT(lcos::timezone_from_localtime("/usr/share/zoneinfo/Europe/Oslo") == "Europe/Oslo");
+  EXPECT(lcos::timezone_from_localtime("../usr/share/zoneinfo/UTC") == "UTC");
+  EXPECT(lcos::timezone_from_localtime("/etc/localtime").empty());
+
+  const std::string spaced = "[Seat:*]\nautologin-user = x\nuser-session=xfce\n";
+  EXPECT(lcos::autologin_user_in_conf(spaced) == "x");
+  const std::string seat0 = "[Seat:seat0]\nautologin-user = x\n";
+  const std::string edited = lcos::conf_with_autologin(seat0, "guest");
+  EXPECT(edited.find("[Seat:*]") == std::string::npos);
+  EXPECT(edited.find("[Seat:seat0]\n") != std::string::npos);
+  EXPECT(lcos::autologin_user_in_conf(edited) == "guest");
+  EXPECT(lcos::autologin_user_in_conf(lcos::conf_with_autologin(spaced, "")).empty());
+  EXPECT(lcos::conf_with_autologin(spaced, "").find("user-session=xfce") != std::string::npos);
+  EXPECT(lcos::effective_autologin({"autologin-user=dropin\n", "[Seat:*]\nautologin-user = x\n"}) ==
+         "x");
+  const std::string both = "[Seat:*]\nautologin-user=star\n[Seat:seat0]\nautologin-user=seat\n";
+  EXPECT(lcos::autologin_user_in_conf(both) == "seat");
+
+  EXPECT(lcos::is_login_shell("/bin/bash"));
+  EXPECT(!lcos::is_login_shell("/usr/sbin/nologin"));
+  EXPECT(!lcos::is_local_human_account(0, "/bin/bash", 1000));
+  EXPECT(lcos::is_local_human_account(1000, "/bin/bash", 1000));
+  const std::string primary =
+      "ada:x:1000:27:Ada:/home/ada:/bin/bash\n"
+      "svc:x:1001:27:Service:/var/lib/svc:/usr/sbin/nologin\n";
+  const auto admins = lcos::human_accounts(primary, "", 1000, 27);
+  EXPECT(admins.size() == 1);
+  EXPECT(admins[0].name == "ada" && admins[0].administrator);
+
+  EXPECT(lcos::clock_format_has_seconds("%T"));
+  EXPECT(!lcos::clock_format_has_seconds("%R"));
+  EXPECT(lcos::clock_format_for(lcos::HourClock::Hour24, true) == "%T");
+  EXPECT(lcos::clock_format_for(lcos::HourClock::Hour12, true) == "%I:%M:%S %p");
+  EXPECT(lcos::classify_clock_format("%T") == lcos::HourClock::Hour24);
+
+  EXPECT(lcos::sysv_start_link("S20chrony", "chrony"));
+  EXPECT(!lcos::sysv_start_link("K01chrony", "chrony"));
+  EXPECT(!lcos::sysv_start_link("S20chronyd", "chrony"));
+
+  const std::string sessions =
+      "[General]\nSessionName=Default\n\n[Session: Default]\nCount=1\n\n"
+      "[Session: Project]\nCount=2\n\n[Failsafe]\nCount=0\n";
+  const auto names = lcos::saved_session_names(sessions);
+  EXPECT(names.size() == 2);
+  EXPECT(names[0] == "Default" && names[1] == "Project");
+  const std::string kept = lcos::keyfile_without_session(sessions, "Project");
+  EXPECT(lcos::saved_session_names(kept).size() == 1);
+  EXPECT(kept.find("[General]") != std::string::npos);
+  EXPECT(kept.find("[Session: Default]") != std::string::npos);
+  EXPECT(kept.find("Project") == std::string::npos);
+  EXPECT(kept.find("[Failsafe]") != std::string::npos);
+
+  EXPECT(lcos::prepend_desktop_id("firefox.desktop;writer.desktop;", "browser.desktop") ==
+         "browser.desktop;firefox.desktop;writer.desktop;");
+  EXPECT(lcos::prepend_desktop_id("firefox.desktop;browser.desktop;", "browser.desktop") ==
+         "browser.desktop;firefox.desktop;");
+  EXPECT(lcos::prepend_desktop_id("firefox.desktop;", "") == "firefox.desktop;");
+
+  const std::vector<std::pair<std::string, std::string>> props = {
+      {"/IdentityPopups", "true"},
+      {"/Notify", "1"},
+      {"/Desk", "Office"},
+      {"/Desk/HDMI-1", "HDMI"},
+      {"/Desk/HDMI-1/EDID", "edid-a"},
+      {"/Desk/HDMI-1/Active", "true"},
+      {"/Other", "Old"},
+      {"/Other/DP-1", "DP"},
+      {"/Other/DP-1/EDID", "edid-b"},
+  };
+  EXPECT(lcos::is_user_display_profile("Desk", props));
+  EXPECT(!lcos::is_user_display_profile("IdentityPopups", props));
+  EXPECT(!lcos::is_user_display_profile("Notify", props));
+  EXPECT(lcos::display_profile_matches("Desk", {"edid-a"}, props));
+  EXPECT(!lcos::display_profile_matches("Desk", {"edid-a", "edid-b"}, props));
+  const auto matched = lcos::matching_display_profiles({"edid-a"}, props);
+  EXPECT(matched.size() == 1 && matched[0] == "Desk");
+
+  const auto inactivity = lcos::power_choices(lcos::PowerChoiceKind::Inactivity, true, false, false, true);
+  EXPECT(inactivity.size() == 1 && inactivity[0].id == "1");
+  const auto unknown = lcos::power_choices(lcos::PowerChoiceKind::Inactivity, false, false, false, false);
+  EXPECT(unknown.size() == 2);
+  for (const auto& choice : unknown) {
+    EXPECT(choice.id != "0" && choice.id != "3" && choice.id != "4");
+  }
+  const auto dpms = lcos::power_choices(lcos::PowerChoiceKind::Dpms, true, true, true, true);
+  EXPECT(dpms.size() == 2);
+  EXPECT(dpms[0].id == "Standby" && dpms[1].id == "Suspend");
+
+  EXPECT(lcos::priv_domain_for_action("remove-user") == lcos::PrivDomain::Accounts);
+  EXPECT(lcos::priv_domain_for_action("set-locale") == lcos::PrivDomain::Locale);
+  EXPECT(lcos::priv_domain_for_action("set-timezone") == lcos::PrivDomain::System);
+  EXPECT(!lcos::priv_action_allowed(lcos::PrivDomain::System, "remove-user"));
+  EXPECT(lcos::priv_action_allowed(lcos::PrivDomain::Accounts, "set-autologin"));
+  EXPECT(lcos::priv_action_allowed(lcos::PrivDomain::System, "revert"));
+  EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::Accounts, "passwd.ada"));
+  EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::Accounts, "shadow.ada"));
+  EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::Accounts, "group.ada"));
+  EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::Locale, "locale.gen"));
+  EXPECT(!lcos::undo_file_belongs_to(lcos::PrivDomain::Locale, "localtime"));
+  EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::System, "clock-wall"));
+  EXPECT(lcos::revert_keeps_snapshot(true));
+  EXPECT(!lcos::revert_keeps_snapshot(false));
+}
+
 int main() {
   test_backdrop_power_mime();
   test_names();
@@ -401,6 +776,8 @@ int main() {
   test_confirm_and_volume();
   test_shortcuts();
   test_system_model();
+  test_review_fixes();
+  test_helper_files_and_status();
   test_themes_and_xkb();
   if (failures != 0) {
     std::cerr << failures << " logic check(s) failed\n";

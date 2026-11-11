@@ -40,12 +40,14 @@ class StartupPage : public SettingsPage {
       add(command);
       add(id);
       add(removable);
+      add(show_in_xfce);
     }
     Gtk::TreeModelColumn<bool> enabled;
     Gtk::TreeModelColumn<Glib::ustring> name;
     Gtk::TreeModelColumn<Glib::ustring> command;
     Gtk::TreeModelColumn<Glib::ustring> id;
     Gtk::TreeModelColumn<bool> removable;
+    Gtk::TreeModelColumn<bool> show_in_xfce;
   };
 
   void reload_apps();
@@ -69,6 +71,7 @@ class StartupPage : public SettingsPage {
   std::map<std::string, std::string> autostart_snapshot_;
   std::map<std::string, std::string> session_snapshot_;
   std::string session_dir_;
+  std::string session_file_;
 
   Gtk::Notebook notebook_;
   AppColumns columns_;

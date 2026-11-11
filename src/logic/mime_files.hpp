@@ -37,6 +37,11 @@ DesktopFile parse_desktop_file(const std::string& text, const std::string& id);
 
 std::vector<std::string> split_desktop_list(const std::string& text);
 
+// Puts desktop_id at the front of a mimeapps list and keeps every other id.
+// An empty id leaves the list alone. The result uses the trailing semicolon
+// mimeapps.list expects.
+std::string prepend_desktop_id(const std::string& list, const std::string& desktop_id);
+
 }  // namespace lcos
 
 #endif

@@ -10,6 +10,7 @@
 #include <cstdio>
 
 #include <gtk/gtk.h>
+#include <gdk/gdkx.h>
 
 #include <glibmm/main.h>
 #include <gtkmm/box.h>
@@ -43,7 +44,9 @@ class ConfirmDialog : public Gtk::Dialog {
     get_content_area()->pack_start(label_, Gtk::PACK_EXPAND_WIDGET);
     add_button("Revert", Gtk::RESPONSE_REJECT);
     add_button("Keep", Gtk::RESPONSE_ACCEPT);
+    set_keep_above(true);
     show_all();
+    present();
     refresh_label();
     timer_ = Glib::signal_timeout().connect_seconds(
         sigc::mem_fun(*this, &ConfirmDialog::tick), 1);
@@ -102,8 +105,13 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   scroll_ = scroll;
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
   signal_size_allocate().connect([this](Gtk::Allocation&) {
-    Glib::signal_idle().connect([this]() {
-      paint_now();
+    if (paint_idle_.connected()) {
+      return;
+    }
+    paint_idle_ = Glib::signal_idle().connect([this]() {
+      if (alive_) {
+        paint_now();
+      }
       return false;
     });
   });
@@ -301,19 +309,74 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   right->pack_start(*status_, Gtk::PACK_SHRINK);
 
   load_hardware();
+  signal_map().connect([this] {
+    if (screen_watch_) {
+      return;
+    }
+    randr_.select_screen_events();
+    auto display = get_display();
+    if (!display) {
+      return;
+    }
+    auto root = display->get_default_screen()->get_root_window();
+    if (!root) {
+      return;
+    }
+    root_window_ = root->gobj();
+    gdk_window_add_filter(root_window_, &DisplayPage::screen_filter, this);
+    screen_watch_ = true;
+  });
+}
+
+DisplayPage::~DisplayPage() {
+  // The widget's display pointer is already gone while gtkmm destroys it.
+  // Removing the filter through get_display() crashed on every OK, Cancel,
+  // and window close. A queued scrollbar refresh must not run after that.
+  alive_ = false;
+  if (paint_idle_.connected()) {
+    paint_idle_.disconnect();
+  }
+  if (screen_watch_ && root_window_ != nullptr && !gdk_window_is_destroyed(root_window_)) {
+    gdk_window_remove_filter(root_window_, &DisplayPage::screen_filter, this);
+  }
+  screen_watch_ = false;
+  root_window_ = nullptr;
+}
+
+GdkFilterReturn DisplayPage::screen_filter(GdkXEvent* xevent, GdkEvent*, gpointer data) {
+  auto* self = static_cast<DisplayPage*>(data);
+  // hardware_changed_ covers the gap after Apply and before the confirm
+  // dialog. Reloading there would treat the rejected mode as the baseline.
+  if (self == nullptr || !self->alive_ || self->applying_ || self->confirming_ || self->dirty_ ||
+      self->hardware_changed_ || !self->randr_.is_screen_change(xevent)) {
+    return GDK_FILTER_CONTINUE;
+  }
+  self->load_hardware();
+  self->dirty_ = false;
+  return GDK_FILTER_CONTINUE;
 }
 
 void DisplayPage::load_hardware() {
-  outputs_ = randr_.read();
+  auto next = randr_.read();
+  if (next.empty() && !outputs_.empty()) {
+    // A failed RandR change must not wipe the form the user is editing.
+    status_->set_text(randr_.error().empty() ? "The display layout could not be read. The previous settings are still shown."
+                                             : randr_.error());
+    return;
+  }
+  const bool preserve_baseline = dirty_ || hardware_changed_ || confirming_ || !pending_revert_.empty();
+  outputs_ = std::move(next);
   if (outputs_.empty()) {
     status_->set_text(randr_.error().empty()
                           ? "No connected displays were found."
                           : randr_.error());
-  } else {
+  } else if (!preserve_baseline) {
     status_->set_text("Drag a display to move it. Mirror and Extend update the layout. Apply asks you to keep it.");
   }
-  session_open_ = outputs_;
-  confirmed_ = outputs_;
+  if (!preserve_baseline) {
+    session_open_ = outputs_;
+    confirmed_ = outputs_;
+  }
   selected_index_ = 0;
   rebuild_output_combo();
   show_selected();
@@ -524,17 +587,27 @@ void DisplayPage::on_page_shown() {
   if (scroll_ != nullptr && scroll_->get_vadjustment()) {
     scroll_->get_vadjustment()->set_value(0);
   }
-  Glib::signal_idle().connect([this]() {
-    paint_now();
-    return false;
-  });
+  if (!paint_idle_.connected()) {
+    paint_idle_ = Glib::signal_idle().connect([this]() {
+      if (alive_) {
+        paint_now();
+      }
+      return false;
+    });
+  }
 }
 
 void DisplayPage::paint_now() {
-  if (scroll_ == nullptr || scroll_->get_child() == nullptr || !scroll_->get_child()->get_window()) {
+  if (scroll_ == nullptr || scroll_->get_child() == nullptr) {
     return;
   }
   auto* child = scroll_->get_child();
+  if (!child->get_realized() || child->get_allocated_width() < 2 || child->get_allocated_height() < 2) {
+    return;
+  }
+  // gtk_widget_draw while the child still needs an allocation paints a solid
+  // rectangle over the form and leaves it blank. The scrollbar policy is the
+  // only thing this refresh has to change.
   int minimum_height = 0;
   int natural_height = 0;
   child->get_preferred_height(minimum_height, natural_height);
@@ -546,18 +619,6 @@ void DisplayPage::paint_now() {
     bar->set_size_request(14, -1);
     bar->show();
   }
-  auto context = child->get_window()->create_cairo_context();
-  const auto allocation = child->get_allocation();
-  const int scrollbar_gutter = overflow ? 14 : 0;
-  context->save();
-  context->rectangle(allocation.get_x(), allocation.get_y(),
-                     std::max(1, allocation.get_width() - scrollbar_gutter), allocation.get_height());
-  context->clip();
-  context->translate(allocation.get_x(), allocation.get_y());
-  context->set_source_rgb(0.965, 0.961, 0.957);
-  context->paint();
-  gtk_widget_draw(GTK_WIDGET(child->gobj()), context->cobj());
-  context->restore();
 }
 
 void DisplayPage::redraw() {
@@ -567,12 +628,12 @@ void DisplayPage::redraw() {
   auto surface =
       Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, preview_width_, preview_height_);
   auto context = Cairo::Context::create(surface);
-  on_draw(context);
+  paint_preview(context);
   preview_.set(Gdk::Pixbuf::create(surface, 0, 0, preview_width_, preview_height_));
   paint_now();
 }
 
-bool DisplayPage::on_draw(const Cairo::RefPtr<Cairo::Context>& context) {
+void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
   const int width = std::max(1, preview_width_);
   const int height = std::max(1, preview_height_);
   context->save();
@@ -629,7 +690,6 @@ bool DisplayPage::on_draw(const Cairo::RefPtr<Cairo::Context>& context) {
     context->show_text("No displays");
   }
   context->restore();
-  return true;
 }
 
 int DisplayPage::hit_test(double x, double y) const {
@@ -744,11 +804,14 @@ void DisplayPage::write_scheme(const std::string& scheme, bool track) {
     store_.set_string("displays", path("Reflection"),
                       output.reflection.empty() ? "0" : output.reflection);
     store_.set_bool("displays", path("Primary"), output.primary);
-    store_.set_double("displays", path("Scale"), output.scale);
+    // xfsettingsd applies this number as the RandR transform. UI scale 2
+    // has to be stored as 0.5 or the framebuffer doubles and the UI shrinks.
+    const double scalex = xfconf_scale_from_ui(output.scale);
+    store_.set_double("displays", path("Scale"), scalex);
     // 4.20 reads /Scale. 4.18 reads /Scale/X and /Scale/Y, and 4.20 still
     // prefers those when they exist, so both forms stay in agreement.
-    store_.set_double("displays", path("Scale/X"), output.scale);
-    store_.set_double("displays", path("Scale/Y"), output.scale);
+    store_.set_double("displays", path("Scale/X"), scalex);
+    store_.set_double("displays", path("Scale/Y"), scalex);
     store_.set_int("displays", path("Position/X"), output.x);
     store_.set_int("displays", path("Position/Y"), output.y);
   }
@@ -771,67 +834,176 @@ bool DisplayPage::commit_pending() {
   normalize_positions(outputs_);
   show_selected();
   redraw();
+  // Read the live layout now. confirmed_ is not used: a screen event can
+  // replace it with the mode we are about to try.
+  std::vector<OutputConfig> revert_to = randr_.read();
+  if (revert_to.empty()) {
+    revert_to = confirmed_.empty() ? session_open_ : confirmed_;
+  }
+  pending_revert_ = revert_to;
+  applying_ = true;
   const std::string error = randr_.apply(outputs_);
+  applying_ = false;
   if (!error.empty()) {
+    pending_revert_.clear();
+    clear_temp_scheme(false);
     Gtk::MessageDialog dialog(parent_, "Could not apply the display layout.", false,
                               Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
     dialog.set_secondary_text(error);
     dialog.run();
+    show_selected();
+    redraw();
     return false;
   }
   hardware_changed_ = true;
   write_scheme("Temp", false);
   store_.set_string_untracked("displays", "/Schemes/Apply", "Temp");
 
+  confirming_ = true;
   ConfirmDialog dialog(parent_);
   const int response = dialog.run();
-  store_.reset_untracked("displays", "/Temp", true);
+  confirming_ = false;
   if (response == Gtk::RESPONSE_ACCEPT) {
+    // Write the kept layout before asking xfsettingsd to apply Default.
+    // Clearing Temp first would make it reapply the previous profile.
     write_scheme("Default", true);
+    store_.reset_untracked("displays", "/Temp", true);
     store_.set_string("displays", "/ActiveProfile", "Default");
+    store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
     confirmed_ = outputs_;
+    session_open_ = outputs_;
+    hardware_changed_ = false;
+    pending_revert_.clear();
+    // Keep confirmed the layout. A later Cancel must not put the old one back.
+    store_.drop_channel("displays");
     dirty_ = false;
     pending_changed.emit();
     status_->set_text("Display layout kept.");
     reload_profiles();
     return true;
   }
-  if (!confirmed_.empty()) {
-    randr_.apply(confirmed_);
+  // Drop Temp without asking xfsettingsd to apply Default. A profile with no
+  // Default scheme has nothing for it to restore, and that request used to
+  // leave the rejected mode on screen while this window said it had reverted.
+  clear_temp_scheme(false);
+  std::string revert_error;
+  if (!apply_saved_layout(revert_to, revert_error)) {
+    status_->set_text(revert_error.empty() ? "The previous layout was not restored." : revert_error);
+    show_selected();
+    redraw();
+    return false;
   }
+  outputs_ = confirmed_;
+  session_open_ = confirmed_;
+  hardware_changed_ = false;
+  pending_revert_.clear();
+  dirty_ = false;
+  pending_changed.emit();
+  selected_index_ = outputs_.empty()
+                        ? 0
+                        : std::clamp(selected_index_, 0, static_cast<int>(outputs_.size()) - 1);
+  rebuild_output_combo();
   status_->set_text("Reverted to the previous layout. Adjust it and press Apply to try again.");
+  show_selected();
+  redraw();
   return false;
 }
 
+void DisplayPage::clear_temp_scheme(bool trigger_apply) {
+  store_.reset_untracked("displays", "/Temp", true);
+  if (store_.get_string("displays", "/ActiveProfile", "") == "Temp") {
+    store_.set_string_untracked("displays", "/ActiveProfile", "Default");
+  }
+  if (trigger_apply) {
+    store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
+  }
+}
+
+bool DisplayPage::apply_saved_layout(const std::vector<OutputConfig>& layout, std::string& error) {
+  if (layout.empty()) {
+    error = "The previous layout was not restored.";
+    return false;
+  }
+  applying_ = true;
+  error = randr_.apply(layout);
+  applying_ = false;
+  if (!error.empty()) {
+    return false;
+  }
+  const auto now = randr_.read();
+  if (!layouts_equivalent(now, layout)) {
+    error = "The previous layout was not restored.";
+    return false;
+  }
+  confirmed_ = now.empty() ? layout : now;
+  return true;
+}
+
 void DisplayPage::restore_session_hardware() {
-  if (!hardware_changed_ || session_open_.empty()) {
+  if (!hardware_changed_) {
     return;
   }
-  randr_.apply(session_open_);
-  store_.set_tracking(false);
-  store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
-  store_.set_tracking(true);
+  const std::vector<OutputConfig> target = !pending_revert_.empty() ? pending_revert_ : session_open_;
+  // RandR is last. /Schemes/Apply is not set here; a missing Default scheme
+  // must not run after the restore and put the rejected mode back.
+  clear_temp_scheme(false);
+  std::string error;
+  if (apply_saved_layout(target, error)) {
+    outputs_ = confirmed_;
+    session_open_ = confirmed_;
+    rebuild_output_combo();
+    show_selected();
+    redraw();
+  }
   hardware_changed_ = false;
+  pending_revert_.clear();
 }
+
+namespace {
+
+std::vector<std::pair<std::string, std::string>> display_strings(XfconfStore& store) {
+  std::vector<std::pair<std::string, std::string>> props;
+  for (const auto& entry : store.list("displays", "/")) {
+    props.emplace_back(entry.first, entry.second.type == PropType::String ? entry.second.s : std::string());
+  }
+  return props;
+}
+
+}  // namespace
 
 void DisplayPage::reload_profiles() {
   Freeze freeze(freeze_);
   const std::string previous = profiles_.get_active_id();
   profiles_.remove_all();
+  const auto props = display_strings(store_);
+  std::vector<std::string> edids;
+  for (const auto& output : outputs_) {
+    if (output.active && !output.edid.empty()) {
+      edids.push_back(output.edid);
+    }
+  }
   std::set<std::string> ids;
   ids.insert("Default");
-  for (const auto& entry : store_.list("displays", "/")) {
-    if (entry.first.size() < 2 || entry.first.front() != '/') {
-      continue;
+  if (edids.empty()) {
+    std::set<std::string> seen;
+    for (const auto& entry : props) {
+      const auto slash = entry.first.find('/', 1);
+      const std::string id = entry.first.size() > 1
+                                 ? entry.first.substr(1, slash == std::string::npos ? std::string::npos : slash - 1)
+                                 : std::string();
+      if (id.empty() || !seen.insert(id).second || id == "Temp") {
+        continue;
+      }
+      if (is_user_display_profile(id, props)) {
+        ids.insert(id);
+      }
     }
-    const std::string rest = entry.first.substr(1);
-    const auto slash = rest.find('/');
-    const std::string id = slash == std::string::npos ? rest : rest.substr(0, slash);
-    if (id.empty() || id == "Schemes" || id == "Notify" || id == "AutoEnableProfiles" ||
-        id == "ActiveProfile" || id == "Temp") {
-      continue;
+  } else {
+    for (const auto& id : matching_display_profiles(edids, props)) {
+      if (id != "Temp") {
+        ids.insert(id);
+      }
     }
-    ids.insert(id);
   }
   for (const auto& id : ids) {
     std::string label = id;
@@ -885,7 +1057,7 @@ void DisplayPage::load_profile(const std::string& id) {
       scale = store_.get_double("displays", display_prop(id, output.name, "Scale/X"), output.scale);
     }
     if (scale > 0) {
-      output.scale = scale;
+      output.scale = ui_scale_from_xfconf(scale);
     }
     output.x = store_.get_int("displays", display_prop(id, output.name, "Position/X"), output.x);
     output.y = store_.get_int("displays", display_prop(id, output.name, "Position/Y"), output.y);
@@ -935,7 +1107,8 @@ void DisplayPage::save_profile() {
 
 void DisplayPage::delete_profile() {
   const std::string id = profiles_.get_active_id();
-  if (id.empty() || id == "Default" || id == "Temp") {
+  const auto props = display_strings(store_);
+  if (id.empty() || id == "Default" || id == "Temp" || !is_user_display_profile(id, props)) {
     status_->set_text("The Default profile stays. Choose another profile to delete.");
     return;
   }

@@ -71,31 +71,33 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
   page->pack_start(*make_frame("Locale", form.grid()), Gtk::PACK_SHRINK);
   auto* busy_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
   spinner_ = Gtk::manage(new Gtk::Spinner());
+  spinner_->set_size_request(16, 16);
   status_ = make_label("");
   status_->set_line_wrap(true);
+  cancel_locale_ = Gtk::manage(new Gtk::Button("Stop"));
   busy_row->pack_start(*spinner_, Gtk::PACK_SHRINK);
   busy_row->pack_start(*status_, Gtk::PACK_EXPAND_WIDGET);
+  busy_row->pack_start(*cancel_locale_, Gtk::PACK_SHRINK);
   busy_row->set_no_show_all(true);
   busy_row->hide();
   page->pack_start(*busy_row, Gtk::PACK_SHRINK);
+  cancel_locale_->signal_clicked().connect([this] {
+    if (busy_) {
+      session_.cancel();
+    }
+  });
+  auto* apply_button = Gtk::manage(new Gtk::Button("_Apply language", true));
+  apply_button->set_halign(Gtk::ALIGN_START);
+  page->pack_start(*apply_button, Gtk::PACK_SHRINK);
   auto* note = make_label(
-      "Every locale in the supported list is offered. Choosing one that is not generated yet "
-      "enables it in /etc/locale.gen and runs locale-gen. Cancel restores the language choice and "
-      "leaves the generated locale in place. Keyboard layouts are set on the Keyboard page.");
+      "Every locale in the supported list is offered. Apply enables a locale that is not generated "
+      "yet in /etc/locale.gen and compiles it with localedef. Stop, or Cancel, restores locale.gen. "
+      "Keyboard layouts are set on the Keyboard page.");
   note->set_line_wrap(true);
   page->pack_start(*note, Gtk::PACK_SHRINK);
   pack_start(*make_page_scroll(*page), Gtk::PACK_EXPAND_WIDGET);
 
-  auto changed = [this] {
-    if (freeze_ > 0) {
-      return;
-    }
-    apply();
-  };
-  language_.signal_changed().connect(changed);
-  dates_.signal_changed().connect(changed);
-  numbers_.signal_changed().connect(changed);
-  currency_.signal_changed().connect(changed);
+  apply_button->signal_clicked().connect([this] { apply(); });
   load();
 }
 
@@ -153,6 +155,12 @@ void LanguagePage::set_busy(bool busy, const std::string& message) {
     }
     parent_.queue_draw();
     window->process_updates(true);
+  }
+  // Paint the status row before pkexec's dialog takes the screen.
+  if (busy) {
+    while (g_main_context_pending(nullptr)) {
+      g_main_context_iteration(nullptr, FALSE);
+    }
   }
 }
 
@@ -237,17 +245,28 @@ void LanguagePage::apply() {
       pending += name;
     }
   }
+  const std::vector<std::string> args = {"set-locale", lang, dates, numbers, currency};
   if (!pending.empty()) {
-    set_busy(true, "Generating " + pending + "… This can take a minute.");
+    set_busy(true, "Generating " + pending + "… This can take a minute. Stop cancels it.");
+    session_.run_async(args, "", [this](PrivResult result) {
+      set_busy(false, "");
+      if (!result.ok) {
+        if (result.error == "Cancelled." || result.error.find("cancelled") != std::string::npos) {
+          Gtk::MessageDialog dialog(parent_, "Locale generation was cancelled.", false,
+                                    Gtk::MESSAGE_INFO, Gtk::BUTTONS_OK, true);
+          dialog.set_secondary_text("The locale list was restored.");
+          dialog.run();
+        } else {
+          tell(result.error);
+        }
+      }
+      load();
+    });
+    return;
   }
-  const PrivResult result = session_.run({"set-locale", lang, dates, numbers, currency});
-  if (!pending.empty()) {
-    set_busy(false, "");
-  }
+  const PrivResult result = session_.run(args);
   if (!result.ok) {
     tell(result.error);
-    load();
-  } else if (!pending.empty()) {
     load();
   }
 }
@@ -256,10 +275,6 @@ void LanguagePage::tell(const std::string& message) {
   Gtk::MessageDialog dialog(parent_, message, false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
   dialog.run();
 }
-
-bool LanguagePage::commit_pending() { return session_.commit().ok; }
-
-void LanguagePage::revert_page() { session_.revert(); }
 
 void LanguagePage::on_page_shown() { load(); }
 

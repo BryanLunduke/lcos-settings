@@ -7,6 +7,7 @@
 #include "logic/display_layout.hpp"
 #include "pages/settings_page.hpp"
 
+#include <gdk/gdk.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/image.h>
@@ -20,6 +21,7 @@ namespace lcos {
 class DisplayPage : public SettingsPage {
  public:
   DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& parent);
+  ~DisplayPage() override;
 
   Glib::ustring title() const override { return "Display"; }
   Glib::ustring summary() const override {
@@ -28,15 +30,19 @@ class DisplayPage : public SettingsPage {
   bool has_pending() const override { return dirty_; }
   bool commit_pending() override;
   void restore_session_hardware();
+  bool uncommitted_hardware() const { return hardware_changed_; }
   void on_page_shown() override;
 
  private:
-  bool on_draw(const Cairo::RefPtr<Cairo::Context>& context);
+  // Not named on_draw: that overrides Gtk::Widget::on_draw, and returning
+  // true there stops every child on this page from being painted.
+  void paint_preview(const Cairo::RefPtr<Cairo::Context>& context);
   bool on_button_press(GdkEventButton* event);
   bool on_motion(GdkEventMotion* event);
   bool on_button_release(GdkEventButton* event);
 
   void load_hardware();
+  static GdkFilterReturn screen_filter(GdkXEvent* xevent, GdkEvent* event, gpointer data);
   void rebuild_output_combo();
   void show_selected();
   void push_selected_from_fields();
@@ -44,6 +50,10 @@ class DisplayPage : public SettingsPage {
   void redraw();
   int hit_test(double x, double y) const;
   void write_scheme(const std::string& scheme, bool track);
+  // trigger_apply asks xfsettingsd to load Default. Revert must not: a fresh
+  // profile has no Default scheme, and that request leaves the rejected mode.
+  void clear_temp_scheme(bool trigger_apply);
+  bool apply_saved_layout(const std::vector<OutputConfig>& layout, std::string& error);
   void reload_profiles();
   void load_profile(const std::string& id);
   void save_profile();
@@ -59,8 +69,15 @@ class DisplayPage : public SettingsPage {
   std::vector<OutputConfig> outputs_;
   std::vector<OutputConfig> session_open_;
   std::vector<OutputConfig> confirmed_;
+  std::vector<OutputConfig> pending_revert_;
   bool dirty_ = false;
+  bool applying_ = false;
+  bool confirming_ = false;
+  bool alive_ = true;
+  sigc::connection paint_idle_;
+  bool screen_watch_ = false;
   bool hardware_changed_ = false;
+  GdkWindow* root_window_ = nullptr;
   int selected_index_ = 0;
   int freeze_ = 0;
   bool dragging_ = false;

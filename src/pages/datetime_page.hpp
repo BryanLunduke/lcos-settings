@@ -23,14 +23,12 @@ namespace lcos {
 class DateTimePage : public SettingsPage {
  public:
   DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window& parent);
+  ~DateTimePage() override;
 
   Glib::ustring title() const override { return "Date & Time"; }
   Glib::ustring summary() const override {
     return "Time zone, clock, and automatic time. Administrator changes are undone by Cancel.";
   }
-  bool has_pending() const override { return session_.dirty(); }
-  bool commit_pending() override;
-  void revert_page() override;
   void on_page_shown() override;
 
  private:
@@ -53,6 +51,8 @@ class DateTimePage : public SettingsPage {
   int freeze_ = 0;
   std::vector<std::string> zones_;
   std::string clock_property_;
+  bool clock_seconds_ = false;
+  std::string current_zone() const;
 
   Gtk::Label* now_ = nullptr;
   Gtk::Label* clock_note_ = nullptr;

@@ -37,6 +37,8 @@ logic_lib = static_library(
     'src/logic/mime_files.cpp',
     'src/logic/wm_shortcuts.cpp',
     'src/logic/system_model.cpp',
+    'src/logic/atomic_file.cpp',
+    'src/logic/helper_status.cpp',
   ),
   include_directories: lcos_inc,
   dependencies: glib_dep,
@@ -71,6 +73,7 @@ page_sources = files(
   'src/pages/startup_page.cpp',
   'src/main_window.cpp',
   'src/application.cpp',
+  'src/display_minimal.cpp',
 )
 
 app_deps = [gtkmm_dep, xfconf_dep, pulse_dep, pulse_glib_dep, x11_dep, xrandr_dep, xi_dep, glib_dep]
@@ -133,9 +136,39 @@ install_data(
   install_dir: join_paths(get_option('datadir'), 'metainfo'),
 )
 
-install_data(
-  'data/org.lunduke.lcos-settings.policy',
+priv_paths = configuration_data()
+priv_paths.set('LIBEXECDIR', join_paths(get_option('prefix'), get_option('libexecdir')))
+priv_paths.set('BINDIR', join_paths(get_option('prefix'), get_option('bindir')))
+
+configure_file(
+  input: 'data/org.lunduke.lcos-settings.policy.in',
+  output: 'org.lunduke.lcos-settings.policy',
+  configuration: priv_paths,
+  install: true,
   install_dir: join_paths(get_option('datadir'), 'polkit-1/actions'),
+)
+
+foreach domain : ['system', 'accounts', 'locale']
+  wrapper_conf = configuration_data()
+  wrapper_conf.set('LIBEXECDIR', join_paths(get_option('prefix'), get_option('libexecdir')))
+  wrapper_conf.set('DOMAIN', domain)
+  configure_file(
+    input: 'data/lcos-settings-priv-wrapper.in',
+    output: 'lcos-settings-priv-' + domain,
+    configuration: wrapper_conf,
+    install: true,
+    install_dir: get_option('libexecdir'),
+    install_mode: 'rwxr-xr-x',
+  )
+endforeach
+
+configure_file(
+  input: 'data/lcos-xfce4-display-settings.in',
+  output: 'lcos-xfce4-display-settings',
+  configuration: priv_paths,
+  install: true,
+  install_dir: get_option('libexecdir'),
+  install_mode: 'rwxr-xr-x',
 )
 
 fs = import('fs')

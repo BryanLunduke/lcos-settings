@@ -3,6 +3,7 @@
 #define LCOS_LOGIC_DISPLAY_LAYOUT_HPP
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lcos {
@@ -48,7 +49,22 @@ int rotated_height(const OutputConfig& output);
 int footprint_width(const OutputConfig& output);
 int footprint_height(const OutputConfig& output);
 
+// xfconf displays/<output>/Scale is the RandR scalex. UI scale 2 is stored
+// as 0.5, which is what xfsettingsd writes into the CRTC transform.
+// xfce4-display-settings 4.20 uses the same reciprocal.
+double xfconf_scale_from_ui(double ui_scale);
+double ui_scale_from_xfconf(double stored);
+
 ScreenBounds screen_bounds(const std::vector<OutputConfig>& outputs);
+// True when the CRTC's framebuffer rectangle lies inside the screen.
+// A disabled CRTC (non-positive size) fits. Used before shrinking the screen
+// for a scale change: the old mode must be turned off first or the server
+// returns BadMatch.
+bool crtc_fits_framebuffer(int x, int y, int fb_width, int fb_height, int screen_width,
+                           int screen_height);
+// Same active outputs, geometry, rotation, reflection, and UI scale.
+bool layouts_equivalent(const std::vector<OutputConfig>& left,
+                        const std::vector<OutputConfig>& right);
 void normalize_positions(std::vector<OutputConfig>& outputs);
 void arrange_extend(std::vector<OutputConfig>& outputs);
 void arrange_mirror(std::vector<OutputConfig>& outputs);
@@ -60,6 +76,21 @@ double closest_refresh(const OutputConfig& output, int width, int height,
 
 std::string friendly_output_name(const std::string& randr_name,
                                  const std::string& edid_name);
+
+// XFCE 4.20 treats a top-level displays key as a user profile only when one
+// of its outputs has an EDID child. IdentityPopups and Notify are not profiles.
+// `properties` are full xfconf paths and, for string properties, their text.
+bool is_user_display_profile(
+    const std::string& profile,
+    const std::vector<std::pair<std::string, std::string>>& properties);
+// True when every EDID stored on the profile is one of `connected_edids` and
+// the two lists are the same length. That is the 4.20 connected-output match.
+bool display_profile_matches(
+    const std::string& profile, const std::vector<std::string>& connected_edids,
+    const std::vector<std::pair<std::string, std::string>>& properties);
+std::vector<std::string> matching_display_profiles(
+    const std::vector<std::string>& connected_edids,
+    const std::vector<std::pair<std::string, std::string>>& properties);
 
 // Millimetres for a 96 DPI framebuffer, matching xfsettingsd.
 int millimeters_for_pixels(int pixels);

@@ -321,4 +321,20 @@ DesktopFile parse_desktop_file(const std::string& text, const std::string& id) {
   return file;
 }
 
+std::string prepend_desktop_id(const std::string& list, const std::string& desktop_id) {
+  const std::string id = trim(desktop_id);
+  if (id.empty()) {
+    return list;
+  }
+  std::string out = id;
+  for (const auto& item : split_desktop_list(list)) {
+    if (item != id) {
+      out += ";";
+      out += item;
+    }
+  }
+  out += ";";
+  return out;
+}
+
 }  // namespace lcos
