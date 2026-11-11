@@ -161,9 +161,9 @@ MainWindow::MainWindow(XfconfStore& store)
   if (!store_.available()) {
     status_->set_text("Settings service is not available. Changes cannot be saved.");
   }
-  auto* ok = Gtk::manage(new Gtk::Button("OK"));
-  apply_ = Gtk::manage(new Gtk::Button("Apply"));
-  auto* cancel = Gtk::manage(new Gtk::Button("Cancel"));
+  auto* ok = Gtk::manage(new Gtk::Button("_OK", true));
+  apply_ = Gtk::manage(new Gtk::Button("_Apply", true));
+  auto* cancel = Gtk::manage(new Gtk::Button("_Cancel", true));
   ok->set_can_default(true);
   buttons->pack_start(*status_, Gtk::PACK_EXPAND_WIDGET);
   buttons->pack_start(*ok, Gtk::PACK_SHRINK);
@@ -179,12 +179,25 @@ MainWindow::MainWindow(XfconfStore& store)
         return;
       }
     }
+    if (privileged_.busy()) {
+      privileged_.wait_until_idle();
+    }
+    const PrivResult kept = privileged_.checkpoint();
+    if (!kept.ok) {
+      tell(kept.error.empty() ? "The privileged changes could not be kept." : kept.error);
+      update_apply();
+      return;
+    }
+    // Apply is a checkpoint. Cancel after this restores only newer edits.
+    store_.drop_originals();
     update_apply();
   });
   cancel->signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::close_revert));
   for (auto* page : pages_) {
     page->pending_changed.connect(sigc::mem_fun(*this, &MainWindow::update_apply));
   }
+  store_.changed.connect(sigc::mem_fun(*this, &MainWindow::update_apply));
+  privileged_.changed.connect(sigc::mem_fun(*this, &MainWindow::update_apply));
 
   sidebar_.select_row(*sidebar_.get_row_at_index(0));
   select_page(0);
@@ -228,6 +241,18 @@ void MainWindow::load_nav_icons() {
   }
 }
 
+void MainWindow::show_page(const std::string& id) {
+  for (std::size_t i = 0; i < nav_.size(); ++i) {
+    if (nav_[i].id == id) {
+      if (auto* row = sidebar_.get_row_at_index(static_cast<int>(i))) {
+        sidebar_.select_row(*row);
+      }
+      select_page(static_cast<int>(i));
+      return;
+    }
+  }
+}
+
 void MainWindow::select_page(int index) {
   if (index < 0 || index >= static_cast<int>(pages_.size())) {
     return;
@@ -244,7 +269,7 @@ void MainWindow::update_apply() {
   if (apply_ == nullptr) {
     return;
   }
-  bool pending = false;
+  bool pending = privileged_.dirty() || store_.session_dirty();
   for (auto* page : pages_) {
     pending = pending || page->has_pending();
   }
@@ -274,6 +299,7 @@ void MainWindow::close_keep() {
     tell(committed.error.empty() ? "The privileged changes could not be kept." : committed.error);
     return;
   }
+  store_.drop_originals();
   closing_ = true;
   hide();
 }

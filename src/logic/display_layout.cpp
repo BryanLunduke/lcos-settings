@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <set>
 
 namespace lcos {
 
@@ -253,6 +254,117 @@ int millimeters_for_pixels(int pixels) {
     pixels = 1;
   }
   return std::max(1, static_cast<int>(std::lround((pixels / 96.0) * 25.4)));
+}
+
+namespace {
+
+std::vector<std::string> path_parts(const std::string& path) {
+  std::vector<std::string> parts;
+  std::string part;
+  for (char c : path) {
+    if (c == '/') {
+      if (!part.empty()) {
+        parts.push_back(part);
+        part.clear();
+      }
+    } else {
+      part.push_back(c);
+    }
+  }
+  if (!part.empty()) {
+    parts.push_back(part);
+  }
+  return parts;
+}
+
+const std::string* property_value(
+    const std::vector<std::pair<std::string, std::string>>& properties, const std::string& path) {
+  for (const auto& entry : properties) {
+    if (entry.first == path) {
+      return &entry.second;
+    }
+  }
+  return nullptr;
+}
+
+}  // namespace
+
+bool is_user_display_profile(
+    const std::string& profile,
+    const std::vector<std::pair<std::string, std::string>>& properties) {
+  if (profile.empty() || profile.find('/') != std::string::npos) {
+    return false;
+  }
+  for (const auto& entry : properties) {
+    const auto parts = path_parts(entry.first);
+    // /Profile/Output is the output node xfce writes the friendly name into.
+    if (parts.size() != 2 || parts[0] != profile) {
+      continue;
+    }
+    const std::string* edid =
+        property_value(properties, "/" + profile + "/" + parts[1] + "/EDID");
+    if (edid != nullptr && !edid->empty()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool display_profile_matches(
+    const std::string& profile, const std::vector<std::string>& connected_edids,
+    const std::vector<std::pair<std::string, std::string>>& properties) {
+  if (!is_user_display_profile(profile, properties)) {
+    return false;
+  }
+  std::vector<std::string> stored;
+  for (const auto& entry : properties) {
+    const auto parts = path_parts(entry.first);
+    if (parts.size() != 2 || parts[0] != profile) {
+      continue;
+    }
+    const std::string* edid =
+        property_value(properties, "/" + profile + "/" + parts[1] + "/EDID");
+    if (edid == nullptr || edid->empty()) {
+      continue;
+    }
+    stored.push_back(*edid);
+    if (stored.size() > connected_edids.size()) {
+      return false;
+    }
+    bool found = false;
+    for (const auto& live : connected_edids) {
+      if (live == *edid) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      return false;
+    }
+  }
+  return stored.size() == connected_edids.size();
+}
+
+std::vector<std::string> matching_display_profiles(
+    const std::vector<std::string>& connected_edids,
+    const std::vector<std::pair<std::string, std::string>>& properties) {
+  std::set<std::string> ids;
+  for (const auto& entry : properties) {
+    const auto parts = path_parts(entry.first);
+    if (!parts.empty()) {
+      ids.insert(parts[0]);
+    }
+  }
+  std::vector<std::string> matched;
+  for (const auto& id : ids) {
+    if (id == "Temp") {
+      continue;
+    }
+    if (display_profile_matches(id, connected_edids, properties)) {
+      matched.push_back(id);
+    }
+  }
+  return matched;
 }
 
 }  // namespace lcos

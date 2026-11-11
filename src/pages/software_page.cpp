@@ -99,6 +99,63 @@ bool mime_matches(const std::vector<std::string>& types, const std::string& mime
   return false;
 }
 
+std::vector<std::string> colon_split(const char* text) {
+  std::vector<std::string> dirs;
+  if (text == nullptr) {
+    return dirs;
+  }
+  std::string current;
+  for (const char character : std::string(text)) {
+    if (character == ':') {
+      if (!current.empty()) {
+        dirs.push_back(current);
+      }
+      current.clear();
+    } else {
+      current.push_back(character);
+    }
+  }
+  if (!current.empty()) {
+    dirs.push_back(current);
+  }
+  return dirs;
+}
+
+std::vector<std::string> config_dirs() {
+  auto dirs = colon_split(g_getenv("XDG_CONFIG_DIRS"));
+  if (dirs.empty()) {
+    dirs.push_back("/etc/xdg");
+  }
+  return dirs;
+}
+
+bool ini_key(const std::string& text, const char* group, const std::string& key, std::string& value) {
+  for (const auto& entry : ini_entries(text, group)) {
+    if (entry.first == key) {
+      value = entry.second;
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string first_file_value(const std::vector<std::string>& paths, const char* group,
+                             const std::string& key) {
+  for (const auto& path : paths) {
+    if (!Glib::file_test(path, Glib::FILE_TEST_EXISTS)) {
+      continue;
+    }
+    try {
+      std::string value;
+      if (ini_key(Glib::file_get_contents(path), group, key, value) && !value.empty()) {
+        return value;
+      }
+    } catch (const Glib::Error&) {
+    }
+  }
+  return {};
+}
+
 std::string lower_copy(const std::string& text) {
   std::string out = text;
   for (char& character : out) {
@@ -191,9 +248,11 @@ SoftwarePage::SoftwarePage() {
                                         : std::string(wrapper);
         for (const auto& mime : *mimes) {
           mime_text_ = ini_assign(mime_text_, "Default Applications", mime, desktop);
-          mime_text_ =
-              ini_assign(mime_text_, "Added Associations", mime,
-                         desktop.empty() ? std::string() : desktop + ";");
+          if (!desktop.empty()) {
+            const std::string existing = ini_lookup(mime_text_, "Added Associations", mime);
+            mime_text_ = ini_assign(mime_text_, "Added Associations", mime,
+                                   prepend_desktop_id(existing, desktop));
+          }
         }
       }
       save_files();
@@ -250,7 +309,23 @@ void SoftwarePage::load_helpers() {
         combo.append(helper.id, helper.name);
       }
     }
-    const std::string current = rc_lookup(helpers_text_, key);
+    std::string current = rc_lookup(helpers_text_, key);
+    if (current.empty()) {
+      for (const auto& root : config_dirs()) {
+        const std::string path = Glib::build_filename(root, "xfce4/helpers.rc");
+        if (!Glib::file_test(path, Glib::FILE_TEST_EXISTS)) {
+          continue;
+        }
+        try {
+          current = rc_lookup(Glib::file_get_contents(path), key);
+        } catch (const Glib::Error&) {
+          current.clear();
+        }
+        if (!current.empty()) {
+          break;
+        }
+      }
+    }
     if (!current.empty()) {
       combo.set_active_id(current);
       if (combo.get_active_row_number() < 0) {
@@ -359,7 +434,21 @@ void SoftwarePage::rebuild_mime_rows() {
   for (const auto& type : types) {
     MimeRow row;
     row.type = type;
-    row.desktop_id = ini_lookup(mime_text_, "Default Applications", type);
+    std::string from_user;
+    if (ini_key(mime_text_, "Default Applications", type, from_user)) {
+      row.desktop_id = from_user;
+    } else {
+      std::vector<std::string> paths;
+      for (const auto& root : config_dirs()) {
+        paths.push_back(Glib::build_filename(root, "mimeapps.list"));
+      }
+      for (const auto& root : data_dirs()) {
+        paths.push_back(Glib::build_filename(root, "applications/mimeapps.list"));
+        paths.push_back(Glib::build_filename(root, "applications/xfce-mimeapps.list"));
+        paths.push_back(Glib::build_filename(root, "applications/defaults.list"));
+      }
+      row.desktop_id = first_file_value(paths, "Default Applications", type);
+    }
     const auto semi = row.desktop_id.find(';');
     if (semi != std::string::npos) {
       row.desktop_id.resize(semi);
@@ -454,8 +543,10 @@ void SoftwarePage::choose_mime_default() {
   }
   const std::string chosen = combo->get_active_id();
   mime_text_ = ini_assign(mime_text_, "Default Applications", type, chosen);
-  mime_text_ = ini_assign(mime_text_, "Added Associations", type,
-                          chosen.empty() ? std::string() : chosen + ";");
+  if (!chosen.empty()) {
+    const std::string existing = ini_lookup(mime_text_, "Added Associations", type);
+    mime_text_ = ini_assign(mime_text_, "Added Associations", type, prepend_desktop_id(existing, chosen));
+  }
   save_files();
   rebuild_mime_rows();
   refill_mime_view();

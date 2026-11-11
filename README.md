@@ -46,8 +46,30 @@ The program forces the X11 GDK backend.
 Appearance, keyboard, mouse, and sound write as soon as you move a control.
 Display keeps the layout in the window until **Apply**. Apply pushes it through
 RandR, asks `xfsettingsd` to apply the same layout, and gives you 10 seconds to
-keep it. **OK** does that and closes. **Cancel**, and the window Close button,
-put back every value written during the visit.
+keep it. **Apply** is also a checkpoint: a later **Cancel** does not undo a
+layout you kept, a sound level you applied, or any other setting you already
+applied. **OK** keeps what is left and closes. **Cancel**, and the window Close
+button, put back changes made since the last Apply.
+
+A second launch brings the existing window forward. `lcos-settings display`
+(or `--page=display`) switches to that page. `lcos-settings --display-minimal`
+is the small hot-plug chooser.
+
+## Hot-plug displays
+
+`xfsettingsd` still runs `xfce4-display-settings --minimal` when Notify is on.
+This package installs `/usr/libexec/lcos-xfce4-display-settings`, which runs
+`lcos-settings --display-minimal` for that flag and opens the Display page
+otherwise. LCOS 1.1 packaging can point the hot-plug command at it with a
+divert, without changing `xfsettingsd`:
+
+```
+dpkg-divert --local --rename --divert /usr/bin/xfce4-display-settings.xfce \
+  --add /usr/bin/xfce4-display-settings
+ln -s /usr/libexec/lcos-xfce4-display-settings /usr/bin/xfce4-display-settings
+```
+
+Remove the link and `dpkg-divert --rename --remove` to restore the XFCE dialog.
 
 Screenshots of each category can be written with:
 

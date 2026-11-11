@@ -25,6 +25,8 @@ CommandWidgets add_command(XfconfStore& store, Gtk::Box& box, int& freeze_, cons
   auto* check = Gtk::manage(new Gtk::CheckButton(caption));
   auto* entry = Gtk::manage(new Gtk::Entry());
   entry->set_hexpand(true);
+  entry->set_placeholder_text("%d device, %m mount point");
+  entry->set_tooltip_text("Use %d for the device node and %m for the mount point. The command is saved when you leave the field or press Enter.");
   {
     Freeze hold(freeze_);
     check->set_active(store.get_bool(kChannel, enabled, false));
@@ -39,12 +41,19 @@ CommandWidgets add_command(XfconfStore& store, Gtk::Box& box, int& freeze_, cons
     store.set_bool(kChannel, enabled, check->get_active());
     entry->set_sensitive(check->get_active());
   });
-  entry->signal_changed().connect([&store, depth, entry, command] {
+  auto commit = [&store, depth, entry, command] {
     if (*depth > 0) {
       return;
     }
     store.set_string(kChannel, command, entry->get_text());
-  });
+  };
+  entry->signal_activate().connect(commit);
+  entry->signal_focus_out_event().connect(
+      [commit](GdkEventFocus*) {
+        commit();
+        return false;
+      },
+      false);
   box.pack_start(*check, Gtk::PACK_SHRINK);
   FormGrid form(140);
   form.add(command_label, *entry);
@@ -92,17 +101,27 @@ MediaPage::MediaPage(XfconfStore& store) : store_(store) {
                           "/autoburn/enabled", "/autoburn/data-cd-command", "Data CD command");
   auto* audio_burn = Gtk::manage(new Gtk::Entry());
   audio_burn->set_hexpand(true);
+  audio_burn->set_placeholder_text("%d device, %m mount point");
+  audio_burn->set_tooltip_text("Use %d for the device node and %m for the mount point. The command is saved when you leave the field or press Enter.");
   {
     Freeze hold(freeze_);
     audio_burn->set_text(store_.get_string(kChannel, "/autoburn/audio-cd-command", ""));
     audio_burn->set_sensitive(burn.check->get_active());
   }
-  audio_burn->signal_changed().connect([this, audio_burn] {
+  audio_burn->signal_activate().connect([this, audio_burn] {
     if (freeze_ > 0) {
       return;
     }
     store_.set_string(kChannel, "/autoburn/audio-cd-command", audio_burn->get_text());
   });
+  audio_burn->signal_focus_out_event().connect(
+      [this, audio_burn](GdkEventFocus*) {
+        if (freeze_ == 0) {
+          store_.set_string(kChannel, "/autoburn/audio-cd-command", audio_burn->get_text());
+        }
+        return false;
+      },
+      false);
   burn.check->signal_toggled().connect([audio_burn, burn] {
     audio_burn->set_sensitive(burn.check->get_active());
   });

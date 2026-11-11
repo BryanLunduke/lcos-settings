@@ -65,11 +65,24 @@ class FormGrid {
   Gtk::Grid& grid() { return *grid_; }
 
   void add(const Glib::ustring& caption, Gtk::Widget& widget) {
-    auto* label = make_label(caption);
-    label->set_size_request(label_width_, -1);
-    label->set_line_wrap(true);
+    auto* label = Gtk::manage(new Gtk::Label(caption));
+    label->set_halign(Gtk::ALIGN_START);
+    label->set_valign(Gtk::ALIGN_CENTER);
     label->set_xalign(0);
-    label->set_max_width_chars(28);
+    if (caption.find('_') != Glib::ustring::npos) {
+      label->set_use_underline(true);
+    }
+    label->set_mnemonic_widget(widget);
+    label->set_size_request(label_width_, -1);
+    // A caption with an explicit line break keeps a parenthetical on its
+    // own line instead of wrapping in the middle of the phrase.
+    if (caption.find('\n') != Glib::ustring::npos) {
+      label->set_line_wrap(false);
+    } else {
+      label->set_line_wrap(true);
+      label->set_line_wrap_mode(Pango::WRAP_WORD);
+      label->set_max_width_chars(32);
+    }
     widget.set_hexpand(true);
     widget.set_halign(Gtk::ALIGN_FILL);
     grid_->attach(*label, 0, row_, 1, 1);

@@ -60,6 +60,8 @@ class UpowerClient {
   std::vector<UpDeviceInfo> devices_;
 
   void reload();
+  void attach();
+  void detach();
   void on_manager_signal(const char* name, void* parameters);
   void on_device_properties();
   static void manager_signal_cb(void* proxy, const char* sender, const char* signal_name,

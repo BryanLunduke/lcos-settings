@@ -25,6 +25,7 @@ class MainWindow : public Gtk::ApplicationWindow {
  public:
   explicit MainWindow(XfconfStore& store);
   void dump_pages(const std::string& directory);
+  void show_page(const std::string& id);
 
  private:
   void select_page(int index);

@@ -858,6 +858,10 @@ bool DisplayPage::commit_pending() {
     store_.set_string("displays", "/ActiveProfile", "Default");
     store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
     confirmed_ = outputs_;
+    session_open_ = outputs_;
+    hardware_changed_ = false;
+    // Keep confirmed the layout. A later Cancel must not put the old one back.
+    store_.drop_channel("displays");
     dirty_ = false;
     pending_changed.emit();
     status_->set_text("Display layout kept.");
@@ -902,24 +906,51 @@ void DisplayPage::restore_session_hardware() {
   hardware_changed_ = false;
 }
 
+namespace {
+
+std::vector<std::pair<std::string, std::string>> display_strings(XfconfStore& store) {
+  std::vector<std::pair<std::string, std::string>> props;
+  for (const auto& entry : store.list("displays", "/")) {
+    props.emplace_back(entry.first, entry.second.type == PropType::String ? entry.second.s : std::string());
+  }
+  return props;
+}
+
+}  // namespace
+
 void DisplayPage::reload_profiles() {
   Freeze freeze(freeze_);
   const std::string previous = profiles_.get_active_id();
   profiles_.remove_all();
+  const auto props = display_strings(store_);
+  std::vector<std::string> edids;
+  for (const auto& output : outputs_) {
+    if (output.active && !output.edid.empty()) {
+      edids.push_back(output.edid);
+    }
+  }
   std::set<std::string> ids;
   ids.insert("Default");
-  for (const auto& entry : store_.list("displays", "/")) {
-    if (entry.first.size() < 2 || entry.first.front() != '/') {
-      continue;
+  if (edids.empty()) {
+    std::set<std::string> seen;
+    for (const auto& entry : props) {
+      const auto slash = entry.first.find('/', 1);
+      const std::string id = entry.first.size() > 1
+                                 ? entry.first.substr(1, slash == std::string::npos ? std::string::npos : slash - 1)
+                                 : std::string();
+      if (id.empty() || !seen.insert(id).second || id == "Temp") {
+        continue;
+      }
+      if (is_user_display_profile(id, props)) {
+        ids.insert(id);
+      }
     }
-    const std::string rest = entry.first.substr(1);
-    const auto slash = rest.find('/');
-    const std::string id = slash == std::string::npos ? rest : rest.substr(0, slash);
-    if (id.empty() || id == "Schemes" || id == "Notify" || id == "AutoEnableProfiles" ||
-        id == "ActiveProfile" || id == "Temp") {
-      continue;
+  } else {
+    for (const auto& id : matching_display_profiles(edids, props)) {
+      if (id != "Temp") {
+        ids.insert(id);
+      }
     }
-    ids.insert(id);
   }
   for (const auto& id : ids) {
     std::string label = id;
@@ -1023,7 +1054,8 @@ void DisplayPage::save_profile() {
 
 void DisplayPage::delete_profile() {
   const std::string id = profiles_.get_active_id();
-  if (id.empty() || id == "Default" || id == "Temp") {
+  const auto props = display_strings(store_);
+  if (id.empty() || id == "Default" || id == "Temp" || !is_user_display_profile(id, props)) {
     status_->set_text("The Default profile stays. Choose another profile to delete.");
     return;
   }

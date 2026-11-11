@@ -393,7 +393,8 @@ const passwd* account_or_fail(const std::string& name) {
     fail("invalid username");
   }
   const passwd* entry = getpwnam(name.c_str());
-  if (entry == nullptr || entry->pw_uid < 1000 || entry->pw_uid >= 65534) {
+  if (entry == nullptr || entry->pw_shell == nullptr ||
+      !lcos::is_local_human_account(entry->pw_uid, entry->pw_shell)) {
     fail("that is not a local user account");
   }
   return entry;
@@ -404,8 +405,17 @@ bool in_sudo(const std::string& name) {
   if (sudo == nullptr) {
     return false;
   }
+  const gid_t sudo_gid = sudo->gr_gid;
+  std::vector<std::string> members;
   for (char** member = sudo->gr_mem; member != nullptr && *member != nullptr; ++member) {
-    if (name == *member) {
+    members.emplace_back(*member);
+  }
+  const passwd* entry = getpwnam(name.c_str());
+  if (entry != nullptr && entry->pw_gid == sudo_gid) {
+    return true;
+  }
+  for (const auto& member : members) {
+    if (member == name) {
       return true;
     }
   }
@@ -417,14 +427,28 @@ int administrator_count() {
   if (sudo == nullptr) {
     return 0;
   }
-  int count = 0;
+  const gid_t sudo_gid = sudo->gr_gid;
+  std::vector<std::string> members;
   for (char** member = sudo->gr_mem; member != nullptr && *member != nullptr; ++member) {
-    const passwd* entry = getpwnam(*member);
-    if (entry != nullptr && entry->pw_uid >= 1000 && entry->pw_uid < 65534) {
-      ++count;
+    members.emplace_back(*member);
+  }
+  std::set<std::string> names;
+  for (const auto& member : members) {
+    const passwd* entry = getpwnam(member.c_str());
+    if (entry != nullptr && entry->pw_name != nullptr && entry->pw_shell != nullptr &&
+        lcos::is_local_human_account(entry->pw_uid, entry->pw_shell)) {
+      names.insert(entry->pw_name);
     }
   }
-  return count;
+  setpwent();
+  while (const passwd* entry = getpwent()) {
+    if (entry->pw_name != nullptr && entry->pw_shell != nullptr && entry->pw_gid == sudo_gid &&
+        lcos::is_local_human_account(entry->pw_uid, entry->pw_shell)) {
+      names.insert(entry->pw_name);
+    }
+  }
+  endpwent();
+  return static_cast<int>(names.size());
 }
 
 void refuse_last_admin(const std::string& name) {
@@ -441,23 +465,7 @@ void refuse_self(const passwd* entry) {
 
 bool chrony_installed() { return access("/usr/sbin/chronyd", X_OK) == 0 || access("/usr/bin/chronyc", X_OK) == 0; }
 
-bool chrony_enabled() {
-  DIR* directory = opendir("/etc/rc2.d");
-  if (directory == nullptr) {
-    return false;
-  }
-  bool enabled = false;
-  while (const dirent* item = readdir(directory)) {
-    const std::string name = item->d_name;
-    if (!name.empty() && name[0] == 'S' && name.size() > 6 &&
-        name.compare(name.size() - 6, 6, "chrony") == 0) {
-      enabled = true;
-      break;
-    }
-  }
-  closedir(directory);
-  return enabled;
-}
+bool chrony_enabled() { return lcos::chrony_is_enabled(); }
 
 bool password_matches(const std::string& name, const std::string& password) {
   const spwd* shadow = getspnam(name.c_str());
@@ -539,7 +547,15 @@ void action_time(const std::string& token, const std::string& date, const std::s
   if (chrony_enabled()) {
     fail("turn off automatic time before setting the clock");
   }
-  remember_text(token, "clock", std::to_string(std::time(nullptr)));
+  struct timespec mono {};
+  if (clock_gettime(CLOCK_MONOTONIC, &mono) != 0) {
+    fail("could not read the clock");
+  }
+  // Sample the wall clock and a monotonic clock together, before date -s.
+  // Revert adds the elapsed monotonic time back, so Cancel does not wind
+  // the clock back by the time spent on the page.
+  remember_text(token, "clock-wall", std::to_string(std::time(nullptr)));
+  remember_text(token, "clock-mono", std::to_string(mono.tv_sec));
   if (!run_command({"date", "-s", date + " " + clock}, "")) {
     fail("could not set the clock");
   }
@@ -731,31 +747,77 @@ void action_locale(const std::string& token, const std::vector<std::string>& loc
     }
   }
   remember_file(token, "locale", "/etc/default/locale");
-  std::string text = "LANG=" + locales[0] + "\n";
-  const char* keys[] = {"LC_TIME", "LC_NUMERIC", "LC_MONETARY"};
-  for (int i = 0; i < 3; ++i) {
-    if (!locales[static_cast<std::size_t>(i + 1)].empty() &&
-        locales[static_cast<std::size_t>(i + 1)] != locales[0]) {
-      text += std::string(keys[i]) + "=" + locales[static_cast<std::size_t>(i + 1)] + "\n";
-    }
-  }
+  const std::string text = lcos::locale_file_with_values(slurp("/etc/default/locale"), locales[0], locales[1],
+                                                        locales[2], locales[3]);
   write_file("/etc/default/locale", text, 0644);
+}
+
+std::string shadow_field(long value) { return value < 0 ? std::string() : std::to_string(value); }
+
+std::string format_shadow(const spwd* shadow) {
+  const std::string flag =
+      shadow->sp_flag == 0 ? std::string() : std::to_string(static_cast<unsigned long>(shadow->sp_flag));
+  std::ostringstream out;
+  out << (shadow->sp_namp != nullptr ? shadow->sp_namp : "") << ':'
+      << (shadow->sp_pwdp != nullptr ? shadow->sp_pwdp : "") << ':' << shadow_field(shadow->sp_lstchg)
+      << ':' << shadow_field(shadow->sp_min) << ':' << shadow_field(shadow->sp_max) << ':'
+      << shadow_field(shadow->sp_warn) << ':' << shadow_field(shadow->sp_inact) << ':'
+      << shadow_field(shadow->sp_expire) << ':' << flag;
+  return out.str();
 }
 
 void remember_account(const std::string& token, const std::string& name) {
   const passwd* entry = getpwnam(name.c_str());
-  if (entry == nullptr) {
+  if (entry == nullptr || entry->pw_name == nullptr) {
     return;
   }
+  const uid_t uid = entry->pw_uid;
+  const gid_t gid = entry->pw_gid;
+  const std::string user = entry->pw_name;
+  const std::string gecos = entry->pw_gecos != nullptr ? entry->pw_gecos : "";
+  const std::string home = entry->pw_dir != nullptr ? entry->pw_dir : "";
+  const std::string shell = entry->pw_shell != nullptr ? entry->pw_shell : "";
+  const std::string passwd_field = entry->pw_passwd != nullptr ? entry->pw_passwd : "x";
   std::ostringstream passwd_line;
-  passwd_line << entry->pw_name << ":" << entry->pw_passwd << ":" << entry->pw_uid << ":"
-              << entry->pw_gid << ":" << entry->pw_gecos << ":" << entry->pw_dir << ":"
-              << entry->pw_shell << "\n";
-  remember_text(token, "passwd." + name, passwd_line.str());
-  const spwd* shadow = getspnam(name.c_str());
-  if (shadow != nullptr && shadow->sp_pwdp != nullptr) {
-    remember_text(token, "shadow." + name, std::string(shadow->sp_namp) + ":" + shadow->sp_pwdp + "\n");
+  passwd_line << user << ":" << passwd_field << ":" << uid << ":" << gid << ":" << gecos << ":"
+              << home << ":" << shell << "\n";
+  remember_text(token, "passwd." + user, passwd_line.str());
+  const spwd* shadow = getspnam(user.c_str());
+  if (shadow == nullptr || shadow->sp_namp == nullptr) {
+    fail("could not read the password entry");
   }
+  remember_text(token, "shadow." + user, format_shadow(shadow) + "\n");
+  std::string primary_name;
+  if (const group* primary = getgrgid(gid)) {
+    if (primary->gr_name != nullptr) {
+      primary_name = primary->gr_name;
+    }
+  }
+  if (primary_name.empty()) {
+    primary_name = user;
+  }
+  remember_text(token, "group." + user, primary_name + "\n" + std::to_string(gid) + "\n");
+  int slots = 0;
+  getgrouplist(user.c_str(), gid, nullptr, &slots);
+  std::vector<gid_t> groups(static_cast<std::size_t>(std::max(slots, 1)));
+  const int count = slots;
+  std::string supplementary;
+  if (getgrouplist(user.c_str(), gid, groups.data(), &slots) >= 0) {
+    for (int i = 0; i < count && i < slots; ++i) {
+      if (groups[static_cast<std::size_t>(i)] == gid) {
+        continue;
+      }
+      const group* extra = getgrgid(groups[static_cast<std::size_t>(i)]);
+      if (extra == nullptr || extra->gr_name == nullptr || extra->gr_name[0] == '\0') {
+        continue;
+      }
+      if (!supplementary.empty()) {
+        supplementary += ",";
+      }
+      supplementary += extra->gr_name;
+    }
+  }
+  remember_text(token, "groups." + user, supplementary);
   remember_text(token, "sudo." + name, in_sudo(name) ? "yes" : "no");
 }
 
@@ -899,8 +961,8 @@ void action_autologin(const std::string& token, const std::string& user) {
   if (!(user == "none" || lcos::valid_username(user))) {
     fail("invalid automatic login");
   }
-  if (user != "none" && getpwnam(user.c_str()) == nullptr) {
-    fail("that user does not exist");
+  if (user != "none") {
+    account_or_fail(user);
   }
   // 50-lcos.conf is never edited. The drop-in wins on systems where the main
   // file does not set autologin-user. LightDM reads /etc/lightdm/lightdm.conf
@@ -923,127 +985,237 @@ void action_autologin(const std::string& token, const std::string& user) {
   }
 }
 
-void restore_shadow_password(const std::string& saved_line) {
-  // Hold the shadow lock across the rewrite. write_file copies the current
-  // inode's owner, group, and mode, so root:shadow 0640 survives.
-  if (lckpwdf() != 0) {
-    fail("could not lock the password file");
+bool try_write_file(const std::string& path, const std::string& text, mode_t mode,
+                     std::string& error) {
+  if (path == "/etc/lightdm/lightdm.conf.d/50-lcos.conf") {
+    error = "refusing to edit the installer LightDM file";
+    return false;
   }
-  const auto cut = saved_line.find(':');
-  if (cut == std::string::npos) {
-    return;
+  lcos::ReplaceRequest request;
+  request.mode_if_new = mode;
+  if (path == "/etc/default/locale") {
+    request.follow_symlink = true;
+    request.symlink_targets = {"/etc/locale.conf", "/etc/default/locale"};
   }
-  const std::string name = saved_line.substr(0, cut);
-  const auto next = saved_line.find(':', cut + 1);
-  const std::string hash = saved_line.substr(cut + 1, next == std::string::npos ? std::string::npos : next - cut - 1);
-  std::string text = slurp("/etc/shadow");
-  std::string out;
-  std::string line;
-  bool replaced = false;
-  for (std::size_t i = 0; i <= text.size(); ++i) {
-    if (i != text.size() && text[i] != '\n') {
-      line.push_back(text[i]);
-      continue;
+  if (!lcos::replace_regular_file(path, text, request, &error)) {
+    if (error.empty()) {
+      error = "cannot write " + path;
     }
-    if (line.compare(0, name.size() + 1, name + ":") == 0) {
-      out += name + ":" + hash + line.substr(line.find(':', name.size() + 1) == std::string::npos
-                                                 ? line.size()
-                                                 : line.find(':', name.size() + 1));
-      replaced = true;
-    } else if (!line.empty()) {
-      out += line;
-    }
-    if (i != text.size() || !line.empty()) {
-      out += '\n';
-    }
-    line.clear();
+    return false;
   }
-  if (!replaced) {
-    out += saved_line;
-    if (out.empty() || out.back() != '\n') {
-      out += '\n';
-    }
-  }
-  write_file("/etc/shadow", out, 0640);
-  ulckpwdf();
+  return true;
 }
 
-void revert_token(const std::string& token) {
-  ensure_undo(token);
-  const std::string dir = undo_dir(token);
-  if (access((dir + "/localtime").c_str(), F_OK) == 0) {
-    const std::string target = first_line(slurp(dir + "/localtime"));
-    unlink("/etc/localtime");
-    symlink(target.c_str(), "/etc/localtime");
+bool restore_shadow_password(const std::string& saved_line, std::string& error) {
+  // Hold the shadow lock across the rewrite. try_write_file copies the current
+  // inode's owner, group, and mode, so root:shadow 0640 survives.
+  if (lckpwdf() != 0) {
+    error = "could not lock the password file";
+    return false;
   }
-  if (access((dir + "/timezone").c_str(), F_OK) == 0) {
-    if (access((dir + "/timezone.missing").c_str(), F_OK) == 0) {
-      unlink("/etc/timezone");
-    } else {
-      write_file("/etc/timezone", slurp(dir + "/timezone"), 0644);
+  const auto cut = saved_line.find(':');
+  const std::string name = cut == std::string::npos ? std::string() : saved_line.substr(0, cut);
+  const bool exists = !name.empty() && getpwnam(name.c_str()) != nullptr;
+  const lcos::ShadowRestore restored = lcos::restore_shadow_line(slurp("/etc/shadow"), saved_line, exists);
+  if (!restored.ok) {
+    ulckpwdf();
+    error = restored.error.empty() ? "could not restore the password entry" : restored.error;
+    return false;
+  }
+  std::string write_error;
+  const bool wrote = try_write_file("/etc/shadow", restored.text, 0640, write_error);
+  ulckpwdf();
+  if (!wrote) {
+    error = write_error.empty() ? "could not restore the password entry" : write_error;
+  }
+  return wrote;
+}
+
+struct RevertReport {
+  std::vector<std::string> errors;
+  void check(bool ok, const std::string& message) {
+    if (!ok && !message.empty()) {
+      errors.push_back(message);
     }
   }
-  if (access((dir + "/ntp").c_str(), F_OK) == 0) {
-    const std::string state = first_line(slurp(dir + "/ntp"));
-    if (state == "on") {
-      run_command({"update-rc.d", "chrony", "enable"}, "");
-      run_command({"/etc/init.d/chrony", "start"}, "");
-    } else if (state == "off") {
-      run_command({"/etc/init.d/chrony", "stop"}, "");
-      run_command({"update-rc.d", "chrony", "disable"}, "");
-    }
+};
+
+bool ensure_saved_group(const std::string& name, const std::string& gid_text, std::string& error) {
+  if (name.empty() || gid_text.empty()) {
+    error = "the saved group is incomplete";
+    return false;
   }
-  if (access((dir + "/clock").c_str(), F_OK) == 0) {
-    const std::string epoch = first_line(slurp(dir + "/clock"));
-    bool digits = !epoch.empty();
-    for (char c : epoch) {
-      if (!std::isdigit(static_cast<unsigned char>(c))) {
-        digits = false;
+  char* end = nullptr;
+  const unsigned long gid = std::strtoul(gid_text.c_str(), &end, 10);
+  if (end == gid_text.c_str() || *end != '\0') {
+    error = "the saved group is incomplete";
+    return false;
+  }
+  if (getgrgid(static_cast<gid_t>(gid)) != nullptr) {
+    return true;
+  }
+  if (getgrnam(name.c_str()) != nullptr) {
+    error = "could not restore the private group";
+    return false;
+  }
+  if (!run_command({"groupadd", "-o", "-g", gid_text, name}, "")) {
+    error = "could not restore the private group";
+    return false;
+  }
+  return true;
+}
+
+std::vector<std::string> split_commas(const std::string& text) {
+  std::vector<std::string> parts;
+  std::string current;
+  for (char c : text) {
+    if (c == ',') {
+      if (!current.empty()) {
+        parts.push_back(current);
       }
-    }
-    if (digits) {
-      run_command({"date", "-s", "@" + epoch}, "");
-    }
-  }
-  if (access((dir + "/locale.gen").c_str(), F_OK) == 0) {
-    if (access((dir + "/locale.gen.missing").c_str(), F_OK) == 0) {
-      unlink("/etc/locale.gen");
-    } else {
-      write_file("/etc/locale.gen", slurp(dir + "/locale.gen"), 0644);
+      current.clear();
+    } else if (c != ' ' && c != '\n' && c != '\r') {
+      current.push_back(c);
     }
   }
-  if (access((dir + "/locale.archive").c_str(), F_OK) == 0) {
-    if (access((dir + "/locale.archive.missing").c_str(), F_OK) == 0) {
-      unlink(kLocaleArchive);
-    } else {
-      write_file(kLocaleArchive, slurp(dir + "/locale.archive"), 0644);
-    }
+  if (!current.empty()) {
+    parts.push_back(current);
   }
-  if (access((dir + "/locale.dir").c_str(), F_OK) == 0) {
-    remove_new_locale_entries(locale_dir_from_text(slurp(dir + "/locale.dir")));
-  }
-  if (access((dir + "/locale").c_str(), F_OK) == 0) {
-    if (access((dir + "/locale.missing").c_str(), F_OK) == 0) {
-      unlink("/etc/default/locale");
-    } else {
-      write_file("/etc/default/locale", slurp(dir + "/locale"), 0644);
-    }
-  }
-  // Added accounts go away. Removed accounts are recreated from the snapshot.
-  // Directory scan is limited to the undo folder we created.
+  return parts;
+}
+
+std::vector<std::string> undo_names(const std::string& dir) {
+  std::vector<std::string> names;
   if (DIR* directory = opendir(dir.c_str())) {
     while (const dirent* item = readdir(directory)) {
       const std::string name = item->d_name;
-      if (name.compare(0, 6, "added.") == 0) {
-        const std::string user = name.substr(6);
-        run_command({"userdel", "-r", user}, "");
+      if (name != "." && name != "..") {
+        names.push_back(name);
       }
     }
     closedir(directory);
   }
-  if (DIR* directory = opendir(dir.c_str())) {
-    while (const dirent* item = readdir(directory)) {
-      const std::string name = item->d_name;
+  return names;
+}
+
+void discard_domain_files(const std::string& token, lcos::PrivDomain domain) {
+  const std::string dir = undo_dir(token);
+  for (const auto& name : undo_names(dir)) {
+    if (lcos::undo_file_belongs_to(domain, name)) {
+      unlink((dir + "/" + name).c_str());
+    }
+  }
+  drop_token_dir_if_empty(token);
+}
+
+bool revert_token(const std::string& token, lcos::PrivDomain domain) {
+  ensure_undo(token);
+  const std::string dir = undo_dir(token);
+  RevertReport report;
+  auto note_command = [&](bool ok, const std::string& message) { report.check(ok, message); };
+
+  if (domain == lcos::PrivDomain::System) {
+    if (access((dir + "/localtime").c_str(), F_OK) == 0) {
+      const std::string target = first_line(slurp(dir + "/localtime"));
+      if (unlink("/etc/localtime") != 0 && errno != ENOENT) {
+        report.errors.push_back("could not restore the time zone link");
+      } else if (target.empty() || symlink(target.c_str(), "/etc/localtime") != 0) {
+        report.errors.push_back("could not restore the time zone link");
+      }
+    }
+    if (access((dir + "/timezone").c_str(), F_OK) == 0) {
+      std::string error;
+      bool ok = true;
+      if (access((dir + "/timezone.missing").c_str(), F_OK) == 0) {
+        if (unlink("/etc/timezone") != 0 && errno != ENOENT) {
+          ok = false;
+          error = "could not restore the time zone name";
+        }
+      } else {
+        ok = try_write_file("/etc/timezone", slurp(dir + "/timezone"), 0644, error);
+      }
+      report.check(ok, error.empty() ? "could not restore the time zone name" : error);
+    }
+    if (access((dir + "/ntp").c_str(), F_OK) == 0) {
+      const std::string state = first_line(slurp(dir + "/ntp"));
+      if (state == "on") {
+        note_command(run_command({"update-rc.d", "chrony", "enable"}, ""), "could not restore automatic time");
+        note_command(run_command({"/etc/init.d/chrony", "start"}, ""), "could not restore automatic time");
+      } else if (state == "off") {
+        note_command(run_command({"/etc/init.d/chrony", "stop"}, ""), "could not restore automatic time");
+        note_command(run_command({"update-rc.d", "chrony", "disable"}, ""), "could not restore automatic time");
+      }
+    }
+    if (access((dir + "/clock-wall").c_str(), F_OK) == 0 &&
+        access((dir + "/clock-mono").c_str(), F_OK) == 0) {
+      try {
+        const std::time_t saved_wall = static_cast<std::time_t>(std::stoll(first_line(slurp(dir + "/clock-wall"))));
+        const std::time_t saved_mono = static_cast<std::time_t>(std::stoll(first_line(slurp(dir + "/clock-mono"))));
+        struct timespec now {};
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+          report.errors.push_back("could not restore the clock");
+        } else {
+          const std::time_t target = lcos::restored_wall_clock(saved_wall, saved_mono, now.tv_sec);
+          note_command(run_command({"date", "-s", "@" + std::to_string(target)}, ""),
+                       "could not restore the clock");
+        }
+      } catch (const std::exception&) {
+        report.errors.push_back("could not restore the clock");
+      }
+    }
+  }
+
+  if (domain == lcos::PrivDomain::Locale) {
+    if (access((dir + "/locale.gen").c_str(), F_OK) == 0) {
+      std::string error;
+      bool ok = true;
+      if (access((dir + "/locale.gen.missing").c_str(), F_OK) == 0) {
+        if (unlink("/etc/locale.gen") != 0 && errno != ENOENT) {
+          ok = false;
+        }
+      } else {
+        ok = try_write_file("/etc/locale.gen", slurp(dir + "/locale.gen"), 0644, error);
+      }
+      report.check(ok, error.empty() ? "could not restore locale.gen" : error);
+    }
+    if (access((dir + "/locale.archive").c_str(), F_OK) == 0) {
+      std::string error;
+      bool ok = true;
+      if (access((dir + "/locale.archive.missing").c_str(), F_OK) == 0) {
+        if (unlink(kLocaleArchive) != 0 && errno != ENOENT) {
+          ok = false;
+        }
+      } else {
+        ok = try_write_file(kLocaleArchive, slurp(dir + "/locale.archive"), 0644, error);
+      }
+      report.check(ok, error.empty() ? "could not restore the locale archive" : error);
+    }
+    if (access((dir + "/locale.dir").c_str(), F_OK) == 0) {
+      remove_new_locale_entries(locale_dir_from_text(slurp(dir + "/locale.dir")));
+    }
+    if (access((dir + "/locale").c_str(), F_OK) == 0) {
+      std::string error;
+      bool ok = true;
+      if (access((dir + "/locale.missing").c_str(), F_OK) == 0) {
+        if (unlink("/etc/default/locale") != 0 && errno != ENOENT) {
+          ok = false;
+        }
+      } else {
+        ok = try_write_file("/etc/default/locale", slurp(dir + "/locale"), 0644, error);
+      }
+      report.check(ok, error.empty() ? "could not restore the locale" : error);
+    }
+  }
+
+  if (domain == lcos::PrivDomain::Accounts) {
+    for (const auto& name : undo_names(dir)) {
+      if (name.compare(0, 6, "added.") != 0) {
+        continue;
+      }
+      const std::string user = name.substr(6);
+      note_command(run_command({"userdel", "-r", user}, ""), "could not remove the added account");
+    }
+    for (const auto& name : undo_names(dir)) {
       if (name.compare(0, 7, "passwd.") != 0) {
         continue;
       }
@@ -1063,82 +1235,131 @@ void revert_token(const std::string& token) {
         }
       }
       fields.push_back(field);
-      if (fields.size() < 7) {
+      if (fields.size() < 7 || fields[0].empty()) {
+        report.errors.push_back("the saved account is incomplete");
         continue;
       }
-      run_command({"useradd", "-M", "-o", "-u", fields[2], "-g", fields[3], "-d", fields[5], "-s",
-                   fields[6], "-c", fields[4], fields[0]},
-                  "");
+      std::string group_error;
+      const std::string group_text = slurp(dir + "/group." + user);
+      const auto nl = group_text.find('\n');
+      const std::string group_name = nl == std::string::npos ? group_text : group_text.substr(0, nl);
+      const std::string group_gid =
+          nl == std::string::npos ? std::string() : first_line(group_text.substr(nl + 1));
+      if (!group_name.empty() && !ensure_saved_group(group_name, group_gid.empty() ? fields[3] : group_gid,
+                                                    group_error)) {
+        report.errors.push_back(group_error);
+        continue;
+      }
+      if (!run_command({"useradd", "-M", "-o", "-u", fields[2], "-g", fields[3], "-d", fields[5], "-s",
+                        fields[6], "-c", fields[4], fields[0]},
+                       "")) {
+        report.errors.push_back("could not restore the account");
+        continue;
+      }
+      endpwent();
+      endgrent();
       if (access((dir + "/shadow." + user).c_str(), F_OK) == 0) {
-        restore_shadow_password(first_line(slurp(dir + "/shadow." + user)));
+        std::string shadow_error;
+        report.check(restore_shadow_password(first_line(slurp(dir + "/shadow." + user)), shadow_error),
+                     shadow_error.empty() ? "could not restore the password entry" : shadow_error);
       }
-      if (access((dir + "/homepath." + user).c_str(), F_OK) == 0) {
-        const std::string home = first_line(slurp(dir + "/homepath." + user));
-        rename((dir + "/home." + user).c_str(), home.c_str());
+      for (const auto& extra : split_commas(slurp(dir + "/groups." + user))) {
+        if (getgrnam(extra.c_str()) == nullptr) {
+          report.errors.push_back("could not restore group " + extra);
+          continue;
+        }
+        note_command(run_command({"usermod", "-a", "-G", extra, user}, ""),
+                     "could not restore group " + extra);
       }
-      if (first_line(slurp(dir + "/sudo." + user)) == "yes") {
-        run_command({"usermod", "-a", "-G", "sudo", user}, "");
+      if (first_line(slurp(dir + "/sudo." + user)) == "yes" && !in_sudo(user)) {
+        note_command(run_command({"usermod", "-a", "-G", "sudo", user}, ""),
+                     "could not restore administrator access");
       }
     }
-    closedir(directory);
-  }
-  if (DIR* directory = opendir(dir.c_str())) {
-    while (const dirent* item = readdir(directory)) {
-      const std::string name = item->d_name;
-      if (name.compare(0, 7, "shadow.") == 0 && getpwnam(name.substr(7).c_str()) != nullptr) {
-        restore_shadow_password(first_line(slurp(dir + "/" + name)));
+    for (const auto& name : undo_names(dir)) {
+      if (name.compare(0, 7, "shadow.") == 0 && name.find(".missing") == std::string::npos &&
+          getpwnam(name.substr(7).c_str()) != nullptr) {
+        std::string shadow_error;
+        report.check(restore_shadow_password(first_line(slurp(dir + "/" + name)), shadow_error),
+                     shadow_error.empty() ? "could not restore the password entry" : shadow_error);
       } else if (name.compare(0, 5, "sudo.") == 0) {
         const std::string user = name.substr(5);
+        if (getpwnam(user.c_str()) == nullptr) {
+          continue;
+        }
         const bool want = first_line(slurp(dir + "/" + name)) == "yes";
         if (want && !in_sudo(user)) {
-          run_command({"usermod", "-a", "-G", "sudo", user}, "");
+          note_command(run_command({"usermod", "-a", "-G", "sudo", user}, ""),
+                       "could not restore administrator access");
         } else if (!want && in_sudo(user)) {
-          run_command({"gpasswd", "-d", user, "sudo"}, "");
+          note_command(run_command({"gpasswd", "-d", user, "sudo"}, ""),
+                       "could not restore the account type");
         }
       } else if (name.compare(0, 7, "avatar.") == 0 && name.find(".missing") == std::string::npos) {
         const std::string user = name.substr(7);
         const passwd* entry = getpwnam(user.c_str());
-        if (entry != nullptr && entry->pw_dir != nullptr) {
-          const std::string dest = std::string(entry->pw_dir) + "/.face";
-          if (access((dir + "/" + name + ".missing").c_str(), F_OK) == 0) {
-            unlink(dest.c_str());
-          } else {
-            struct stat face_st;
-            if (lstat(dest.c_str(), &face_st) == 0 && !S_ISREG(face_st.st_mode)) {
-              unlink(dest.c_str());
-            }
-            lcos::ReplaceRequest request;
-            request.mode_if_new = 0644;
-            request.force_owner = true;
-            request.uid = entry->pw_uid;
-            request.gid = entry->pw_gid;
-            std::string error;
-            if (!lcos::replace_regular_file(dest, slurp(dir + "/" + name), request, &error)) {
-              fail(error.empty() ? "could not restore the picture" : error);
+        if (entry == nullptr || entry->pw_dir == nullptr) {
+          report.errors.push_back("could not restore the picture");
+          continue;
+        }
+        const std::string dest = std::string(entry->pw_dir) + "/.face";
+        if (access((dir + "/" + name + ".missing").c_str(), F_OK) == 0) {
+          if (unlink(dest.c_str()) != 0 && errno != ENOENT) {
+            report.errors.push_back("could not restore the picture");
+          }
+        } else {
+          struct stat face_st;
+          if (lstat(dest.c_str(), &face_st) == 0 && !S_ISREG(face_st.st_mode)) {
+            if (unlink(dest.c_str()) != 0) {
+              report.errors.push_back("could not restore the picture");
+              continue;
             }
           }
+          lcos::ReplaceRequest request;
+          request.mode_if_new = 0644;
+          request.force_owner = true;
+          request.uid = entry->pw_uid;
+          request.gid = entry->pw_gid;
+          std::string error;
+          report.check(lcos::replace_regular_file(dest, slurp(dir + "/" + name), request, &error),
+                       error.empty() ? "could not restore the picture" : error);
         }
       } else if (name.compare(0, 8, "lightdm.") == 0 && name.find(".missing") == std::string::npos) {
         const char* paths[] = {"/etc/lightdm/lightdm.conf.d/60-lcos-settings.conf",
                                "/etc/lightdm/lightdm.conf"};
         const int index = std::atoi(name.c_str() + 8);
         if (index >= 0 && index < 2) {
+          std::string error;
+          bool ok = true;
           if (access((dir + "/" + name + ".missing").c_str(), F_OK) == 0) {
-            unlink(paths[index]);
+            if (unlink(paths[index]) != 0 && errno != ENOENT) {
+              ok = false;
+              error = "could not restore automatic login";
+            }
           } else {
-            write_file(paths[index], slurp(dir + "/" + name), 0644);
+            ok = try_write_file(paths[index], slurp(dir + "/" + name), 0644, error);
           }
+          report.check(ok, error.empty() ? "could not restore automatic login" : error);
         }
       }
     }
-    closedir(directory);
   }
-  run_command({"rm", "-rf", dir}, "");
+
+  if (!report.errors.empty()) {
+    std::cerr << "could not restore every change\n";
+    for (const auto& message : report.errors) {
+      std::cerr << message << "\n";
+    }
+    return false;
+  }
+  discard_domain_files(token, domain);
+  return true;
 }
 
-void commit_token(const std::string& token) {
+bool commit_token(const std::string& token, lcos::PrivDomain domain) {
   ensure_undo(token);
-  run_command({"rm", "-rf", undo_dir(token)}, "");
+  discard_domain_files(token, domain);
+  return true;
 }
 
 }  // namespace
@@ -1147,41 +1368,58 @@ int main(int argc, char** argv) {
   if (geteuid() != 0) {
     fail("this program must run as root");
   }
-  if (argc < 3) {
+  if (argc < 4 || std::strncmp(argv[1], "--domain=", 9) != 0) {
     fail("invalid request");
   }
-  const std::string token = argv[1];
-  const std::string action = argv[2];
+  const std::string domain_name = argv[1] + 9;
+  lcos::PrivDomain domain = lcos::PrivDomain::System;
+  if (domain_name == "system") {
+    domain = lcos::PrivDomain::System;
+  } else if (domain_name == "accounts") {
+    domain = lcos::PrivDomain::Accounts;
+  } else if (domain_name == "locale") {
+    domain = lcos::PrivDomain::Locale;
+  } else {
+    fail("invalid request");
+  }
+  const std::string token = argv[2];
+  const std::string action = argv[3];
   if (!lcos::valid_undo_token(token)) {
     fail("invalid request");
   }
+  if (!lcos::priv_action_allowed(domain, action)) {
+    fail("this action is not allowed");
+  }
+  const int rest = argc - 3;
   try {
-    if (action == "revert") {
-      revert_token(token);
-    } else if (action == "commit") {
-      commit_token(token);
-    } else if (action == "set-timezone" && argc == 4) {
-      action_timezone(token, argv[3]);
-    } else if (action == "set-time" && argc == 5) {
-      action_time(token, argv[3], argv[4]);
-    } else if (action == "set-ntp" && argc == 4) {
-      action_ntp(token, argv[3]);
-    } else if (action == "set-locale" && argc == 7) {
-      action_locale(token, {argv[3], argv[4], argv[5], argv[6]});
-    } else if (action == "add-user" && argc == 6) {
-      action_add_user(token, argv[3], argv[4], argv[5], first_line(read_stdin()));
-    } else if (action == "remove-user" && argc == 4) {
-      action_remove_user(token, argv[3]);
-    } else if (action == "set-password" && argc == 5) {
-      action_password(token, argv[3], argv[4], read_stdin());
-    } else if (action == "set-type" && argc == 5) {
-      action_type(token, argv[3], argv[4]);
-    } else if (action == "set-real-name" && argc == 5) {
-      action_real_name(token, argv[3], argv[4]);
-    } else if (action == "set-avatar" && argc == 5) {
-      action_avatar(token, argv[3], argv[4]);
-    } else if (action == "set-autologin" && argc == 4) {
-      action_autologin(token, argv[3]);
+    if (action == "revert" && rest == 1) {
+      if (!revert_token(token, domain)) {
+        return 1;
+      }
+    } else if (action == "commit" && rest == 1) {
+      commit_token(token, domain);
+    } else if (action == "set-timezone" && rest == 2) {
+      action_timezone(token, argv[4]);
+    } else if (action == "set-time" && rest == 3) {
+      action_time(token, argv[4], argv[5]);
+    } else if (action == "set-ntp" && rest == 2) {
+      action_ntp(token, argv[4]);
+    } else if (action == "set-locale" && rest == 5) {
+      action_locale(token, {argv[4], argv[5], argv[6], argv[7]});
+    } else if (action == "add-user" && rest == 4) {
+      action_add_user(token, argv[4], argv[5], argv[6], first_line(read_stdin()));
+    } else if (action == "remove-user" && rest == 2) {
+      action_remove_user(token, argv[4]);
+    } else if (action == "set-password" && rest == 3) {
+      action_password(token, argv[4], argv[5], read_stdin());
+    } else if (action == "set-type" && rest == 3) {
+      action_type(token, argv[4], argv[5]);
+    } else if (action == "set-real-name" && rest == 3) {
+      action_real_name(token, argv[4], argv[5]);
+    } else if (action == "set-avatar" && rest == 3) {
+      action_avatar(token, argv[4], argv[5]);
+    } else if (action == "set-autologin" && rest == 2) {
+      action_autologin(token, argv[4]);
     } else {
       fail("invalid request");
     }

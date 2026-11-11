@@ -21,7 +21,7 @@ void unref_op(pa_operation* operation) {
 
 void sink_cb(pa_context*, const pa_sink_info* info, int eol, void* user) {
   auto* self = static_cast<PulseClient*>(user);
-  if (eol > 0) {
+  if (eol != 0) {
     self->list_finished();
     return;
   }
@@ -59,7 +59,7 @@ void sink_cb(pa_context*, const pa_sink_info* info, int eol, void* user) {
 
 void source_cb(pa_context*, const pa_source_info* info, int eol, void* user) {
   auto* self = static_cast<PulseClient*>(user);
-  if (eol > 0) {
+  if (eol != 0) {
     self->list_finished();
     return;
   }
@@ -100,7 +100,7 @@ void source_cb(pa_context*, const pa_source_info* info, int eol, void* user) {
 
 void input_cb(pa_context*, const pa_sink_input_info* info, int eol, void* user) {
   auto* self = static_cast<PulseClient*>(user);
-  if (eol > 0) {
+  if (eol != 0) {
     self->list_finished();
     return;
   }
@@ -131,7 +131,7 @@ void input_cb(pa_context*, const pa_sink_input_info* info, int eol, void* user) 
 
 void card_cb(pa_context*, const pa_card_info* info, int eol, void* user) {
   auto* self = static_cast<PulseClient*>(user);
-  if (eol > 0) {
+  if (eol != 0) {
     self->list_finished();
     return;
   }
@@ -248,6 +248,9 @@ void PulseClient::connect() {
     pa_context_set_subscribe_callback(impl_->context, nullptr, nullptr);
     pa_context_unref(impl_->context);
     impl_->context = nullptr;
+    pending_ = 0;
+    refreshing_ = false;
+    refresh_again_ = false;
     if (impl_->loop != nullptr) {
       pa_glib_mainloop_free(impl_->loop);
       impl_->loop = nullptr;
@@ -265,6 +268,9 @@ void PulseClient::connect() {
 void PulseClient::on_ready() { refresh(); }
 
 void PulseClient::on_failed(const std::string& message) {
+  pending_ = 0;
+  refreshing_ = false;
+  refresh_again_ = false;
   state_.ready = false;
   state_.error = message;
   changed.emit();
@@ -283,6 +289,9 @@ void PulseClient::add_input(PaInput input) { incoming_.inputs.push_back(std::mov
 void PulseClient::add_card(PaCard card) { incoming_.cards.push_back(std::move(card)); }
 
 void PulseClient::list_finished() {
+  if (!refreshing_) {
+    return;
+  }
   if (pending_ > 0) {
     --pending_;
   }

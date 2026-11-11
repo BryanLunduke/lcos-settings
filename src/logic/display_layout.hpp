@@ -3,6 +3,7 @@
 #define LCOS_LOGIC_DISPLAY_LAYOUT_HPP
 
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lcos {
@@ -66,6 +67,21 @@ double closest_refresh(const OutputConfig& output, int width, int height,
 
 std::string friendly_output_name(const std::string& randr_name,
                                  const std::string& edid_name);
+
+// XFCE 4.20 treats a top-level displays key as a user profile only when one
+// of its outputs has an EDID child. IdentityPopups and Notify are not profiles.
+// `properties` are full xfconf paths and, for string properties, their text.
+bool is_user_display_profile(
+    const std::string& profile,
+    const std::vector<std::pair<std::string, std::string>>& properties);
+// True when every EDID stored on the profile is one of `connected_edids` and
+// the two lists are the same length. That is the 4.20 connected-output match.
+bool display_profile_matches(
+    const std::string& profile, const std::vector<std::string>& connected_edids,
+    const std::vector<std::pair<std::string, std::string>>& properties);
+std::vector<std::string> matching_display_profiles(
+    const std::vector<std::string>& connected_edids,
+    const std::vector<std::pair<std::string, std::string>>& properties);
 
 // Millimetres for a 96 DPI framebuffer, matching xfsettingsd.
 int millimeters_for_pixels(int pixels);
