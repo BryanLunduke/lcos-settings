@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include <sigc++/signal.h>
+
 namespace lcos {
 
 enum class PropType { Absent, Bool, Int, Uint, Double, String, Ints, Doubles, Strings };
@@ -85,8 +87,13 @@ class XfconfStore {
   void set_tracking(bool on) { tracking_ = on; }
   bool tracking() const { return tracking_; }
   void revert_session();
+  // Apply and OK keep what has been written. Later Cancel only restores
+  // changes made after the checkpoint.
+  void drop_originals();
+  void drop_channel(const std::string& channel);
   bool session_dirty() const { return !originals_.empty(); }
   bool channel_touched(const std::string& channel) const;
+  sigc::signal<void> changed;
 
  private:
   struct Saved {

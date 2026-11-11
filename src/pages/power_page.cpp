@@ -5,6 +5,8 @@
 #include "logic/power.hpp"
 #include "ui_util.hpp"
 
+#include <gio/gio.h>
+
 #include <gtkmm/box.h>
 #include <gtkmm/image.h>
 #include <gtkmm/label.h>
@@ -48,23 +50,63 @@ bool machine_has_battery() {
 
 bool machine_has_lid() { return directory_exists("/proc/acpi/button/lid"); }
 
-void fill_button_actions(Gtk::ComboBoxText& combo) {
-  combo.append("0", "Do nothing");
-  combo.append("1", "Suspend");
-  combo.append("2", "Hibernate");
-  combo.append("3", "Ask");
-  combo.append("4", "Shut down");
-  combo.append("5", "Hybrid sleep");
+struct SleepCaps {
+  bool suspend = false;
+  bool hibernate = false;
+  bool hybrid = false;
+  bool known = false;
+};
+
+std::string login1_can(const char* method) {
+  GError* error = nullptr;
+  GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SYSTEM, nullptr, &error);
+  if (bus == nullptr) {
+    if (error != nullptr) {
+      g_error_free(error);
+    }
+    return {};
+  }
+  GVariant* result = g_dbus_connection_call_sync(
+      bus, "org.freedesktop.login1", "/org/freedesktop/login1", "org.freedesktop.login1.Manager",
+      method, nullptr, G_VARIANT_TYPE("(s)"), G_DBUS_CALL_FLAGS_NONE, 1500, nullptr, &error);
+  g_object_unref(bus);
+  if (result == nullptr) {
+    if (error != nullptr) {
+      g_error_free(error);
+    }
+    return {};
+  }
+  const char* answer = nullptr;
+  g_variant_get(result, "(&s)", &answer);
+  const std::string text = answer != nullptr ? answer : "";
+  g_variant_unref(result);
+  return text;
 }
 
-void fill_lid_actions(Gtk::ComboBoxText& combo) {
-  combo.append("0", "Switch off display");
-  combo.append("1", "Suspend");
-  combo.append("2", "Hibernate");
-  combo.append("3", "Lock screen");
-  combo.append("4", "Do nothing");
-  combo.append("5", "Hybrid sleep");
-  combo.append("6", "Shut down");
+bool login1_yes(const std::string& answer) { return answer == "yes" || answer == "challenge"; }
+
+SleepCaps query_sleep_caps() {
+  SleepCaps caps;
+  const std::string suspend = login1_can("CanSuspend");
+  const std::string hibernate = login1_can("CanHibernate");
+  const std::string hybrid = login1_can("CanHybridSleep");
+  caps.known = !suspend.empty() || !hibernate.empty() || !hybrid.empty();
+  caps.suspend = login1_yes(suspend);
+  caps.hibernate = login1_yes(hibernate);
+  caps.hybrid = login1_yes(hybrid);
+  return caps;
+}
+
+void fill_power_choices(Gtk::ComboBoxText& combo, PowerChoiceKind kind, const SleepCaps& caps) {
+  combo.remove_all();
+  for (const auto& choice :
+       power_choices(kind, caps.suspend, caps.hibernate, caps.hybrid, caps.known)) {
+    combo.append(choice.id, choice.label);
+  }
+  if (kind == PowerChoiceKind::Inactivity && combo.get_model()->children().empty()) {
+    combo.set_sensitive(false);
+    combo.set_tooltip_text("Suspend and hibernate are not available on this machine.");
+  }
 }
 
 void fill_profiles(Gtk::ComboBoxText& combo) {
@@ -90,6 +132,7 @@ void hide_without_show_all(Gtk::Widget& widget) {
 }  // namespace
 
 PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
+  const SleepCaps caps = query_sleep_caps();
   const bool battery = machine_has_battery();
   const bool lid = machine_has_lid();
   const bool backlight =
@@ -104,15 +147,15 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   auto* sleep = Gtk::manage(new Gtk::ComboBoxText());
   auto* hibernate = Gtk::manage(new Gtk::ComboBoxText());
   Gtk::ComboBoxText* battery_button = nullptr;
-  fill_button_actions(*power);
-  fill_button_actions(*sleep);
-  fill_button_actions(*hibernate);
+  fill_power_choices(*power, PowerChoiceKind::Button, caps);
+  fill_power_choices(*sleep, PowerChoiceKind::Button, caps);
+  fill_power_choices(*hibernate, PowerChoiceKind::Button, caps);
   button_form.add("When power button is pressed", *power);
   button_form.add("When sleep button is pressed", *sleep);
   button_form.add("When hibernate button is pressed", *hibernate);
   if (battery) {
     battery_button = Gtk::manage(new Gtk::ComboBoxText());
-    fill_button_actions(*battery_button);
+    fill_power_choices(*battery_button, PowerChoiceKind::Button, caps);
     button_form.add("When battery button is pressed", *battery_button);
   }
   buttons->pack_start(button_form.grid(), Gtk::PACK_SHRINK);
@@ -156,15 +199,15 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
     FormGrid form(220);
     auto* inactive = minutes_spin();
     auto* mode = Gtk::manage(new Gtk::ComboBoxText());
-    fill_button_actions(*mode);
+    fill_power_choices(*mode, PowerChoiceKind::Inactivity, caps);
     auto* profile = Gtk::manage(new Gtk::ComboBoxText());
     fill_profiles(*profile);
-    form.add("When inactive for (minutes, 0 = never)", *inactive);
+    form.add("_When inactive for\n(minutes, 0 = never)", *inactive);
     form.add("System sleep mode", *mode);
     Gtk::ComboBoxText* lid_action = nullptr;
     if (lid) {
       lid_action = Gtk::manage(new Gtk::ComboBoxText());
-      fill_lid_actions(*lid_action);
+      fill_power_choices(*lid_action, PowerChoiceKind::Lid, caps);
       form.add("When laptop lid is closed", *lid_action);
     }
     form.add("Power profile", *profile);
@@ -188,7 +231,7 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
       level->set_increments(1, 5);
       level->set_digits(0);
       auto* action = Gtk::manage(new Gtk::ComboBoxText());
-      fill_button_actions(*action);
+      fill_power_choices(*action, PowerChoiceKind::Button, caps);
       critical_form.add("Critical battery level (%)", *level);
       critical_form.add("On critical battery", *action);
       critical->pack_start(critical_form.grid(), Gtk::PACK_SHRINK);
@@ -224,7 +267,23 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   lock_note->set_max_width_chars(70);
   lock_box->pack_start(*lock, Gtk::PACK_SHRINK);
   lock_box->pack_start(*lock_note, Gtk::PACK_SHRINK);
-  system->pack_start(*make_frame("Security", *lock_box), Gtk::PACK_SHRINK);
+  system->pack_start(*make_frame("Lock", *lock_box), Gtk::PACK_SHRINK);
+  auto* logind = make_vbox(6);
+  auto* handle_power = Gtk::manage(new Gtk::CheckButton("Let elogind handle the _power key", true));
+  auto* handle_suspend = Gtk::manage(new Gtk::CheckButton("Let elogind handle the _suspend key", true));
+  auto* handle_hibernate =
+      Gtk::manage(new Gtk::CheckButton("Let elogind handle the _hibernate key", true));
+  auto* handle_lid = Gtk::manage(new Gtk::CheckButton("Let elogind handle the _lid switch", true));
+  logind->pack_start(*handle_power, Gtk::PACK_SHRINK);
+  logind->pack_start(*handle_suspend, Gtk::PACK_SHRINK);
+  logind->pack_start(*handle_hibernate, Gtk::PACK_SHRINK);
+  logind->pack_start(*handle_lid, Gtk::PACK_SHRINK);
+  auto* logind_note = make_label(
+      "Leave these off for xfce4-power-manager to handle the keys. Turn one on when elogind should inhibit that key instead.");
+  logind_note->set_line_wrap(true);
+  logind_note->set_max_width_chars(70);
+  logind->pack_start(*logind_note, Gtk::PACK_SHRINK);
+  system->pack_start(*make_frame("Login manager", *logind), Gtk::PACK_SHRINK);
   notebook_.append_page(*scrolled(*system), "System");
 
   auto make_display = [&](bool on_battery, Gtk::SpinButton*& blank_out, Gtk::SpinButton*& off_out) {
@@ -233,8 +292,8 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
     FormGrid form(220);
     auto* blank = minutes_spin();
     auto* off = minutes_spin();
-    form.add("Put to sleep after (minutes, 0 = never)", *blank);
-    form.add("Switch off after (minutes, 0 = never)", *off);
+    form.add("_Put the display to sleep after\n(minutes, 0 = never)", *blank);
+    form.add("_Switch off after\n(minutes, 0 = never)", *off);
     dpms->pack_start(form.grid(), Gtk::PACK_SHRINK);
     page->pack_start(*make_frame("Display power management", *dpms), Gtk::PACK_SHRINK);
     if (backlight) {
@@ -248,8 +307,8 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
       delay->set_range(0, 60);
       delay->set_increments(1, 6);
       delay->set_digits(0);
-      bright_form.add("On inactivity reduce to (%)", *level);
-      bright_form.add("Reduce after (0 = never, steps of 10 seconds)", *delay);
+      bright_form.add("On _inactivity reduce to (%)", *level);
+      bright_form.add("_Reduce after\n(0 = never, steps of 10 seconds)", *delay);
       bright->pack_start(bright_form.grid(), Gtk::PACK_SHRINK);
       page->pack_start(*make_frame("Brightness reduction", *bright), Gtk::PACK_SHRINK);
       const char* level_key = on_battery ? "brightness-level-on-battery" : "brightness-level-on-ac";
@@ -268,15 +327,16 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
 
   auto* display = make_vbox(8);
   display->set_border_width(12);
-  auto* dpms_enabled = Gtk::manage(new Gtk::CheckButton("Enable display power management"));
+  auto* presentation = Gtk::manage(new Gtk::CheckButton("_Presentation mode", true));
+  presentation->set_tooltip_text("Keeps the display awake and stops inactivity actions while you present.");
+  display->pack_start(*presentation, Gtk::PACK_SHRINK);
+  auto* dpms_enabled = Gtk::manage(new Gtk::CheckButton("Enable display _power management", true));
   display->pack_start(*dpms_enabled, Gtk::PACK_SHRINK);
   auto* mode_row = make_vbox(8);
   FormGrid mode_form(220);
   auto* sleep_mode = Gtk::manage(new Gtk::ComboBoxText());
-  sleep_mode->append("Standby", "Standby");
-  sleep_mode->append("Suspend", "Suspend");
-  sleep_mode->append("Off", "Off");
-  mode_form.add("Blanking mode", *sleep_mode);
+  fill_power_choices(*sleep_mode, PowerChoiceKind::Dpms, caps);
+  mode_form.add("_Blanking mode", *sleep_mode);
   mode_row->pack_start(mode_form.grid(), Gtk::PACK_SHRINK);
   display->pack_start(*mode_row, Gtk::PACK_SHRINK);
   auto* display_stack = Gtk::manage(new Gtk::Stack());
@@ -353,9 +413,34 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   }
   bind_bool(*notifications, "general-notification", true);
   bind_bool(*tray, "show-tray-icon", false);
+  bind_bool(*presentation, "presentation-mode", false);
   bind_bool(*dpms_enabled, "dpms-enabled", true);
-  bind_string(*sleep_mode, "dpms-sleep-mode", "Standby");
+  {
+    Freeze freeze(freeze_);
+    std::string value = store_.get_string(kChannel, prop("dpms-sleep-mode"), "Standby");
+    // xfpm treats "Off" as Suspend. Do not offer it.
+    if (value == "Off") {
+      value = "Suspend";
+    }
+    sleep_mode->set_active_id(value);
+    if (sleep_mode->get_active_row_number() < 0) {
+      sleep_mode->set_active_id("Standby");
+    }
+  }
+  sleep_mode->signal_changed().connect([this, sleep_mode] {
+    if (freeze_ > 0 || sleep_mode->get_active_id().empty()) {
+      return;
+    }
+    const std::string mode = sleep_mode->get_active_id();
+    if (mode == "Standby" || mode == "Suspend") {
+      store_.set_string(kChannel, prop("dpms-sleep-mode"), mode);
+    }
+  });
   bind_bool(*lock, "lock-screen-suspend-hibernate", true);
+  bind_bool(*handle_power, "logind-handle-power-key", false);
+  bind_bool(*handle_suspend, "logind-handle-suspend-key", false);
+  bind_bool(*handle_hibernate, "logind-handle-hibernate-key", false);
+  bind_bool(*handle_lid, "logind-handle-lid-switch", false);
 
   const bool dpms_on = dpms_enabled->get_active();
   ac_blank->set_sensitive(dpms_on);

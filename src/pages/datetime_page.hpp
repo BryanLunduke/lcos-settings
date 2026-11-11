@@ -51,6 +51,8 @@ class DateTimePage : public SettingsPage {
   int freeze_ = 0;
   std::vector<std::string> zones_;
   std::string clock_property_;
+  bool clock_seconds_ = false;
+  std::string current_zone() const;
 
   Gtk::Label* now_ = nullptr;
   Gtk::Label* clock_note_ = nullptr;

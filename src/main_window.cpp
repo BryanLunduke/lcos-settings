@@ -19,6 +19,7 @@
 #include "pages/users_page.hpp"
 #include "pages/window_page.hpp"
 #include "pages/window_tweaks_page.hpp"
+#include "ui_util.hpp"
 
 #include <gdk/gdkx.h>
 #include <gdkmm/general.h>
@@ -28,6 +29,7 @@
 #include <gtkmm/image.h>
 #include <gtkmm/label.h>
 #include <gtkmm/messagedialog.h>
+#include <gtkmm/scrolledwindow.h>
 #include <gtkmm/separator.h>
 
 #include <algorithm>
@@ -43,7 +45,7 @@ MainWindow::MainWindow(XfconfStore& store)
   set_default_size(1100, 760);
   Gdk::Geometry hints;
   hints.min_width = 760;
-  hints.min_height = 520;
+  hints.min_height = 480;
   set_geometry_hints(*this, hints, Gdk::HINT_MIN_SIZE);
   set_icon_name("org.lunduke.LcosSettings");
   if (g_file_test("data/icons/hicolor/48x48/apps/org.lunduke.LcosSettings.png",
@@ -97,6 +99,14 @@ MainWindow::MainWindow(XfconfStore& store)
   add(*root);
 
   auto* body = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+  // The category list is taller than a 1024x768 screen. Scrolling it lets the
+  // window shrink to about 1000x550 so OK, Apply, and Cancel stay on screen.
+  auto* side_scroll = Gtk::manage(new Gtk::ScrolledWindow());
+  prepare_page_scroll(*side_scroll);
+  side_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+  side_scroll->set_size_request(248, -1);
+  side_scroll->set_min_content_width(248);
+  side_scroll->set_min_content_height(160);
   sidebar_.set_size_request(248, -1);
   sidebar_.get_style_context()->add_class("lcos-sidebar");
   sidebar_.set_selection_mode(Gtk::SELECTION_BROWSE);
@@ -131,7 +141,10 @@ MainWindow::MainWindow(XfconfStore& store)
     }
     select_page(row->get_index());
   });
-  body->pack_start(sidebar_, Gtk::PACK_SHRINK);
+  side_scroll->add(sidebar_);
+  body->pack_start(*side_scroll, Gtk::PACK_SHRINK);
+  stack_.set_homogeneous(false);
+  stack_.set_vexpand(true);
   auto* content = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
   content->set_border_width(8);
   heading_ = Gtk::manage(new Gtk::Label());
@@ -161,9 +174,9 @@ MainWindow::MainWindow(XfconfStore& store)
   if (!store_.available()) {
     status_->set_text("Settings service is not available. Changes cannot be saved.");
   }
-  auto* ok = Gtk::manage(new Gtk::Button("OK"));
-  apply_ = Gtk::manage(new Gtk::Button("Apply"));
-  auto* cancel = Gtk::manage(new Gtk::Button("Cancel"));
+  auto* ok = Gtk::manage(new Gtk::Button("_OK", true));
+  apply_ = Gtk::manage(new Gtk::Button("_Apply", true));
+  auto* cancel = Gtk::manage(new Gtk::Button("_Cancel", true));
   ok->set_can_default(true);
   buttons->pack_start(*status_, Gtk::PACK_EXPAND_WIDGET);
   buttons->pack_start(*ok, Gtk::PACK_SHRINK);
@@ -179,12 +192,25 @@ MainWindow::MainWindow(XfconfStore& store)
         return;
       }
     }
+    if (privileged_.busy()) {
+      privileged_.wait_until_idle();
+    }
+    const PrivResult kept = privileged_.checkpoint();
+    if (!kept.ok) {
+      tell(kept.error.empty() ? "The privileged changes could not be kept." : kept.error);
+      update_apply();
+      return;
+    }
+    // Apply is a checkpoint. Cancel after this restores only newer edits.
+    store_.drop_originals();
     update_apply();
   });
   cancel->signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::close_revert));
   for (auto* page : pages_) {
     page->pending_changed.connect(sigc::mem_fun(*this, &MainWindow::update_apply));
   }
+  store_.changed.connect(sigc::mem_fun(*this, &MainWindow::update_apply));
+  privileged_.changed.connect(sigc::mem_fun(*this, &MainWindow::update_apply));
 
   sidebar_.select_row(*sidebar_.get_row_at_index(0));
   select_page(0);
@@ -228,6 +254,18 @@ void MainWindow::load_nav_icons() {
   }
 }
 
+void MainWindow::show_page(const std::string& id) {
+  for (std::size_t i = 0; i < nav_.size(); ++i) {
+    if (nav_[i].id == id) {
+      if (auto* row = sidebar_.get_row_at_index(static_cast<int>(i))) {
+        sidebar_.select_row(*row);
+      }
+      select_page(static_cast<int>(i));
+      return;
+    }
+  }
+}
+
 void MainWindow::select_page(int index) {
   if (index < 0 || index >= static_cast<int>(pages_.size())) {
     return;
@@ -244,7 +282,7 @@ void MainWindow::update_apply() {
   if (apply_ == nullptr) {
     return;
   }
-  bool pending = false;
+  bool pending = privileged_.dirty() || store_.session_dirty();
   for (auto* page : pages_) {
     pending = pending || page->has_pending();
   }
@@ -274,6 +312,7 @@ void MainWindow::close_keep() {
     tell(committed.error.empty() ? "The privileged changes could not be kept." : committed.error);
     return;
   }
+  store_.drop_originals();
   closing_ = true;
   hide();
 }
@@ -300,12 +339,15 @@ void MainWindow::close_revert() {
     }
     page->revert_page();
   }
+  const bool uncommitted_display = display != nullptr && display->uncommitted_hardware();
   store_.revert_session();
+  // A missing Default scheme cannot be applied after the RandR restore: that
+  // is what left a rejected mode on screen when the window closed.
+  if (displays && !uncommitted_display) {
+    store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
+  }
   if (display != nullptr) {
     display->restore_session_hardware();
-  }
-  if (displays) {
-    store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
   }
   hide();
 }

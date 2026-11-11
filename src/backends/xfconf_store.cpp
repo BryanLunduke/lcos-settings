@@ -279,6 +279,7 @@ void XfconfStore::remember(const std::string& channel, const std::string& prop) 
   saved.prop = prop;
   saved.value = get(channel, prop);
   originals_.emplace(key, std::move(saved));
+  changed.emit();
 }
 
 bool XfconfStore::write(const std::string& channel, const std::string& prop,
@@ -504,6 +505,30 @@ void XfconfStore::revert_session() {
     write(saved.channel, saved.prop, saved.value, false);
   }
   tracking_ = previous;
+  changed.emit();
+}
+
+void XfconfStore::drop_originals() {
+  if (originals_.empty()) {
+    return;
+  }
+  originals_.clear();
+  changed.emit();
+}
+
+void XfconfStore::drop_channel(const std::string& channel) {
+  bool removed = false;
+  for (auto it = originals_.begin(); it != originals_.end();) {
+    if (it->second.channel == channel) {
+      it = originals_.erase(it);
+      removed = true;
+    } else {
+      ++it;
+    }
+  }
+  if (removed) {
+    changed.emit();
+  }
 }
 
 bool XfconfStore::channel_touched(const std::string& channel) const {

@@ -8,6 +8,8 @@
 #include <glibmm/main.h>
 
 #include <dirent.h>
+#include <unistd.h>
+
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
 #include <gtkmm/messagedialog.h>
@@ -94,6 +96,9 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
   zone_scroll->set_size_request(-1, 180);
   zone_scroll->add(zones_view_);
   zone_box->pack_start(*zone_scroll, Gtk::PACK_SHRINK);
+  auto* set_zone = Gtk::manage(new Gtk::Button("_Set time zone", true));
+  set_zone->set_halign(Gtk::ALIGN_START);
+  zone_box->pack_start(*set_zone, Gtk::PACK_SHRINK);
   scroll_page->pack_start(*make_frame("Time zone", *zone_box), Gtk::PACK_SHRINK);
 
   auto* set_box = make_vbox(6);
@@ -123,16 +128,16 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
   pack_start(*make_page_scroll(*scroll_page), Gtk::PACK_EXPAND_WIDGET);
 
   search_.signal_changed().connect([this] { show_zones(); });
-  zones_view_.get_selection()->signal_changed().connect([this] {
-    if (freeze_ > 0) {
-      return;
-    }
+  auto apply_selected = [this] {
     auto iter = zones_view_.get_selection()->get_selected();
     if (!iter) {
       return;
     }
     apply_zone(static_cast<Glib::ustring>((*iter)[zone_columns_.name]));
-  });
+  };
+  zones_view_.signal_row_activated().connect(
+      [apply_selected](const Gtk::TreeModel::Path&, Gtk::TreeViewColumn*) { apply_selected(); });
+  set_zone->signal_clicked().connect(apply_selected);
   ntp_.signal_toggled().connect([this] {
     if (freeze_ > 0) {
       return;
@@ -167,7 +172,7 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
     if (freeze_ > 0 || clock_property_.empty()) {
       return;
     }
-    store_.set_string("xfce4-panel", clock_property_, clock_format_string(clock));
+    store_.set_string("xfce4-panel", clock_property_, clock_format_for(clock, clock_seconds_));
   };
   hour24_.signal_toggled().connect([this, write_clock] {
     if (hour24_.get_active()) {
@@ -210,22 +215,19 @@ void DateTimePage::tell(const std::string& message) {
   dialog.run();
 }
 
-bool DateTimePage::chrony_enabled() const {
-  DIR* directory = opendir("/etc/rc2.d");
-  if (directory == nullptr) {
-    return false;
-  }
-  bool enabled = false;
-  while (const dirent* item = readdir(directory)) {
-    const std::string name = item->d_name;
-    if (!name.empty() && name[0] == 'S' && name.size() > 6 &&
-        name.compare(name.size() - 6, 6, "chrony") == 0) {
-      enabled = true;
-      break;
+bool DateTimePage::chrony_enabled() const { return chrony_is_enabled(); }
+
+std::string DateTimePage::current_zone() const {
+  char target[4096];
+  const ssize_t n = ::readlink("/etc/localtime", target, sizeof(target) - 1);
+  if (n > 0) {
+    target[n] = '\0';
+    const std::string zone = timezone_from_localtime(target);
+    if (!zone.empty()) {
+      return zone;
     }
   }
-  closedir(directory);
-  return enabled;
+  return read_text("/etc/timezone");
 }
 
 void DateTimePage::load_zones() {
@@ -237,7 +239,7 @@ void DateTimePage::load_zones() {
 
 void DateTimePage::show_zones() {
   Freeze freeze(freeze_);
-  const std::string current = read_text("/etc/timezone");
+  const std::string current = current_zone();
   const std::string query = search_.get_text();
   std::string needle = query;
   for (char& c : needle) {
@@ -274,7 +276,7 @@ void DateTimePage::load_clock() {
   if (now_ != nullptr) {
     now_->set_text(pretty);
   }
-  const bool automatic = chrony_enabled();
+  const bool automatic = chrony_is_enabled();
   ntp_.set_active(automatic);
   calendar_.set_sensitive(!automatic);
   hour_.set_sensitive(!automatic);
@@ -302,7 +304,9 @@ void DateTimePage::load_clock() {
   if (clocks.size() == 1) {
     const std::string format =
         store_.get_string("xfce4-panel", clocks[0] + "/digital-time-format", "%R");
-    const HourClock kind = classify_clock_format(format.empty() ? "%R" : format);
+    const std::string shown = format.empty() ? "%R" : format;
+    clock_seconds_ = clock_format_has_seconds(shown);
+    const HourClock kind = classify_clock_format(shown);
     if (kind == HourClock::Unknown) {
       clock_note_->set_text(
           "The panel clock uses a custom format, so the 12/24-hour choice is left out.");
@@ -331,7 +335,7 @@ void DateTimePage::load_clock() {
 }
 
 void DateTimePage::apply_zone(const std::string& zone) {
-  if (zone == read_text("/etc/timezone")) {
+  if (zone == current_zone()) {
     return;
   }
   const PrivResult result = session_.run({"set-timezone", zone});

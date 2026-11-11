@@ -86,24 +86,18 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
       session_.cancel();
     }
   });
+  auto* apply_button = Gtk::manage(new Gtk::Button("_Apply language", true));
+  apply_button->set_halign(Gtk::ALIGN_START);
+  page->pack_start(*apply_button, Gtk::PACK_SHRINK);
   auto* note = make_label(
-      "Every locale in the supported list is offered. Choosing one that is not generated yet "
-      "enables it in /etc/locale.gen and runs locale-gen. Stop, or Cancel, restores locale.gen. "
+      "Every locale in the supported list is offered. Apply enables a locale that is not generated "
+      "yet in /etc/locale.gen and compiles it with localedef. Stop, or Cancel, restores locale.gen. "
       "Keyboard layouts are set on the Keyboard page.");
   note->set_line_wrap(true);
   page->pack_start(*note, Gtk::PACK_SHRINK);
   pack_start(*make_page_scroll(*page), Gtk::PACK_EXPAND_WIDGET);
 
-  auto changed = [this] {
-    if (freeze_ > 0) {
-      return;
-    }
-    apply();
-  };
-  language_.signal_changed().connect(changed);
-  dates_.signal_changed().connect(changed);
-  numbers_.signal_changed().connect(changed);
-  currency_.signal_changed().connect(changed);
+  apply_button->signal_clicked().connect([this] { apply(); });
   load();
 }
 

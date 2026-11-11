@@ -77,15 +77,38 @@ struct PrivSession::AsyncOp {
   std::function<void(PrivResult)> done;
 };
 
-std::string privileged_helper_path() {
+std::string domain_name(PrivDomain domain) {
+  if (domain == PrivDomain::Accounts) {
+    return "accounts";
+  }
+  if (domain == PrivDomain::Locale) {
+    return "locale";
+  }
+  return "system";
+}
+
+// Installed wrappers are what pkexec authorizes. A development build falls
+// back to the helper binary and passes --domain itself.
+std::string privileged_helper_path(PrivDomain domain, bool* wrapper) {
+  if (wrapper != nullptr) {
+    *wrapper = false;
+  }
   if (const char* override = g_getenv("LCOS_PRIV_HELPER")) {
     if (override[0] != '\0') {
       return override;
     }
   }
-  const char* installed = "/usr/libexec/lcos-settings-priv";
-  if (g_file_test(installed, G_FILE_TEST_IS_EXECUTABLE)) {
+  const std::string installed =
+      std::string("/usr/libexec/lcos-settings-priv-") + domain_name(domain);
+  if (g_file_test(installed.c_str(), G_FILE_TEST_IS_EXECUTABLE)) {
+    if (wrapper != nullptr) {
+      *wrapper = true;
+    }
     return installed;
+  }
+  const char* plain = "/usr/libexec/lcos-settings-priv";
+  if (g_file_test(plain, G_FILE_TEST_IS_EXECUTABLE)) {
+    return plain;
   }
   gchar* exe = g_file_read_link("/proc/self/exe", nullptr);
   std::string path = "lcos-settings-priv";
@@ -98,6 +121,8 @@ std::string privileged_helper_path() {
   return path;
 }
 
+std::string privileged_helper_path() { return privileged_helper_path(PrivDomain::System, nullptr); }
+
 PrivSession::PrivSession() : token_(make_token()) {}
 
 PrivSession::~PrivSession() {
@@ -107,8 +132,36 @@ PrivSession::~PrivSession() {
   }
 }
 
+void PrivSession::note_success(PrivDomain domain, const std::string& action, bool ok,
+                               const std::string& error) {
+  if (action == "commit" || action == "revert") {
+    return;
+  }
+  const bool locale_failed = action == "set-locale" && !ok && error != "Cancelled." &&
+                             error.find("Authentication") == std::string::npos;
+  if (!ok && !locale_failed) {
+    return;
+  }
+  if (domain == PrivDomain::Accounts) {
+    touched_accounts_ = true;
+  } else if (domain == PrivDomain::Locale) {
+    touched_locale_ = true;
+  } else {
+    touched_system_ = true;
+  }
+  dirty_ = true;
+  changed.emit();
+}
+
 PrivResult PrivSession::start(const std::vector<std::string>& args, const std::string& input, bool async,
                               std::function<void(PrivResult)> done) {
+  const PrivDomain domain = args.empty() ? PrivDomain::System : priv_domain_for_action(args[0]);
+  return run_domain(domain, args, input, async, std::move(done));
+}
+
+PrivResult PrivSession::run_domain(PrivDomain domain, const std::vector<std::string>& args,
+                                   const std::string& input, bool async,
+                                   std::function<void(PrivResult)> done) {
   PrivResult result;
   if (busy_ || finished_ || !valid_undo_token(token_) || args.empty()) {
     result.error = finished_ ? "This change can no longer be made in this visit."
@@ -119,7 +172,8 @@ PrivResult PrivSession::start(const std::vector<std::string>& args, const std::s
     }
     return result;
   }
-  const std::string helper = privileged_helper_path();
+  bool wrapper = false;
+  const std::string helper = privileged_helper_path(domain, &wrapper);
   if (!g_file_test(helper.c_str(), G_FILE_TEST_IS_EXECUTABLE)) {
     result.error = "The privileged helper is not installed.";
     if (done) {
@@ -127,7 +181,12 @@ PrivResult PrivSession::start(const std::vector<std::string>& args, const std::s
     }
     return result;
   }
-  std::vector<std::string> stored = {"pkexec", helper, token_};
+  // Wrappers inject --domain before exec. The bare helper needs it on argv.
+  std::vector<std::string> stored = {"pkexec", helper};
+  if (!wrapper) {
+    stored.push_back("--domain=" + domain_name(domain));
+  }
+  stored.push_back(token_);
   stored.insert(stored.end(), args.begin(), args.end());
   std::vector<char*> argv;
   for (const auto& arg : stored) {
@@ -178,6 +237,7 @@ PrivResult PrivSession::start(const std::vector<std::string>& args, const std::s
   set_nonblock(standard_err);
   busy_ = true;
   cancel_requested_ = false;
+  active_domain_ = domain;
 
   if (!async) {
     std::string err;
@@ -230,9 +290,7 @@ PrivResult PrivSession::start(const std::vector<std::string>& args, const std::s
       parsed.error = exit.error;
       return parsed;
     }();
-    if (result.ok && args[0] != "commit" && args[0] != "revert") {
-      dirty_ = true;
-    }
+    note_success(domain, args[0], result.ok, result.error);
     return result;
   }
 
@@ -348,14 +406,7 @@ void PrivSession::finish_async(const PrivResult& result) {
   delete async_;
   async_ = nullptr;
   busy_ = false;
-  if (result.ok) {
-    dirty_ = true;
-  } else if (command == "set-locale" && result.error != "Cancelled." &&
-             result.error.find("Authentication") == std::string::npos) {
-    // locale-gen may have rewritten /etc/locale.gen before it failed.
-    // Window Cancel still has to restore that snapshot.
-    dirty_ = true;
-  }
+  note_success(active_domain_, command, result.ok, result.error);
   if (done) {
     done(result);
   }
@@ -393,28 +444,52 @@ void PrivSession::wait_until_idle() {
   }
 }
 
-PrivResult PrivSession::commit() {
+PrivResult PrivSession::finish_domains(const char* action, bool end_session) {
   if (finished_ || !dirty_) {
     return {true, {}};
   }
-  const PrivResult result = run({"commit"});
-  if (result.ok) {
-    finished_ = true;
-    dirty_ = false;
+  auto step = [&](bool touched, PrivDomain domain) -> PrivResult {
+    if (!touched) {
+      return {true, {}};
+    }
+    const PrivResult result = run_domain(domain, {action}, {}, false, {});
+    if (!result.ok) {
+      return result;
+    }
+    if (domain == PrivDomain::Accounts) {
+      touched_accounts_ = false;
+    } else if (domain == PrivDomain::Locale) {
+      touched_locale_ = false;
+    } else {
+      touched_system_ = false;
+    }
+    return result;
+  };
+  // Strict domains first. Each one only removes its own undo files.
+  PrivResult result = step(touched_accounts_, PrivDomain::Accounts);
+  if (!result.ok) {
+    return result;
   }
-  return result;
+  result = step(touched_locale_, PrivDomain::Locale);
+  if (!result.ok) {
+    return result;
+  }
+  result = step(touched_system_, PrivDomain::System);
+  if (!result.ok) {
+    return result;
+  }
+  dirty_ = touched_accounts_ || touched_locale_ || touched_system_;
+  if (end_session && !dirty_) {
+    finished_ = true;
+  }
+  changed.emit();
+  return {true, {}};
 }
 
-PrivResult PrivSession::revert() {
-  if (finished_ || !dirty_) {
-    return {true, {}};
-  }
-  const PrivResult result = run({"revert"});
-  if (result.ok) {
-    finished_ = true;
-    dirty_ = false;
-  }
-  return result;
-}
+PrivResult PrivSession::commit() { return finish_domains("commit", true); }
+
+PrivResult PrivSession::checkpoint() { return finish_domains("commit", false); }
+
+PrivResult PrivSession::revert() { return finish_domains("revert", true); }
 
 }  // namespace lcos

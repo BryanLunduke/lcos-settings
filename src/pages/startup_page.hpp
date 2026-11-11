@@ -71,6 +71,7 @@ class StartupPage : public SettingsPage {
   std::map<std::string, std::string> autostart_snapshot_;
   std::map<std::string, std::string> session_snapshot_;
   std::string session_dir_;
+  std::string session_file_;
 
   Gtk::Notebook notebook_;
   AppColumns columns_;

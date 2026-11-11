@@ -124,6 +124,7 @@ UpDeviceInfo read_device(GDBusProxy* proxy, const std::string& path) {
 struct UpowerClient::Impl {
   UpowerClient* owner = nullptr;
   bool alive = true;
+  guint watch = 0;
   GDBusProxy* manager = nullptr;
   std::vector<GDBusProxy*> devices;
   gulong manager_signal = 0;
@@ -151,6 +152,10 @@ UpowerClient::UpowerClient() : impl_(new Impl) { impl_->owner = this; }
 UpowerClient::~UpowerClient() {
   impl_->alive = false;
   impl_->owner = nullptr;
+  if (impl_->watch != 0) {
+    g_bus_unwatch_name(impl_->watch);
+    impl_->watch = 0;
+  }
   for (GDBusProxy* proxy : impl_->devices) {
     g_signal_handlers_disconnect_by_data(proxy, impl_);
     g_object_unref(proxy);
@@ -168,7 +173,31 @@ UpowerClient::~UpowerClient() {
 }
 
 void UpowerClient::start() {
+  if (impl_->watch != 0) {
+    return;
+  }
+  available_ = false;
+  message_ = "UPower is not running.";
+  impl_->watch = g_bus_watch_name(
+      G_BUS_TYPE_SYSTEM, kService, G_BUS_NAME_WATCHER_FLAGS_NONE,
+      [](GDBusConnection*, const gchar*, const gchar*, gpointer user) {
+        auto* self = static_cast<UpowerClient*>(user);
+        if (self != nullptr && self->impl_ != nullptr && self->impl_->alive) {
+          self->attach();
+        }
+      },
+      [](GDBusConnection*, const gchar*, gpointer user) {
+        auto* self = static_cast<UpowerClient*>(user);
+        if (self != nullptr && self->impl_ != nullptr && self->impl_->alive) {
+          self->detach();
+        }
+      },
+      this, nullptr);
+}
+
+void UpowerClient::attach() {
   if (impl_->manager != nullptr) {
+    reload();
     return;
   }
   GError* error = nullptr;
@@ -184,19 +213,34 @@ void UpowerClient::start() {
     changed.emit();
     return;
   }
-  gchar* owner = g_dbus_proxy_get_name_owner(impl_->manager);
-  if (owner == nullptr) {
-    available_ = false;
-    message_ = "UPower is not running.";
-    changed.emit();
-    return;
+  if (error != nullptr) {
+    g_error_free(error);
   }
-  g_free(owner);
   available_ = true;
   message_.clear();
   impl_->manager_signal =
       g_signal_connect(impl_->manager, "g-signal", G_CALLBACK(manager_signal_cb), impl_);
   reload();
+}
+
+void UpowerClient::detach() {
+  for (GDBusProxy* proxy : impl_->devices) {
+    g_signal_handlers_disconnect_by_data(proxy, impl_);
+    g_object_unref(proxy);
+  }
+  impl_->devices.clear();
+  devices_.clear();
+  if (impl_->manager != nullptr) {
+    if (impl_->manager_signal != 0) {
+      g_signal_handler_disconnect(impl_->manager, impl_->manager_signal);
+      impl_->manager_signal = 0;
+    }
+    g_object_unref(impl_->manager);
+    impl_->manager = nullptr;
+  }
+  available_ = false;
+  message_ = "UPower is not running.";
+  changed.emit();
 }
 
 void UpowerClient::reload() {

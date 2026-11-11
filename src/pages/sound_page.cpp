@@ -79,7 +79,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaDevice* device = selected_sink()) {
-      mark_sound_dirty();
+      touch(SoundField::OutputDevice);
       pulse_.set_default_sink(device->name);
     }
     refresh();
@@ -89,7 +89,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaDevice* device = selected_source()) {
-      mark_sound_dirty();
+      touch(SoundField::InputDevice);
       pulse_.set_default_source(device->name);
     }
     refresh();
@@ -99,7 +99,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaDevice* device = selected_sink()) {
-      mark_sound_dirty();
+      touch(SoundField::OutputPort);
       pulse_.set_sink_port(device->index, output_port_.get_active_id());
     }
   });
@@ -108,7 +108,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaDevice* device = selected_source()) {
-      mark_sound_dirty();
+      touch(SoundField::InputPort);
       pulse_.set_source_port(device->index, input_port_.get_active_id());
     }
   });
@@ -117,7 +117,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaDevice* device = selected_sink()) {
-      mark_sound_dirty();
+      touch(SoundField::OutputVolume);
       pulse_.set_sink_volume(device->index, static_cast<int>(output_volume_.get_value()));
     }
   });
@@ -126,7 +126,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaDevice* device = selected_source()) {
-      mark_sound_dirty();
+      touch(SoundField::InputVolume);
       pulse_.set_source_volume(device->index, static_cast<int>(input_volume_.get_value()));
     }
   });
@@ -135,7 +135,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaDevice* device = selected_sink()) {
-      mark_sound_dirty();
+      touch(SoundField::OutputMute);
       pulse_.set_sink_mute(device->index, output_mute_.get_active());
     }
   });
@@ -144,7 +144,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaDevice* device = selected_source()) {
-      mark_sound_dirty();
+      touch(SoundField::InputMute);
       pulse_.set_source_mute(device->index, input_mute_.get_active());
     }
   });
@@ -160,7 +160,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
       return;
     }
     if (const PaCard* card = card_for(device->card)) {
-      mark_sound_dirty();
+      touch(SoundField::Profile);
       pulse_.set_card_profile(card->index, profile_.get_active_id());
     }
   });
@@ -227,22 +227,60 @@ void SoundPage::on_page_shown() {
   refresh();
 }
 
-void SoundPage::mark_sound_dirty() {
+void SoundPage::touch(SoundField field, std::uint32_t stream) {
   if (freeze_ > 0) {
     return;
   }
-  ensure_snapshot();
+  if (!have_snapshot_) {
+    take_snapshot();
+  }
+  switch (field) {
+    case SoundField::OutputDevice:
+      edit_.output_device = true;
+      break;
+    case SoundField::OutputPort:
+      edit_.output_port = true;
+      break;
+    case SoundField::OutputVolume:
+      edit_.output_volume = true;
+      break;
+    case SoundField::OutputMute:
+      edit_.output_mute = true;
+      break;
+    case SoundField::InputDevice:
+      edit_.input_device = true;
+      break;
+    case SoundField::InputPort:
+      edit_.input_port = true;
+      break;
+    case SoundField::InputVolume:
+      edit_.input_volume = true;
+      break;
+    case SoundField::InputMute:
+      edit_.input_mute = true;
+      break;
+    case SoundField::Profile:
+      edit_.profile = true;
+      break;
+    case SoundField::Stream:
+      edit_.streams.insert(stream);
+      break;
+  }
   if (!sound_dirty_) {
     sound_dirty_ = true;
     pending_changed.emit();
   }
 }
 
-void SoundPage::ensure_snapshot() {
-  if (have_snapshot_ || !pulse_.state().ready) {
-    return;
+std::string SoundPage::combo_key(const std::vector<std::pair<std::string, std::string>>& rows) {
+  std::string key;
+  for (const auto& row : rows) {
+    key += row.first;
+    key += '\t';
+    key += row.second;
+    key += '\n';
   }
-  take_snapshot();
+  return key;
 }
 
 void SoundPage::take_snapshot() {
@@ -254,21 +292,33 @@ void SoundPage::take_snapshot() {
   input_snapshot_ = {};
   output_snapshot_.name = state.default_sink;
   input_snapshot_.name = state.default_source;
-  if (const PaDevice* sink = selected_sink()) {
-    output_snapshot_.name = sink->name;
+  const PaDevice* sink = nullptr;
+  for (const auto& device : state.sinks) {
+    if (device.name == state.default_sink) {
+      sink = &device;
+      break;
+    }
+  }
+  if (sink != nullptr) {
     output_snapshot_.volumes = sink->channel_volumes;
     output_snapshot_.mute = sink->mute;
     output_snapshot_.port = sink->active_port;
   }
-  if (const PaDevice* source = selected_source()) {
-    input_snapshot_.name = source->name;
+  const PaDevice* source = nullptr;
+  for (const auto& device : state.sources) {
+    if (device.name == state.default_source) {
+      source = &device;
+      break;
+    }
+  }
+  if (source != nullptr) {
     input_snapshot_.volumes = source->channel_volumes;
     input_snapshot_.mute = source->mute;
     input_snapshot_.port = source->active_port;
   }
   profile_snapshot_.clear();
   profile_card_ = 0;
-  const PaDevice* owner = selected_sink() != nullptr ? selected_sink() : selected_source();
+  const PaDevice* owner = sink != nullptr ? sink : source;
   if (owner != nullptr) {
     if (const PaCard* card = card_for(owner->card)) {
       profile_card_ = card->index;
@@ -289,9 +339,10 @@ void SoundPage::take_snapshot() {
 }
 
 bool SoundPage::commit_pending() {
-  if (pulse_.state().ready) {
-    take_snapshot();
-  }
+  // The next edit snapshots the levels as they are then, including changes
+  // made by volume keys after this Apply.
+  edit_ = {};
+  have_snapshot_ = false;
   if (sound_dirty_) {
     sound_dirty_ = false;
     pending_changed.emit();
@@ -300,13 +351,13 @@ bool SoundPage::commit_pending() {
 }
 
 void SoundPage::revert_page() {
-  if (!have_snapshot_) {
+  if (!sound_dirty_ || !have_snapshot_) {
     return;
   }
-  if (!output_snapshot_.name.empty()) {
+  if (edit_.output_device && !output_snapshot_.name.empty()) {
     pulse_.set_default_sink(output_snapshot_.name);
   }
-  if (!input_snapshot_.name.empty()) {
+  if (edit_.input_device && !input_snapshot_.name.empty()) {
     pulse_.set_default_source(input_snapshot_.name);
   }
   const PaDevice* sink = nullptr;
@@ -317,11 +368,13 @@ void SoundPage::revert_page() {
     }
   }
   if (sink != nullptr) {
-    if (!output_snapshot_.volumes.empty()) {
+    if (edit_.output_volume && !output_snapshot_.volumes.empty()) {
       pulse_.set_sink_volumes(sink->index, output_snapshot_.volumes);
     }
-    pulse_.set_sink_mute(sink->index, output_snapshot_.mute);
-    if (!output_snapshot_.port.empty()) {
+    if (edit_.output_mute) {
+      pulse_.set_sink_mute(sink->index, output_snapshot_.mute);
+    }
+    if (edit_.output_port && !output_snapshot_.port.empty()) {
       pulse_.set_sink_port(sink->index, output_snapshot_.port);
     }
   }
@@ -333,15 +386,17 @@ void SoundPage::revert_page() {
     }
   }
   if (source != nullptr) {
-    if (!input_snapshot_.volumes.empty()) {
+    if (edit_.input_volume && !input_snapshot_.volumes.empty()) {
       pulse_.set_source_volumes(source->index, input_snapshot_.volumes);
     }
-    pulse_.set_source_mute(source->index, input_snapshot_.mute);
-    if (!input_snapshot_.port.empty()) {
+    if (edit_.input_mute) {
+      pulse_.set_source_mute(source->index, input_snapshot_.mute);
+    }
+    if (edit_.input_port && !input_snapshot_.port.empty()) {
       pulse_.set_source_port(source->index, input_snapshot_.port);
     }
   }
-  if (profile_card_ != 0 && !profile_snapshot_.empty()) {
+  if (edit_.profile && profile_card_ != 0 && !profile_snapshot_.empty()) {
     pulse_.set_card_profile(profile_card_, profile_snapshot_);
   }
   std::vector<bool> used(pulse_.state().inputs.size(), false);
@@ -371,12 +426,14 @@ void SoundPage::revert_page() {
         }
       }
     }
-    if (match == nullptr || snap.volumes.empty()) {
+    if (match == nullptr || snap.volumes.empty() || edit_.streams.count(snap.index) == 0) {
       continue;
     }
     pulse_.set_input_volumes(match->index, snap.volumes);
     pulse_.set_input_mute(match->index, snap.mute);
   }
+  edit_ = {};
+  have_snapshot_ = false;
   sound_dirty_ = false;
   pending_changed.emit();
 }
@@ -417,38 +474,68 @@ void SoundPage::refresh() {
     status_->set_text(state.error.empty() ? "Waiting for PulseAudio…"
                                            : "PulseAudio: " + state.error);
   } else {
-    status_->set_text("Levels apply as you move them. Cancel puts back the levels from when this window opened.");
+    status_->set_text("Levels apply as you move them. Cancel restores only the levels changed in this window.");
   }
 
-  const std::string previous_out = output_.get_active_id();
-  output_.remove_all();
+  std::vector<std::pair<std::string, std::string>> sink_rows;
   for (const auto& device : state.sinks) {
-    output_.append(device.name, device.description);
+    sink_rows.emplace_back(device.name, device.description);
   }
-  if (!state.default_sink.empty()) {
-    output_.set_active_id(state.default_sink);
-  } else if (!previous_out.empty()) {
-    output_.set_active_id(previous_out);
-  }
-  if (output_.get_active_id().empty() && !state.sinks.empty()) {
-    output_.set_active(0);
+  const std::string sink_key = combo_key(sink_rows);
+  if (sink_key != output_rows_) {
+    output_rows_ = sink_key;
+    const std::string previous_out = output_.get_active_id();
+    output_.remove_all();
+    for (const auto& row : sink_rows) {
+      output_.append(row.first, row.second);
+    }
+    if (!state.default_sink.empty()) {
+      output_.set_active_id(state.default_sink);
+    } else if (!previous_out.empty()) {
+      output_.set_active_id(previous_out);
+    }
+    if (output_.get_active_id().empty() && !state.sinks.empty()) {
+      output_.set_active(0);
+    }
   }
 
-  const std::string previous_in = input_.get_active_id();
-  input_.remove_all();
+  std::vector<std::pair<std::string, std::string>> source_rows;
   for (const auto& device : state.sources) {
-    input_.append(device.name, device.description);
+    source_rows.emplace_back(device.name, device.description);
   }
-  if (!state.default_source.empty()) {
-    input_.set_active_id(state.default_source);
-  } else if (!previous_in.empty()) {
-    input_.set_active_id(previous_in);
-  }
-  if (input_.get_active_id().empty() && !state.sources.empty()) {
-    input_.set_active(0);
+  const std::string source_key = combo_key(source_rows);
+  if (source_key != input_rows_) {
+    input_rows_ = source_key;
+    const std::string previous_in = input_.get_active_id();
+    input_.remove_all();
+    for (const auto& row : source_rows) {
+      input_.append(row.first, row.second);
+    }
+    if (!state.default_source.empty()) {
+      input_.set_active_id(state.default_source);
+    } else if (!previous_in.empty()) {
+      input_.set_active_id(previous_in);
+    }
+    if (input_.get_active_id().empty() && !state.sources.empty()) {
+      input_.set_active(0);
+    }
   }
 
-  auto fill_ports = [](Gtk::ComboBoxText& combo, const PaDevice* device) {
+  auto fill_ports = [](Gtk::ComboBoxText& combo, const PaDevice* device, std::string& cache) {
+    std::vector<std::pair<std::string, std::string>> rows;
+    if (device != nullptr) {
+      for (const auto& port : device->ports) {
+        rows.emplace_back(port.name, port.description);
+      }
+    }
+    const std::string key = combo_key(rows);
+    if (key == cache && device != nullptr) {
+      if (!device->active_port.empty() && combo.get_active_id() != device->active_port) {
+        combo.set_active_id(device->active_port);
+      }
+      return;
+    }
+    cache = key;
     const std::string previous = combo.get_active_id();
     combo.remove_all();
     if (device == nullptr) {
@@ -467,8 +554,8 @@ void SoundPage::refresh() {
   };
   const PaDevice* sink = selected_sink();
   const PaDevice* source = selected_source();
-  fill_ports(output_port_, sink);
-  fill_ports(input_port_, source);
+  fill_ports(output_port_, sink, output_port_rows_);
+  fill_ports(input_port_, source, input_port_rows_);
   if (sink != nullptr) {
     if (!output_dragging_) {
       output_volume_.set_value(sink->volume_percent);
@@ -482,21 +569,30 @@ void SoundPage::refresh() {
     input_mute_.set_active(source->mute);
   }
 
-  profile_.remove_all();
   const PaDevice* owner = sink != nullptr ? sink : source;
+  std::vector<std::pair<std::string, std::string>> profile_rows;
+  std::string active_profile;
   if (owner != nullptr) {
     if (const PaCard* card = card_for(owner->card)) {
+      active_profile = card->active_profile;
       for (const auto& item : card->profiles) {
-        profile_.append(item.first, item.second);
+        profile_rows.emplace_back(item.first, item.second);
       }
-      profile_.set_active_id(card->active_profile);
-      profile_.set_sensitive(!card->profiles.empty());
     }
-  } else {
-    profile_.set_sensitive(false);
+  }
+  const std::string profile_key = combo_key(profile_rows);
+  if (profile_key != profile_rows_) {
+    profile_rows_ = profile_key;
+    profile_.remove_all();
+    for (const auto& row : profile_rows) {
+      profile_.append(row.first, row.second);
+    }
+    if (!active_profile.empty()) {
+      profile_.set_active_id(active_profile);
+    }
+    profile_.set_sensitive(!profile_rows.empty());
   }
   update_apps();
-  ensure_snapshot();
 }
 
 void SoundPage::update_apps() {
@@ -561,7 +657,7 @@ void SoundPage::update_apps() {
         if (row_at == app_rows_.end()) {
           return;
         }
-        mark_sound_dirty();
+        touch(SoundField::Stream, index);
         pulse_.set_input_volume(index, static_cast<int>(row_at->second.scale->get_value()));
       });
       row.mute->signal_toggled().connect([this, index] {
@@ -572,7 +668,7 @@ void SoundPage::update_apps() {
         if (row_at == app_rows_.end()) {
           return;
         }
-        mark_sound_dirty();
+        touch(SoundField::Stream, index);
         pulse_.set_input_mute(index, row_at->second.mute->get_active());
       });
       row.scale->signal_button_press_event().connect([this, index](GdkEventButton*) {

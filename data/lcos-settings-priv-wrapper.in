@@ -1,0 +1,3 @@
+#!/bin/sh
+# pkexec authorizes this path. The helper then only accepts this domain.
+exec @LIBEXECDIR@/lcos-settings-priv --domain=@DOMAIN@ "$@"

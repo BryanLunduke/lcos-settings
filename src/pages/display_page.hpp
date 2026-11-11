@@ -30,6 +30,7 @@ class DisplayPage : public SettingsPage {
   bool has_pending() const override { return dirty_; }
   bool commit_pending() override;
   void restore_session_hardware();
+  bool uncommitted_hardware() const { return hardware_changed_; }
   void on_page_shown() override;
 
  private:
@@ -49,7 +50,10 @@ class DisplayPage : public SettingsPage {
   void redraw();
   int hit_test(double x, double y) const;
   void write_scheme(const std::string& scheme, bool track);
-  void clear_temp_scheme();
+  // trigger_apply asks xfsettingsd to load Default. Revert must not: a fresh
+  // profile has no Default scheme, and that request leaves the rejected mode.
+  void clear_temp_scheme(bool trigger_apply);
+  bool apply_saved_layout(const std::vector<OutputConfig>& layout, std::string& error);
   void reload_profiles();
   void load_profile(const std::string& id);
   void save_profile();
@@ -65,6 +69,7 @@ class DisplayPage : public SettingsPage {
   std::vector<OutputConfig> outputs_;
   std::vector<OutputConfig> session_open_;
   std::vector<OutputConfig> confirmed_;
+  std::vector<OutputConfig> pending_revert_;
   bool dirty_ = false;
   bool applying_ = false;
   bool confirming_ = false;

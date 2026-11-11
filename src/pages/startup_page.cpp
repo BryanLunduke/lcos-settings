@@ -19,6 +19,9 @@
 #include <dirent.h>
 #include <fstream>
 #include <sys/stat.h>
+#include <unistd.h>
+
+#include <gdk/gdk.h>
 
 namespace lcos {
 namespace {
@@ -31,6 +34,29 @@ std::string read_text(const std::string& path) {
 void write_text(const std::string& path, const std::string& text) {
   std::ofstream out(path, std::ios::binary | std::ios::trunc);
   out << text;
+}
+
+std::string xfce_session_file() {
+  const char* display = gdk_display_get_name(gdk_display_get_default());
+  std::string name;
+  if (display != nullptr && display[0] == ':') {
+    char host[256] = {};
+    if (gethostname(host, sizeof(host) - 1) != 0) {
+      host[0] = '\0';
+    }
+    name = host;
+    for (const char* cursor = display; *cursor != '\0' && *cursor != '.'; ++cursor) {
+      name.push_back(*cursor);
+    }
+  } else if (display != nullptr) {
+    name = display;
+    const auto colon = name.rfind(':');
+    const auto dot = name.rfind('.');
+    if (colon != std::string::npos && dot != std::string::npos && dot > colon) {
+      name.resize(dot);
+    }
+  }
+  return Glib::get_user_cache_dir() + "/sessions/xfce4-session-" + name;
 }
 
 std::map<std::string, std::string> desktop_dir(const std::string& directory) {
@@ -160,7 +186,7 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   saved_scroll->set_size_request(-1, 120);
   saved_scroll->add(sessions_view_);
   saved->pack_start(*saved_scroll, Gtk::PACK_SHRINK);
-  auto* clear = Gtk::manage(new Gtk::Button("Clear saved sessions"));
+  auto* clear = Gtk::manage(new Gtk::Button("Delete session"));
   clear->set_halign(Gtk::ALIGN_START);
   saved->pack_start(*clear, Gtk::PACK_SHRINK);
   session_page->pack_start(*make_frame("Saved sessions", *saved), Gtk::PACK_SHRINK);
@@ -168,8 +194,8 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   auto* advanced = make_vbox(6);
   // GNOME and KDE toggles stay hidden unless those desktops are installed.
   // LCOS does not ship them, so an installed system does not show the toggles.
-  const bool gnome = command_exists("/usr/bin/gnome-keyring-daemon") ||
-                     command_exists("/usr/bin/gnome-session");
+  // gnome-keyring-daemon ships without GNOME. The toggle is for a GNOME session.
+  const bool gnome = command_exists("/usr/bin/gnome-session");
   const bool kde = command_exists("/usr/bin/startplasma-x11") || command_exists("/usr/bin/startkde");
   if (gnome) {
     advanced->pack_start(gnome_, Gtk::PACK_SHRINK);
@@ -231,17 +257,13 @@ void StartupPage::remember_sessions() {
   if (session_snapshot_.count(".captured") != 0) {
     return;
   }
-  session_dir_ = Glib::get_user_cache_dir() + "/sessions";
-  DIR* dir = opendir(session_dir_.c_str());
-  if (dir != nullptr) {
-    while (const dirent* item = readdir(dir)) {
-      const std::string name = item->d_name;
-      if (name.compare(0, 14, "xfce4-session-") == 0) {
-        session_snapshot_[name] = read_text(session_dir_ + "/" + name);
-      }
-    }
-    closedir(dir);
+  if (session_file_.empty()) {
+    session_file_ = xfce_session_file();
   }
+  const bool exists = g_file_test(session_file_.c_str(), G_FILE_TEST_EXISTS) != 0;
+  session_snapshot_[".path"] = session_file_;
+  session_snapshot_[".existed"] = exists ? "1" : "0";
+  session_snapshot_[".body"] = exists ? read_text(session_file_) : std::string();
   session_snapshot_[".captured"] = "1";
   files_dirty_ = true;
 }
@@ -268,19 +290,11 @@ void StartupPage::reload_apps() {
 
 void StartupPage::reload_sessions() {
   sessions_->clear();
-  const std::string dir = Glib::get_user_cache_dir() + "/sessions";
-  DIR* directory = opendir(dir.c_str());
-  if (directory == nullptr) {
-    return;
+  session_file_ = xfce_session_file();
+  for (const auto& name : saved_session_names(read_text(session_file_))) {
+    auto row = sessions_->append();
+    row->set_value(0, Glib::ustring(name));
   }
-  while (const dirent* item = readdir(directory)) {
-    const std::string name = item->d_name;
-    if (name.compare(0, 14, "xfce4-session-") == 0) {
-      auto row = sessions_->append();
-      row->set_value(0, Glib::ustring(name.substr(14)));
-    }
-  }
-  closedir(directory);
 }
 
 std::string StartupPage::selected_id() {
@@ -424,24 +438,25 @@ void StartupPage::remove_app() {
 }
 
 void StartupPage::clear_sessions() {
-  Gtk::MessageDialog dialog(parent_, "Clear saved sessions?", false, Gtk::MESSAGE_QUESTION,
-                            Gtk::BUTTONS_YES_NO, true);
-  dialog.set_secondary_text("Cancel puts the saved session files back.");
+  auto iter = sessions_view_.get_selection()->get_selected();
+  if (!iter) {
+    Gtk::MessageDialog dialog(parent_, "Choose a saved session to delete.", false, Gtk::MESSAGE_INFO,
+                              Gtk::BUTTONS_OK, true);
+    dialog.run();
+    return;
+  }
+  Glib::ustring name;
+  iter->get_value(0, name);
+  Gtk::MessageDialog dialog(parent_, "Delete saved session \"" + name + "\"?", false,
+                            Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO, true);
+  dialog.set_secondary_text("Other saved sessions stay. Cancel puts this one back.");
   if (dialog.run() != Gtk::RESPONSE_YES) {
     return;
   }
   remember_sessions();
-  const std::string dir = Glib::get_user_cache_dir() + "/sessions";
-  DIR* directory = opendir(dir.c_str());
-  if (directory != nullptr) {
-    while (const dirent* item = readdir(directory)) {
-      const std::string name = item->d_name;
-      if (name.compare(0, 14, "xfce4-session-") == 0) {
-        unlink((dir + "/" + name).c_str());
-      }
-    }
-    closedir(directory);
-  }
+  const std::string updated = keyfile_without_session(read_text(session_file_), name);
+  g_mkdir_with_parents(Glib::path_get_dirname(session_file_).c_str(), 0700);
+  write_text(session_file_, updated);
   reload_sessions();
 }
 
@@ -463,23 +478,14 @@ void StartupPage::restore_files() {
     autostart_snapshot_.clear();
   }
   if (session_snapshot_.count(".captured") != 0) {
-    const std::string dir = session_dir_.empty() ? Glib::get_user_cache_dir() + "/sessions" : session_dir_;
-    g_mkdir_with_parents(dir.c_str(), 0700);
-    DIR* directory = opendir(dir.c_str());
-    if (directory != nullptr) {
-      while (const dirent* item = readdir(directory)) {
-        const std::string name = item->d_name;
-        if (name.compare(0, 14, "xfce4-session-") == 0 && session_snapshot_.count(name) == 0) {
-          unlink((dir + "/" + name).c_str());
-        }
+    const std::string path = session_snapshot_.count(".path") ? session_snapshot_.at(".path") : session_file_;
+    if (!path.empty()) {
+      if (session_snapshot_[".existed"] == "1") {
+        g_mkdir_with_parents(Glib::path_get_dirname(path).c_str(), 0700);
+        write_text(path, session_snapshot_[".body"]);
+      } else {
+        unlink(path.c_str());
       }
-      closedir(directory);
-    }
-    for (const auto& entry : session_snapshot_) {
-      if (entry.first == ".captured") {
-        continue;
-      }
-      write_text(dir + "/" + entry.first, entry.second);
     }
     session_snapshot_.clear();
   }

@@ -134,6 +134,61 @@ std::string format_upower_duration(std::int64_t seconds) {
   return std::to_string(seconds) + " s";
 }
 
+std::vector<PowerChoice> power_choices(PowerChoiceKind kind, bool can_suspend, bool can_hibernate,
+                                       bool can_hybrid, bool capabilities_known) {
+  std::vector<PowerChoice> rows;
+  auto add = [&](const char* id, const char* label) { rows.push_back({id, label}); };
+  if (kind == PowerChoiceKind::Dpms) {
+    add("Standby", "Standby");
+    add("Suspend", "Suspend");
+    return rows;
+  }
+  const bool suspend = !capabilities_known || can_suspend;
+  const bool hibernate = !capabilities_known || can_hibernate;
+  const bool hybrid = capabilities_known ? can_hybrid : kind != PowerChoiceKind::Inactivity;
+  if (kind == PowerChoiceKind::Inactivity) {
+    if (suspend) {
+      add("1", "Suspend");
+    }
+    if (hibernate) {
+      add("2", "Hibernate");
+    }
+    if (hybrid) {
+      add("5", "Hybrid sleep");
+    }
+    return rows;
+  }
+  if (kind == PowerChoiceKind::Button) {
+    add("0", "Do nothing");
+    if (suspend) {
+      add("1", "Suspend");
+    }
+    if (hibernate) {
+      add("2", "Hibernate");
+    }
+    if (hybrid) {
+      add("5", "Hybrid sleep");
+    }
+    add("4", "Shut down");
+    add("3", "Ask");
+    return rows;
+  }
+  add("0", "Switch off display");
+  if (suspend) {
+    add("1", "Suspend");
+  }
+  if (hibernate) {
+    add("2", "Hibernate");
+  }
+  add("3", "Lock screen");
+  add("4", "Do nothing");
+  if (hybrid) {
+    add("5", "Hybrid sleep");
+  }
+  add("6", "Shut down");
+  return rows;
+}
+
 std::string format_upower_measure(double value, const char* unit) {
   if (!(value > 0.0) || unit == nullptr) {
     return {};

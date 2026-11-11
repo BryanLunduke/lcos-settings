@@ -2,9 +2,13 @@
 #ifndef LCOS_PRIV_CLIENT_HPP
 #define LCOS_PRIV_CLIENT_HPP
 
+#include "logic/system_model.hpp"
+
 #include <functional>
 #include <string>
 #include <vector>
+
+#include <sigc++/signal.h>
 
 namespace lcos {
 
@@ -29,7 +33,9 @@ class PrivSession {
   bool busy() const { return busy_; }
 
   // Blocks until pkexec finishes. Reads both pipes so a noisy child cannot
-  // stall, and reports the real exit status.
+  // stall, and reports the real exit status. The helper domain is chosen
+  // from the action, so account and locale changes are not covered by the
+  // clock action's cached authentication.
   PrivResult run(const std::vector<std::string>& args, const std::string& input = {});
 
   // Returns as soon as the child is running. `done` runs on the main loop.
@@ -44,7 +50,12 @@ class PrivSession {
   void wait_until_idle();
 
   PrivResult commit();
+  // Drops the undo record for changes made so far and leaves the session
+  // open, so a later Cancel only restores work done after this Apply.
+  PrivResult checkpoint();
   PrivResult revert();
+
+  sigc::signal<void> changed;
 
  private:
   struct AsyncOp;
@@ -53,11 +64,20 @@ class PrivSession {
                    std::function<void(PrivResult)> done);
   void finish_async(const PrivResult& result);
 
+  PrivResult run_domain(PrivDomain domain, const std::vector<std::string>& args,
+                       const std::string& input, bool async, std::function<void(PrivResult)> done);
+  PrivResult finish_domains(const char* action, bool end_session);
+  void note_success(PrivDomain domain, const std::string& action, bool ok, const std::string& error);
+
   std::string token_;
   bool dirty_ = false;
   bool finished_ = false;
   bool busy_ = false;
   bool cancel_requested_ = false;
+  PrivDomain active_domain_ = PrivDomain::System;
+  bool touched_system_ = false;
+  bool touched_accounts_ = false;
+  bool touched_locale_ = false;
   AsyncOp* async_ = nullptr;
 };
 

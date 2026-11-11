@@ -1,0 +1,15 @@
+#!/bin/sh
+# xfsettingsd starts "xfce4-display-settings --minimal" when a display is
+# plugged in and Notify is enabled. LCOS 1.1 packaging can divert
+# /usr/bin/xfce4-display-settings to this program. It does not replace the
+# XFCE dialog until that divert is installed.
+minimal=0
+for arg in "$@"; do
+  case "$arg" in
+    --minimal|--display-minimal) minimal=1 ;;
+  esac
+done
+if [ "$minimal" = 1 ]; then
+  exec @BINDIR@/lcos-settings --display-minimal
+fi
+exec @BINDIR@/lcos-settings --page=display
