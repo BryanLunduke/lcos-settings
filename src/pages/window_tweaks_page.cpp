@@ -82,7 +82,7 @@ WindowTweaksPage::WindowTweaksPage(XfconfStore& store)
   pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
 
   auto* cycling = make_vbox(8);
-  cycling->set_border_width(12);
+  cycling->set_border_width(0);
   for (Gtk::CheckButton* check : {&cycle_minimum_, &cycle_minimized_, &cycle_hidden_,
                                   &cycle_draw_frame_, &cycle_raise_, &cycle_list_}) {
     cycling->pack_start(*check, Gtk::PACK_SHRINK);
@@ -90,7 +90,7 @@ WindowTweaksPage::WindowTweaksPage(XfconfStore& store)
   notebook_.append_page(*make_page_scroll(*cycling), "Cycling");
 
   auto* focus = make_vbox(8);
-  focus->set_border_width(12);
+  focus->set_border_width(0);
   focus->pack_start(prevent_stealing_, Gtk::PACK_SHRINK);
   focus->pack_start(focus_hint_, Gtk::PACK_SHRINK);
   auto* raised = make_vbox(4);
@@ -102,7 +102,7 @@ WindowTweaksPage::WindowTweaksPage(XfconfStore& store)
   notebook_.append_page(*make_page_scroll(*focus), "Focus");
 
   auto* access = make_vbox(8);
-  access->set_border_width(12);
+  access->set_border_width(0);
   FormGrid grab(240);
   grab.add("Key used to grab and move windows", easy_click_);
   access->pack_start(grab.grid(), Gtk::PACK_SHRINK);
@@ -113,7 +113,7 @@ WindowTweaksPage::WindowTweaksPage(XfconfStore& store)
   notebook_.append_page(*make_page_scroll(*access), "Accessibility");
 
   auto* placement = make_vbox(8);
-  placement->set_border_width(12);
+  placement->set_border_width(0);
   FormGrid ratio(260);
   ratio.add("Minimum size for smart placement", placement_ratio_);
   placement->pack_start(ratio.grid(), Gtk::PACK_SHRINK);
@@ -125,7 +125,7 @@ WindowTweaksPage::WindowTweaksPage(XfconfStore& store)
   notebook_.append_page(*make_page_scroll(*placement), "Placement");
 
   auto* compositor = make_vbox(8);
-  compositor->set_border_width(12);
+  compositor->set_border_width(0);
   compositor->pack_start(compositing_, Gtk::PACK_SHRINK);
   compositor_options_ = make_vbox(8);
   for (Gtk::CheckButton* check : {&unredirect_, &cycle_preview_, &popup_shadow_, &dock_shadow_,

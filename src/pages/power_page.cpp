@@ -140,7 +140,7 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
 
   auto* general = make_vbox(8);
-  general->set_border_width(12);
+  general->set_border_width(0);
   auto* buttons = make_vbox(8);
   FormGrid button_form(220);
   auto* power = Gtk::manage(new Gtk::ComboBoxText());
@@ -243,7 +243,7 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   };
 
   auto* system = make_vbox(8);
-  system->set_border_width(12);
+  system->set_border_width(0);
   auto* system_stack = Gtk::manage(new Gtk::Stack());
   auto* system_switcher = Gtk::manage(new Gtk::StackSwitcher());
   system_switcher->set_stack(*system_stack);
@@ -326,7 +326,7 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   };
 
   auto* display = make_vbox(8);
-  display->set_border_width(12);
+  display->set_border_width(0);
   auto* presentation = Gtk::manage(new Gtk::CheckButton("_Presentation mode", true));
   presentation->set_tooltip_text("Keeps the display awake and stops inactivity actions while you present.");
   display->pack_start(*presentation, Gtk::PACK_SHRINK);
@@ -358,7 +358,7 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   notebook_.append_page(*scrolled(*display), "Display");
 
   auto* devices = make_vbox(8);
-  devices->set_border_width(12);
+  devices->set_border_width(0);
   device_empty_.set_line_wrap(true);
   device_empty_.set_justify(Gtk::JUSTIFY_CENTER);
   device_empty_.set_halign(Gtk::ALIGN_CENTER);

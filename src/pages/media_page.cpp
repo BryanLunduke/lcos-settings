@@ -84,7 +84,7 @@ MediaPage::MediaPage(XfconfStore& store) : store_(store) {
   pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
 
   auto* storage = make_vbox(8);
-  storage->set_border_width(12);
+  storage->set_border_width(0);
   auto* drives = make_vbox(6);
   add_check(store_, *drives, freeze_, "Mount removable drives when hot-plugged",
             "/automount-drives/enabled");
@@ -132,7 +132,7 @@ MediaPage::MediaPage(XfconfStore& store) : store_(store) {
   notebook_.append_page(*make_page_scroll(*storage), "Storage");
 
   auto* multimedia = make_vbox(8);
-  multimedia->set_border_width(12);
+  multimedia->set_border_width(0);
   auto* audio = make_vbox(6);
   add_command(store_, *audio, freeze_, "Play audio CDs when inserted",
               "/autoplay-audio-cds/enabled", "/autoplay-audio-cds/command");
@@ -148,7 +148,7 @@ MediaPage::MediaPage(XfconfStore& store) : store_(store) {
   notebook_.append_page(*make_page_scroll(*multimedia), "Multimedia");
 
   auto* cameras = make_vbox(8);
-  cameras->set_border_width(12);
+  cameras->set_border_width(0);
   auto* photos = make_vbox(6);
   add_command(store_, *photos, freeze_, "Import digital photographs when connected",
               "/autophoto/enabled", "/autophoto/command");
@@ -156,7 +156,7 @@ MediaPage::MediaPage(XfconfStore& store) : store_(store) {
   notebook_.append_page(*make_page_scroll(*cameras), "Cameras");
 
   auto* printers = make_vbox(8);
-  printers->set_border_width(12);
+  printers->set_border_width(0);
   auto* printer = make_vbox(6);
   add_command(store_, *printer, freeze_, "Automatically run a program when a printer is connected",
               "/autoprinter/enabled", "/autoprinter/command");
@@ -164,7 +164,7 @@ MediaPage::MediaPage(XfconfStore& store) : store_(store) {
   notebook_.append_page(*make_page_scroll(*printers), "Printers");
 
   auto* input = make_vbox(8);
-  input->set_border_width(12);
+  input->set_border_width(0);
   auto* keyboard = make_vbox(6);
   add_command(store_, *keyboard, freeze_,
               "Automatically run a program when a USB keyboard is connected",

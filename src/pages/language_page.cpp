@@ -62,7 +62,7 @@ std::string command_output(const char* program) {
 LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
     : session_(session), parent_(parent) {
   auto* page = make_vbox(8);
-  page->set_border_width(12);
+  page->set_border_width(0);
   FormGrid form(160);
   form.add("System language", language_);
   form.add("Dates and times", dates_);

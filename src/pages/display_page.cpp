@@ -13,6 +13,7 @@
 #include <gdk/gdkx.h>
 
 #include <glibmm/main.h>
+#include <glibmm/markup.h>
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
 #include <gtkmm/dialog.h>
@@ -70,16 +71,22 @@ std::string output_summary_line(const OutputConfig& output) {
   if (!output.active) {
     return output_ui_name(output) + "  off";
   }
-  char rate[32];
-  std::snprintf(rate, sizeof rate, "%.0f Hz", output.refresh);
-  return output_ui_name(output) + "  " + std::to_string(output.width) + " × " +
-         std::to_string(output.height) + " · " + rate + " · " + scale_percent(output.scale);
+  std::string text = output_ui_name(output) + "  " + std::to_string(output.width) + " × " +
+                     std::to_string(output.height);
+  if (output.refresh > 0.5) {
+    char rate[32];
+    std::snprintf(rate, sizeof rate, " · %.0f Hz", output.refresh);
+    text += rate;
+  }
+  text += " · " + scale_percent(output.scale);
+  return text;
 }
 
 class CountdownRing : public Gtk::DrawingArea {
  public:
   CountdownRing() { set_size_request(84, 84); }
-  void set_seconds(int seconds) {
+  void set_progress(double fraction, int seconds) {
+    fraction_ = std::max(0.0, std::min(1.0, fraction));
     seconds_ = seconds;
     queue_draw();
   }
@@ -90,24 +97,28 @@ class CountdownRing : public Gtk::DrawingArea {
     const double cx = get_allocated_width() / 2.0;
     const double cy = get_allocated_height() / 2.0;
     const double radius = size / 2.0 - 6.0;
-    cr->set_line_width(6);
-    cr->set_source_rgb(0.82, 0.81, 0.78);
+    cr->set_source_rgb(1, 1, 1);
+    cr->arc(cx, cy, radius - 3.5, 0, 6.28318530718);
+    cr->fill();
+    cr->set_line_width(7);
+    cr->set_source_rgb(0.851, 0.835, 0.812);
     cr->arc(cx, cy, radius, 0, 6.28318530718);
     cr->stroke();
-    const double fraction =
-        std::max(0.0, std::min(1.0, static_cast<double>(seconds_) / kDisplayConfirmSeconds));
-    cr->set_source_rgb(0.435, 0.592, 0.788);
-    cr->arc(cx, cy, radius, -1.57079632679, -1.57079632679 + fraction * 6.28318530718);
-    cr->stroke();
+    if (fraction_ > 0.001) {
+      cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+      cr->set_source_rgb(0.435, 0.592, 0.796);
+      cr->arc(cx, cy, radius, -1.57079632679, -1.57079632679 + fraction_ * 6.28318530718);
+      cr->stroke();
+    }
     cr->set_source_rgb(0.184, 0.333, 0.498);
     cr->select_font_face("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_BOLD);
     cr->set_font_size(26);
     const std::string number = std::to_string(seconds_);
     Cairo::TextExtents extents;
     cr->get_text_extents(number, extents);
-    cr->move_to(cx - extents.width / 2.0 - extents.x_bearing, cy - 2);
+    cr->move_to(cx - extents.width / 2.0 - extents.x_bearing, cy - 4);
     cr->show_text(number);
-    cr->set_source_rgb(0.55, 0.54, 0.51);
+    cr->set_source_rgb(0.553, 0.537, 0.510);
     cr->select_font_face("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_BOLD);
     cr->set_font_size(9);
     const std::string unit = "SECONDS";
@@ -118,14 +129,15 @@ class CountdownRing : public Gtk::DrawingArea {
   }
 
  private:
+  double fraction_ = 1;
   int seconds_ = kDisplayConfirmSeconds;
 };
 
 class ConfirmDialog : public Gtk::Dialog {
  public:
   ConfirmDialog(Gtk::Window& parent, const std::vector<OutputConfig>& outputs)
-      : Gtk::Dialog("Keep this display configuration?", parent, true) {
-    set_default_size(520, 230);
+      : Gtk::Dialog("Display", parent, true) {
+    set_default_size(500, 230);
     get_style_context()->add_class("lcos-keep");
     auto* body = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 18));
     body->set_margin_top(24);
@@ -138,14 +150,13 @@ class ConfirmDialog : public Gtk::Dialog {
     auto* title = Gtk::manage(new Gtk::Label("Keep this display configuration?"));
     title->set_halign(Gtk::ALIGN_START);
     title->get_style_context()->add_class("lcos-dialog-title");
-    auto* explain = Gtk::manage(new Gtk::Label(
-        "Your displays were changed. If you don't answer, LCOS restores the previous settings."));
-    explain->set_halign(Gtk::ALIGN_START);
-    explain->set_line_wrap(true);
-    explain->set_max_width_chars(42);
-    explain->set_xalign(0);
+    explain_ = Gtk::manage(new Gtk::Label());
+    explain_->set_halign(Gtk::ALIGN_START);
+    explain_->set_line_wrap(true);
+    explain_->set_max_width_chars(42);
+    explain_->set_xalign(0);
     text->pack_start(*title, Gtk::PACK_SHRINK);
-    text->pack_start(*explain, Gtk::PACK_SHRINK);
+    text->pack_start(*explain_, Gtk::PACK_SHRINK);
     summary_.set_halign(Gtk::ALIGN_START);
     summary_.set_line_wrap(true);
     summary_.set_xalign(0);
@@ -170,8 +181,9 @@ class ConfirmDialog : public Gtk::Dialog {
     set_keep_above(true);
     show_all();
     present();
-    ring_.set_seconds(countdown_.seconds);
-    timer_ = Glib::signal_timeout().connect_seconds(sigc::mem_fun(*this, &ConfirmDialog::tick), 1);
+    started_us_ = g_get_monotonic_time();
+    paint_clock(static_cast<double>(kDisplayConfirmSeconds));
+    timer_ = Glib::signal_timeout().connect(sigc::mem_fun(*this, &ConfirmDialog::tick), 40);
   }
 
   ~ConfirmDialog() override {
@@ -181,20 +193,33 @@ class ConfirmDialog : public Gtk::Dialog {
   }
 
  private:
+  void paint_clock(double remain) {
+    const double total = static_cast<double>(kDisplayConfirmSeconds);
+    const int shown = remain <= 0 ? 0 : static_cast<int>(std::ceil(remain - 1e-9));
+    ring_.set_progress(total <= 0 ? 0 : remain / total, shown);
+    if (explain_ != nullptr) {
+      explain_->set_text(
+          "Your displays were changed. If you don't answer, LCOS restores the previous settings in " +
+          std::to_string(shown) + (shown == 1 ? " second." : " seconds."));
+    }
+  }
+
   bool tick() {
-    countdown_.tick();
-    ring_.set_seconds(countdown_.seconds);
-    if (countdown_.decided) {
-      response(countdown_.keep ? Gtk::RESPONSE_ACCEPT : Gtk::RESPONSE_REJECT);
+    const double elapsed = static_cast<double>(g_get_monotonic_time() - started_us_) / 1000000.0;
+    const double remain = std::max(0.0, static_cast<double>(kDisplayConfirmSeconds) - elapsed);
+    paint_clock(remain);
+    if (remain <= 0) {
+      response(Gtk::RESPONSE_REJECT);
       return false;
     }
     return true;
   }
 
-  ConfirmCountdown countdown_;
   CountdownRing ring_;
   Gtk::Label summary_;
+  Gtk::Label* explain_ = nullptr;
   sigc::connection timer_;
+  gint64 started_us_ = 0;
 };
 
 void rounded_rect(const Cairo::RefPtr<Cairo::Context>& context, double x, double y,
@@ -217,7 +242,7 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   prepare_page_scroll(*scroll);
   scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   auto* right = make_vbox(0);
-  right->set_border_width(12);
+  right->set_border_width(0);
   right->set_hexpand(true);
   scroll->add(*right);
   scroll_ = scroll;
@@ -234,6 +259,7 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
     });
   });
 
+  arrange_.set_margin_top(18);
   arrange_.set_size_request(-1, 196);
   arrange_.set_hexpand(true);
   arrange_.get_style_context()->add_class("lcos-arrange");
@@ -287,6 +313,7 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   output_heading_->set_ellipsize(Pango::ELLIPSIZE_END);
   output_heading_->get_style_context()->add_class("lcos-group-title");
   auto* rule = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
+  rule->get_style_context()->add_class("lcos-rule");
   rule->set_hexpand(true);
   rule->set_valign(Gtk::ALIGN_CENTER);
   head->pack_start(*output_heading_, Gtk::PACK_SHRINK);
@@ -910,17 +937,27 @@ void DisplayPage::refresh_output_heading() {
     return;
   }
   const std::string title = output_ui_name(*output);
-  std::string text = title.empty() || title == output->name ? output->name
-                                                           : title + " — " + output->name;
+  std::string meta;
+  if (!title.empty() && title != output->name) {
+    meta = " — " + output->name;
+  }
   if (output->mm_width > 0 && output->mm_height > 0) {
     const double inches = std::sqrt(static_cast<double>(output->mm_width) * output->mm_width +
                                     static_cast<double>(output->mm_height) * output->mm_height) /
                           25.4;
     char buffer[32];
     std::snprintf(buffer, sizeof buffer, ", %.1f″", inches);
-    text += buffer;
+    if (meta.empty()) {
+      meta = buffer;
+    } else {
+      meta += buffer;
+    }
   }
-  output_heading_->set_text(text);
+  std::string markup = Glib::Markup::escape_text(title.empty() ? output->name : title);
+  if (!meta.empty()) {
+    markup += " <span weight='normal' color='#8d8982'>" + Glib::Markup::escape_text(meta) + "</span>";
+  }
+  output_heading_->set_markup(markup);
 }
 
 const OutputConfig* DisplayPage::selected() const {
@@ -934,7 +971,7 @@ void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
   const int width = std::max(1, preview_width_);
   const int height = std::max(1, preview_height_);
   context->save();
-  context->rectangle(0, 0, width, height);
+  rounded_rect(context, 0.5, 0.5, width - 1.0, height - 1.0, 8);
   context->clip();
   auto backdrop = Cairo::LinearGradient::create(0, 0, 0, height);
   backdrop->add_color_stop_rgb(0, 0.863, 0.847, 0.824);
@@ -1045,6 +1082,10 @@ void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
     context->show_text("No displays");
   }
   context->restore();
+  context->set_source_rgb(0.741, 0.722, 0.694);
+  context->set_line_width(1);
+  rounded_rect(context, 0.5, 0.5, width - 1.0, height - 1.0, 8);
+  context->stroke();
 }
 
 int DisplayPage::hit_test(double x, double y) const {

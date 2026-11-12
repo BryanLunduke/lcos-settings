@@ -179,7 +179,7 @@ SoftwarePage::SoftwarePage() {
   pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
 
   auto* utilities = make_vbox(8);
-  utilities->set_border_width(12);
+  utilities->set_border_width(0);
   FormGrid form(180);
   form.add("Web browser", browser_);
   form.add("Mail reader", mail_);
@@ -194,7 +194,7 @@ SoftwarePage::SoftwarePage() {
   notebook_.append_page(*make_page_scroll(*utilities), "Utilities");
 
   auto* others = make_vbox(8);
-  others->set_border_width(12);
+  others->set_border_width(0);
   filter_.set_placeholder_text("Filter file types or applications");
   others->pack_start(filter_, Gtk::PACK_SHRINK);
   notebook_.append_page(*make_page_scroll(*others), "Others");

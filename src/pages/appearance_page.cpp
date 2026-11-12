@@ -159,7 +159,7 @@ AppearancePage::AppearancePage(XfconfStore& store)
   prepare_page_scroll(*scroll);
   scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   auto* page = make_vbox(4);
-  page->set_border_width(12);
+  page->set_border_width(0);
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 

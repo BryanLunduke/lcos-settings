@@ -108,7 +108,7 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
   auto* page = make_vbox(4);
-  page->set_border_width(12);
+  page->set_border_width(0);
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 

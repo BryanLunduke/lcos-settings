@@ -44,6 +44,9 @@
 namespace lcos {
 namespace {
 
+constexpr int kSidebarWidth = 284;
+constexpr int kContentWidth = 748;
+
 class WidthClamp : public Gtk::Bin {
  public:
   WidthClamp() { set_hexpand(true); }
@@ -53,7 +56,7 @@ class WidthClamp : public Gtk::Bin {
   Gtk::SizeRequestMode get_request_mode_vfunc() const override { return Gtk::SIZE_REQUEST_HEIGHT_FOR_WIDTH; }
   void get_preferred_width_vfunc(int& minimum, int& natural) const override {
     minimum = 280;
-    natural = 820;
+    natural = kContentWidth;
     if (get_child() != nullptr) {
       int child_min = 0;
       int child_nat = 0;
@@ -67,7 +70,7 @@ class WidthClamp : public Gtk::Bin {
     if (child == nullptr || !child->get_visible()) {
       return;
     }
-    const int width = std::min(820, allocation.get_width());
+    const int width = std::min(kContentWidth, allocation.get_width());
     Gtk::Allocation inner;
     inner.set_x(allocation.get_x() + std::max(0, (allocation.get_width() - width) / 2));
     inner.set_y(allocation.get_y());
@@ -187,30 +190,21 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* body = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
   prepare_page_scroll(side_scroll_);
   side_scroll_.set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-  side_scroll_.set_size_request(318, -1);
-  side_scroll_.set_min_content_width(318);
+  side_scroll_.set_size_request(-1, -1);
+  side_scroll_.set_min_content_width(0);
   sidebar_.get_style_context()->add_class("lcos-sidebar");
   sidebar_.set_selection_mode(Gtk::SELECTION_BROWSE);
   auto* side = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-  side->set_margin_top(0);
-  side->set_margin_start(8);
-  side->set_margin_end(4);
-  side->set_margin_bottom(6);
   search_.get_style_context()->add_class("lcos-search");
   search_.set_placeholder_text("Search settings");
-  search_.set_margin_top(8);
-  search_.set_margin_start(10);
-  search_.set_margin_end(10);
-  search_.set_margin_bottom(4);
   auto* side_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   side_box->get_style_context()->add_class("lcos-sidebar");
   side_box->pack_start(search_, Gtk::PACK_SHRINK);
-  side->set_margin_top(0);
   build_sidebar();
   side->pack_start(sidebar_, Gtk::PACK_EXPAND_WIDGET);
   side_scroll_.add(*side);
   side_box->pack_start(side_scroll_, Gtk::PACK_EXPAND_WIDGET);
-  side_box->set_size_request(318, -1);
+  side_box->set_size_request(kSidebarWidth, -1);
   side_chrome_ = side_box;
   body->pack_start(*side_box, Gtk::PACK_SHRINK);
 
@@ -225,13 +219,11 @@ MainWindow::MainWindow(XfconfStore& store)
   }
 
   auto* column = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-  column->set_margin_top(18);
-  column->set_margin_bottom(12);
-  column->set_margin_start(12);
-  column->set_margin_end(12);
+  column->set_margin_top(24);
+  column->set_margin_bottom(18);
+  column->set_margin_start(24);
+  column->set_margin_end(24);
   auto* head = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
-  head->set_margin_start(12);
-  head->set_margin_end(12);
   head->set_margin_bottom(18);
   heading_icon_.set_pixel_size(48);
   heading_icon_.set_valign(Gtk::ALIGN_CENTER);
@@ -245,17 +237,17 @@ MainWindow::MainWindow(XfconfStore& store)
   titles->pack_start(summary_, Gtk::PACK_SHRINK);
   head->pack_start(heading_icon_, Gtk::PACK_SHRINK);
   head->pack_start(*titles, Gtk::PACK_EXPAND_WIDGET);
-  column->pack_start(*head, Gtk::PACK_SHRINK);
   auto* rule = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-  rule->set_margin_start(12);
-  rule->set_margin_end(12);
-  column->pack_start(*rule, Gtk::PACK_SHRINK);
+  rule->get_style_context()->add_class("lcos-rule");
+  auto* page_head = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+  page_head->pack_start(*head, Gtk::PACK_SHRINK);
+  page_head->pack_start(*rule, Gtk::PACK_SHRINK);
+  page_head_ = page_head;
+  column->pack_start(*page_head, Gtk::PACK_SHRINK);
 
   auto* bar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
   bar->get_style_context()->add_class("lcos-infobar");
   bar->set_margin_top(18);
-  bar->set_margin_start(12);
-  bar->set_margin_end(12);
   auto* bang = Gtk::manage(new Gtk::Label("!"));
   bang->get_style_context()->add_class("lcos-infobar-icon");
   auto* words = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 1));
@@ -286,17 +278,17 @@ MainWindow::MainWindow(XfconfStore& store)
 
   auto* footer = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
   footer->get_style_context()->add_class("lcos-footer");
-  footer->set_margin_start(24);
-  footer->set_margin_end(24);
-  footer->set_margin_top(8);
-  footer->set_margin_bottom(8);
   status_.set_halign(Gtk::ALIGN_START);
+  status_.set_valign(Gtk::ALIGN_CENTER);
   status_.set_hexpand(true);
   status_.get_style_context()->add_class("lcos-faint");
   ok_.get_style_context()->add_class("lcos-primary");
   ok_.set_can_default(true);
-  for (Gtk::Button* button : {&ok_, &apply_, &cancel_}) {
+  infobar_revert_.get_style_context()->add_class("lcos-action");
+  infobar_apply_.get_style_context()->add_class("lcos-action");
+  for (Gtk::Button* button : {&ok_, &apply_, &cancel_, &infobar_revert_, &infobar_apply_}) {
     button->set_size_request(86, 28);
+    button->set_valign(Gtk::ALIGN_CENTER);
     button->get_style_context()->add_class("lcos-action");
   }
   footer->pack_start(status_, Gtk::PACK_EXPAND_WIDGET);
@@ -373,7 +365,7 @@ void MainWindow::build_sidebar() {
         auto* row = Gtk::manage(new Gtk::ListBoxRow());
         row->set_selectable(false);
         row->set_activatable(false);
-        row->set_size_request(-1, 18);
+        row->set_size_request(-1, 22);
         row->get_style_context()->add_class("lcos-section");
         auto* label = Gtk::manage(new Gtk::Label());
         std::string small = section;
@@ -381,11 +373,12 @@ void MainWindow::build_sidebar() {
           c = static_cast<char>(g_unichar_tolower(static_cast<gunichar>(static_cast<unsigned char>(c))));
         }
         label->set_markup(
-            "<span font_variant='smallcaps' weight='bold' color='#7c776f' letter_spacing='1400'>" +
+            "<span font_variant='smallcaps' weight='bold' color='#7c776f' letter_spacing='900'>" +
             Glib::Markup::escape_text(small) + "</span>");
         label->set_halign(Gtk::ALIGN_START);
-        label->set_margin_start(8);
-        label->set_margin_top(2);
+        label->set_margin_start(10);
+        label->set_margin_bottom(3);
+        label->set_valign(Gtk::ALIGN_END);
         row->add(*label);
         sidebar_.append(*row);
         section_rows_.push_back(row);
@@ -393,13 +386,13 @@ void MainWindow::build_sidebar() {
     }
     auto* row = Gtk::manage(new Gtk::ListBoxRow());
     row->get_style_context()->add_class("lcos-nav");
-    row->set_size_request(-1, 26);
+    row->set_size_request(-1, 28);
     row->set_tooltip_text(item.page->title());
-    auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 9));
     line->set_margin_top(0);
     line->set_margin_bottom(0);
-    line->set_margin_start(6);
-    line->set_margin_end(6);
+    line->set_margin_start(8);
+    line->set_margin_end(10);
     auto* image = Gtk::manage(new Gtk::Image());
     image->set_pixel_size(24);
     nav_images_.push_back(image);
@@ -483,6 +476,9 @@ void MainWindow::select_nav(int index) {
   heading_.set_visible(!overview);
   summary_.set_visible(!overview && !item.page->summary().empty());
   heading_icon_.set_visible(!overview);
+  if (page_head_ != nullptr) {
+    page_head_->set_visible(!overview);
+  }
   load_icons();
   item.page->on_page_shown();
   item.page->align_labels();
@@ -529,9 +525,9 @@ void MainWindow::apply_filter() {
 
 void MainWindow::set_compact(bool compact) {
   compact_ = compact;
-  side_scroll_.set_size_request(compact ? 64 : 318, -1);
+  side_scroll_.set_size_request(-1, -1);
   if (side_chrome_ != nullptr) {
-    side_chrome_->set_size_request(compact ? 64 : 318, -1);
+    side_chrome_->set_size_request(compact ? 64 : kSidebarWidth, -1);
   }
   for (auto* label : row_labels_) {
     label->set_visible(!compact);
@@ -822,6 +818,35 @@ void MainWindow::dump_pages(const std::string& directory) {
   dump_dir_ = directory;
   suppress_save_ = true;
   shots_.clear();
+  stack_.set_transition_duration(0);
+  if (g_getenv("LCOS_SETTINGS_DUMP_FAST") != nullptr) {
+    const int sizes[][2] = {{1100, 720}, {1000, 550}};
+    for (const auto& size : sizes) {
+      for (int page = 0; page < static_cast<int>(nav_.size()); ++page) {
+        Shot shot;
+        shot.page = page;
+        shot.frame = 0;
+        shot.name = nav_[static_cast<std::size_t>(page)].id + std::string("-") +
+                    std::to_string(size[0]) + "x" + std::to_string(size[1]);
+        shot.width = size[0];
+        shot.height = size[1];
+        shots_.push_back(shot);
+      }
+      Shot keep;
+      keep.page = std::max(0, nav_index("display"));
+      keep.name = std::string("display-keep-") + std::to_string(size[0]) + "x" +
+                  std::to_string(size[1]);
+      keep.width = size[0];
+      keep.height = size[1];
+      keep.keep = true;
+      shots_.push_back(keep);
+    }
+    shot_index_ = 0;
+    dump_phase_ = 0;
+    resize(1100, 720);
+    Glib::signal_timeout().connect(sigc::mem_fun(*this, &MainWindow::dump_step), 350);
+    return;
+  }
   for (int page = 0; page < static_cast<int>(nav_.size()); ++page) {
     const int frames = std::max(1, nav_[static_cast<std::size_t>(page)].page->screenshot_count());
     for (int frame = 0; frame < frames; ++frame) {

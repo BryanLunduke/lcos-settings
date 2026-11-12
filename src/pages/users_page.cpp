@@ -177,17 +177,19 @@ UsersPage::UsersPage(PrivSession& session, Gtk::Window& parent) : session_(sessi
   type_.append("administrator", "Administrator");
 
   auto* page = make_vbox(0);
-  page->set_border_width(12);
+  page->set_border_width(0);
   auto* columns = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 24));
   columns->set_margin_top(18);
 
   auto* list_col = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-  list_col->set_size_request(210, -1);
+  list_col->set_size_request(236, -1);
   auto* list_scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*list_scroll);
   list_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   list_scroll->set_shadow_type(Gtk::SHADOW_IN);
-  list_scroll->set_size_request(210, 200);
+  list_scroll->get_style_context()->add_class("lcos-users");
+  list_.get_style_context()->add_class("lcos-users");
+  list_scroll->set_size_request(236, 262);
   list_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   list_.set_selection_mode(Gtk::SELECTION_BROWSE);
   list_scroll->add(list_);

@@ -94,7 +94,7 @@ WindowPage::WindowPage(XfconfStore& store, Gtk::Window& parent)
   pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
 
   auto* focus = make_vbox(8);
-  focus->set_border_width(12);
+  focus->set_border_width(0);
   FormGrid model(220);
   model.add_control(click_focus_);
   model.add_control(follow_focus_);
@@ -113,7 +113,7 @@ WindowPage::WindowPage(XfconfStore& store, Gtk::Window& parent)
   notebook_.append_page(*make_page_scroll(*focus), "Focus");
 
   auto* keys = make_vbox(8);
-  keys->set_border_width(12);
+  keys->set_border_width(0);
   auto* caption = make_label("Shortcuts for window manager actions.");
   caption->set_line_wrap(true);
   keys->pack_start(*caption, Gtk::PACK_SHRINK);
@@ -143,7 +143,7 @@ WindowPage::WindowPage(XfconfStore& store, Gtk::Window& parent)
   notebook_.append_page(*keys, "Keyboard");
 
   auto* advanced = make_vbox(8);
-  advanced->set_border_width(12);
+  advanced->set_border_width(0);
   FormGrid snap(180);
   snap.add_control(snap_border_);
   snap.add_control(snap_windows_);

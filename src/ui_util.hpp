@@ -95,6 +95,7 @@ inline Gtk::Box* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
   label->set_halign(Gtk::ALIGN_START);
   label->get_style_context()->add_class("lcos-group-title");
   auto* rule = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
+  rule->get_style_context()->add_class("lcos-rule");
   rule->set_hexpand(true);
   rule->set_valign(Gtk::ALIGN_CENTER);
   head->pack_start(*label, Gtk::PACK_SHRINK);
@@ -110,7 +111,7 @@ inline Gtk::Box* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
 
 class FormGrid {
  public:
-  explicit FormGrid(int label_width = 168) : label_width_(label_width) {
+  explicit FormGrid(int label_width = 164) : label_width_(label_width) {
     grid_ = Gtk::manage(new Gtk::Grid());
     grid_->set_row_spacing(6);
     grid_->set_column_spacing(12);
@@ -166,7 +167,7 @@ class FormGrid {
  private:
   Gtk::Grid* grid_ = nullptr;
   int row_ = 0;
-  int label_width_ = 168;
+  int label_width_ = 164;
 };
 
 struct Freeze {
