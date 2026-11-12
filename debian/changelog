@@ -1,3 +1,9 @@
+lcos-settings (1.1.0-1) unstable; urgency=medium
+
+  * First release of LCOS Command Center for LCOS 1.1.0.
+
+ -- LCOS <lcos@lunduke.com>  Thu, 12 Nov 2026 04:45:00 +0000
+
 lcos-settings (1.1~dev) unstable; urgency=medium
 
   * First development snapshot of LCOS Command Center.

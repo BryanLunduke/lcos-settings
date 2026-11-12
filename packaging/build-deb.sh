@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build lcos-settings_1.1~dev_<arch>.deb with dpkg-buildpackage.
+# Build lcos-settings_1.1.0-1_<arch>.deb with dpkg-buildpackage.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
