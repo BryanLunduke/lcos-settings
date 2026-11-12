@@ -1,7 +1,7 @@
 project(
   'lcos-settings',
   'cpp',
-  version: '1.1~dev',
+  version: '1.1.0',
   license: 'GPL-3.0-or-later',
   meson_version: '>=0.56.0',
   default_options: [

@@ -25,6 +25,11 @@
     <category>Settings</category>
   </categories>
   <releases>
+    <release version="1.1.0" date="2026-11-12">
+      <description>
+        <p>First release of LCOS Command Center for LCOS 1.1.0. Debian package 1.1.0-1.</p>
+      </description>
+    </release>
     <release version="1.1~dev" date="2026-11-09">
       <description>
         <p>First development snapshot for the LCOS 1.1 settings work.</p>

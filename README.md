@@ -1,10 +1,10 @@
 # LCOS Command Center
 
 Unified settings application for the Lunduke Computer Operating System (LCOS).
-This is the first development snapshot (`1.1~dev`). It is not yet a replacement
-for the individual XFCE settings dialogs.
+This is the first release (`1.1.0`, Debian package 1.1.0-1) for LCOS 1.1.0.
+It is not yet a replacement for the individual XFCE settings dialogs.
 
-- **Version:** 1.1~dev
+- **Version:** 1.1.0
 - **License:** GPL-3.0-or-later
 - **Stack:** C++17, Meson, gtkmm-3.0
 
