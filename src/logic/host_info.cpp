@@ -8,6 +8,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -74,6 +75,8 @@ OsIdentity parse_os_release(const std::string& text) {
     const std::string value = unquote(line.substr(eq + 1));
     if (key == "NAME") {
       id.name = value;
+    } else if (key == "ID") {
+      id.id = value;
     } else if (key == "VERSION") {
       id.version = value;
     } else if (key == "VERSION_ID" && id.version.empty()) {
@@ -82,15 +85,25 @@ OsIdentity parse_os_release(const std::string& text) {
       id.pretty_name = value;
     }
   }
-  if (!id.name.empty() && !id.version.empty()) {
-    id.version_line = id.name + " " + id.version;
-  } else if (!id.pretty_name.empty()) {
+  if (!id.pretty_name.empty()) {
     id.version_line = id.pretty_name;
+  } else if (!id.name.empty() && !id.version.empty()) {
+    id.version_line = id.name + " " + id.version;
   } else if (!id.name.empty()) {
     id.version_line = id.name;
   }
   id.kicker = id.name;
   return id;
+}
+
+bool os_identity_is_lcos(const OsIdentity& identity) {
+  auto has = [](std::string text) {
+    for (char& c : text) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    return text.find("lcos") != std::string::npos;
+  };
+  return has(identity.name) || has(identity.id) || has(identity.pretty_name);
 }
 
 ProcessorInfo parse_cpuinfo(const std::string& text) {
@@ -189,6 +202,7 @@ std::string pci_device_name(const std::string& pci_ids_text, unsigned vendor, un
 HostFacts read_host_facts() {
   HostFacts facts;
   const OsIdentity os = parse_os_release(read_file("/etc/os-release"));
+  facts.lcos = os_identity_is_lcos(os);
   facts.kicker = os.kicker;
   facts.version_line = os.version_line.empty() ? "Unknown system" : os.version_line;
 

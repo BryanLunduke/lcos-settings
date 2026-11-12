@@ -41,6 +41,7 @@ class OverviewPage : public SettingsPage {
   int freeze_ = 0;
   bool volume_dragging_ = false;
 
+  Gtk::Image* logo_ = nullptr;
   Gtk::Label* kicker_ = nullptr;
   Gtk::Label* version_ = nullptr;
   Gtk::Label* hostname_ = nullptr;

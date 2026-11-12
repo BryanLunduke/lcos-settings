@@ -8,13 +8,17 @@ namespace lcos {
 
 struct OsIdentity {
   std::string name;
+  std::string id;
   std::string version;
   std::string pretty_name;
   // Small-caps line above the version. Comes from NAME, not a hard-coded brand.
   std::string kicker;
-  // Large line, NAME plus VERSION when both exist.
+  // Large line. PRETTY_NAME when the file has one, otherwise NAME plus VERSION.
   std::string version_line;
 };
+
+// True when NAME, ID, or PRETTY_NAME identifies LCOS.
+bool os_identity_is_lcos(const OsIdentity& identity);
 
 struct ProcessorInfo {
   std::string model;
@@ -31,6 +35,7 @@ std::string format_gigabytes(long long bytes);
 std::string pci_device_name(const std::string& pci_ids_text, unsigned vendor, unsigned device);
 
 struct HostFacts {
+  bool lcos = false;
   std::string kicker;
   std::string version_line;
   std::string hostname;

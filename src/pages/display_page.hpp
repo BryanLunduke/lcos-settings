@@ -108,6 +108,7 @@ class DisplayPage : public SettingsPage {
   Gtk::Button* mirror_button_ = nullptr;
   Gtk::Popover* scale_popover_ = nullptr;
   Gtk::Label* output_heading_ = nullptr;
+  Gtk::Label* refresh_label_ = nullptr;
   Gtk::Window* keep_preview_ = nullptr;
   int preview_width_ = 720;
   int preview_height_ = 170;

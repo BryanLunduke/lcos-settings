@@ -119,7 +119,7 @@ class FormGrid {
 
   Gtk::Grid& grid() { return *grid_; }
 
-  void add(const Glib::ustring& caption, Gtk::Widget& widget) {
+  Gtk::Label* add(const Glib::ustring& caption, Gtk::Widget& widget) {
     auto* label = Gtk::manage(new Gtk::Label(caption));
     label->set_halign(Gtk::ALIGN_START);
     label->set_valign(Gtk::ALIGN_CENTER);
@@ -144,6 +144,7 @@ class FormGrid {
     grid_->attach(*label, 0, row_, 1, 1);
     grid_->attach(widget, 1, row_, 1, 1);
     ++row_;
+    return label;
   }
 
   void add_full(Gtk::Widget& widget) {

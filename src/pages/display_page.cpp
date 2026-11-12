@@ -302,7 +302,7 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   use_row->pack_start(primary_, Gtk::PACK_SHRINK);
   form.add("Use this display", *use_row);
   form.add("Resolution", resolution_);
-  form.add("Refresh rate", refresh_);
+  refresh_label_ = form.add("Refresh rate", refresh_);
   scale_.set_range(0.1, 10.0);
   scale_.set_increments(0.1, 1.0);
   scale_.set_digits(2);
@@ -633,24 +633,38 @@ void DisplayPage::show_selected() {
   }
   resolution_.set_active_id(current);
   refresh_.remove_all();
+  double best_rate = output->refresh > 0.5 ? output->refresh : 0;
   int refresh_rows = 0;
   for (const auto& mode : output->modes) {
-    if (mode.width != output->width || mode.height != output->height) {
+    if (mode.width != output->width || mode.height != output->height || mode.refresh <= 0.5) {
       continue;
+    }
+    if (mode.refresh > best_rate && output->refresh <= 0.5) {
+      best_rate = mode.refresh;
     }
     char buffer[32];
     std::snprintf(buffer, sizeof buffer, "%.2f", mode.refresh);
     refresh_.append(buffer, std::string(buffer) + " Hz");
     ++refresh_rows;
   }
-  char current_rate[32];
-  std::snprintf(current_rate, sizeof current_rate, "%.2f", output->refresh);
-  if (refresh_rows == 0) {
-    refresh_.append(current_rate, std::string(current_rate) + " Hz");
+  const bool known = refresh_rows > 0 || output->refresh > 0.5;
+  refresh_.set_no_show_all(!known);
+  refresh_.set_visible(known);
+  if (refresh_label_ != nullptr) {
+    refresh_label_->set_no_show_all(!known);
+    refresh_label_->set_visible(known);
   }
-  refresh_.set_active_id(current_rate);
-  if (refresh_.get_active_id().empty()) {
-    refresh_.set_active(0);
+  if (known) {
+    char current_rate[32];
+    const double shown = output->refresh > 0.5 ? output->refresh : best_rate;
+    std::snprintf(current_rate, sizeof current_rate, "%.2f", shown);
+    if (refresh_rows == 0) {
+      refresh_.append(current_rate, std::string(current_rate) + " Hz");
+    }
+    refresh_.set_active_id(current_rate);
+    if (refresh_.get_active_id().empty()) {
+      refresh_.set_active(0);
+    }
   }
   rotation_.set_active_id(std::to_string(output->rotation));
   if (rotation_.get_active_id().empty()) {
@@ -896,7 +910,8 @@ void DisplayPage::refresh_output_heading() {
     return;
   }
   const std::string title = output_ui_name(*output);
-  std::string text = title == output->name ? title : title + "  —  " + output->name;
+  std::string text = title.empty() || title == output->name ? output->name
+                                                           : title + " — " + output->name;
   if (output->mm_width > 0 && output->mm_height > 0) {
     const double inches = std::sqrt(static_cast<double>(output->mm_width) * output->mm_width +
                                     static_cast<double>(output->mm_height) * output->mm_height) /

@@ -26,6 +26,7 @@
 #include <gdkmm/display.h>
 #include <gdkmm/general.h>
 #include <gdkmm/pixbuf.h>
+#include <glibmm/markup.h>
 #include <glibmm/fileutils.h>
 #include <glibmm/keyfile.h>
 #include <glibmm/miscutils.h>
@@ -52,7 +53,7 @@ class WidthClamp : public Gtk::Bin {
   Gtk::SizeRequestMode get_request_mode_vfunc() const override { return Gtk::SIZE_REQUEST_HEIGHT_FOR_WIDTH; }
   void get_preferred_width_vfunc(int& minimum, int& natural) const override {
     minimum = 280;
-    natural = 700;
+    natural = 820;
     if (get_child() != nullptr) {
       int child_min = 0;
       int child_nat = 0;
@@ -66,7 +67,7 @@ class WidthClamp : public Gtk::Bin {
     if (child == nullptr || !child->get_visible()) {
       return;
     }
-    const int width = std::min(700, allocation.get_width());
+    const int width = std::min(820, allocation.get_width());
     Gtk::Allocation inner;
     inner.set_x(allocation.get_x() + std::max(0, (allocation.get_width() - width) / 2));
     inner.set_y(allocation.get_y());
@@ -191,15 +192,16 @@ MainWindow::MainWindow(XfconfStore& store)
   sidebar_.get_style_context()->add_class("lcos-sidebar");
   sidebar_.set_selection_mode(Gtk::SELECTION_BROWSE);
   auto* side = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-  side->set_margin_top(12);
-  side->set_margin_start(12);
-  side->set_margin_end(6);
-  side->set_margin_bottom(12);
+  side->set_margin_top(0);
+  side->set_margin_start(8);
+  side->set_margin_end(4);
+  side->set_margin_bottom(6);
+  search_.get_style_context()->add_class("lcos-search");
   search_.set_placeholder_text("Search settings");
-  search_.set_margin_top(12);
-  search_.set_margin_start(12);
-  search_.set_margin_end(12);
-  search_.set_margin_bottom(8);
+  search_.set_margin_top(8);
+  search_.set_margin_start(10);
+  search_.set_margin_end(10);
+  search_.set_margin_bottom(4);
   auto* side_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   side_box->get_style_context()->add_class("lcos-sidebar");
   side_box->pack_start(search_, Gtk::PACK_SHRINK);
@@ -293,6 +295,10 @@ MainWindow::MainWindow(XfconfStore& store)
   status_.get_style_context()->add_class("lcos-faint");
   ok_.get_style_context()->add_class("lcos-primary");
   ok_.set_can_default(true);
+  for (Gtk::Button* button : {&ok_, &apply_, &cancel_}) {
+    button->set_size_request(86, 28);
+    button->get_style_context()->add_class("lcos-action");
+  }
   footer->pack_start(status_, Gtk::PACK_EXPAND_WIDGET);
   footer->pack_start(ok_, Gtk::PACK_SHRINK);
   footer->pack_start(apply_, Gtk::PACK_SHRINK);
@@ -342,6 +348,7 @@ MainWindow::MainWindow(XfconfStore& store)
     start = 0;
   }
   show_all();
+  cancel_.grab_focus();
   if (auto* row = rows_[static_cast<std::size_t>(start)]) {
     sidebar_.select_row(*row);
   }
@@ -366,11 +373,19 @@ void MainWindow::build_sidebar() {
         auto* row = Gtk::manage(new Gtk::ListBoxRow());
         row->set_selectable(false);
         row->set_activatable(false);
+        row->set_size_request(-1, 18);
         row->get_style_context()->add_class("lcos-section");
-        auto* label = Gtk::manage(new Gtk::Label(section));
+        auto* label = Gtk::manage(new Gtk::Label());
+        std::string small = section;
+        for (char& c : small) {
+          c = static_cast<char>(g_unichar_tolower(static_cast<gunichar>(static_cast<unsigned char>(c))));
+        }
+        label->set_markup(
+            "<span font_variant='smallcaps' weight='bold' color='#7c776f' letter_spacing='1400'>" +
+            Glib::Markup::escape_text(small) + "</span>");
         label->set_halign(Gtk::ALIGN_START);
-        label->set_margin_start(10);
-        label->set_margin_top(8);
+        label->set_margin_start(8);
+        label->set_margin_top(2);
         row->add(*label);
         sidebar_.append(*row);
         section_rows_.push_back(row);
@@ -378,12 +393,13 @@ void MainWindow::build_sidebar() {
     }
     auto* row = Gtk::manage(new Gtk::ListBoxRow());
     row->get_style_context()->add_class("lcos-nav");
+    row->set_size_request(-1, 26);
     row->set_tooltip_text(item.page->title());
-    auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 9));
-    line->set_margin_top(2);
-    line->set_margin_bottom(2);
-    line->set_margin_start(8);
-    line->set_margin_end(8);
+    auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    line->set_margin_top(0);
+    line->set_margin_bottom(0);
+    line->set_margin_start(6);
+    line->set_margin_end(6);
     auto* image = Gtk::manage(new Gtk::Image());
     image->set_pixel_size(24);
     nav_images_.push_back(image);
@@ -411,6 +427,9 @@ void MainWindow::load_icons() {
     if (auto pixbuf = load_named_icon(nav_[i].icon, 24, scale)) {
       nav_images_[i]->set(Gdk::Cairo::create_surface_from_pixbuf(pixbuf, scale));
     }
+  }
+  if (auto find = load_named_icon("edit-find", 16, scale)) {
+    search_.set_icon_from_pixbuf(find, Gtk::ENTRY_ICON_PRIMARY);
   }
   if (current_index_ >= 0 && current_index_ < static_cast<int>(nav_.size())) {
     if (auto pixbuf = load_named_icon(nav_[static_cast<std::size_t>(current_index_)].icon, 48, scale)) {

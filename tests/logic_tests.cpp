@@ -789,6 +789,10 @@ void test_redesign_helpers() {
       "NAME=\"LCOS\"\nVERSION=\"1.0.1\"\nPRETTY_NAME=\"LCOS 1.0.1\"\n");
   EXPECT(os.version_line == "LCOS 1.0.1");
   EXPECT(os.kicker == "LCOS");
+  EXPECT(lcos::os_identity_is_lcos(os));
+  const auto ubuntu = lcos::parse_os_release("NAME=\"Ubuntu\"\nID=ubuntu\nPRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\n");
+  EXPECT(ubuntu.version_line == "Ubuntu 24.04.5 LTS");
+  EXPECT(!lcos::os_identity_is_lcos(ubuntu));
   EXPECT(os.version_line.find("1.1") == std::string::npos);
   const auto cpu = lcos::parse_cpuinfo("processor\t: 0\nmodel name\t: Intel Core i5-1135G7\n"
                                       "processor\t: 1\nmodel name\t: Intel Core i5-1135G7\n");
