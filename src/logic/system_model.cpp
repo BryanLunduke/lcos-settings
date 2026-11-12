@@ -259,6 +259,37 @@ std::string gecos_real_name(const std::string& gecos) {
   return comma == std::string::npos ? gecos : gecos.substr(0, comma);
 }
 
+std::string gecos_with_full_name(const std::string& gecos, const std::string& full_name) {
+  std::vector<std::string> fields;
+  std::string field;
+  for (char c : gecos) {
+    if (c == ',') {
+      fields.push_back(field);
+      field.clear();
+    } else {
+      field.push_back(c);
+    }
+  }
+  if (!gecos.empty()) {
+    fields.push_back(field);
+  }
+  if (fields.empty()) {
+    return full_name;
+  }
+  fields[0] = full_name;
+  while (fields.size() > 1 && fields.back().empty()) {
+    fields.pop_back();
+  }
+  std::string out;
+  for (std::size_t i = 0; i < fields.size(); ++i) {
+    if (i != 0) {
+      out.push_back(',');
+    }
+    out += fields[i];
+  }
+  return out;
+}
+
 std::vector<Account> human_accounts(const std::string& passwd_text,
                                     const std::string& sudo_members, unsigned uid_min,
                                     unsigned sudo_gid) {

@@ -5,6 +5,7 @@
 #include "logic/confirm.hpp"
 #include "logic/display_layout.hpp"
 #include "logic/helper_status.hpp"
+#include "logic/host_info.hpp"
 #include "logic/mime_files.hpp"
 #include "logic/names.hpp"
 #include "logic/power.hpp"
@@ -430,6 +431,11 @@ void test_helper_files_and_status() {
   const auto helper_failed = lcos::interpret_helper_exit(1, 1 << 8, "could not set the password\n");
   EXPECT(!helper_failed.ok);
   EXPECT(helper_failed.error == "could not set the password");
+  const auto restore_failed = lcos::interpret_helper_exit(
+      1, 1 << 8, "could not restore every change\ncould not restore the real name\n");
+  EXPECT(!restore_failed.ok);
+  EXPECT(restore_failed.error.find("real name") != std::string::npos);
+  EXPECT(restore_failed.error.find("could not restore every change") == std::string::npos);
   const auto lost = lcos::interpret_helper_exit(-1, 0, "");
   EXPECT(!lost.ok);
   const auto kept = lcos::interpret_helper_exit(1, 0, "ignored");
@@ -769,6 +775,36 @@ void test_review_fixes() {
   EXPECT(!lcos::revert_keeps_snapshot(false));
 }
 
+void test_redesign_helpers() {
+  EXPECT(lcos::gecos_with_full_name("Name,,,", "Jane Smith") == "Jane Smith");
+  EXPECT(lcos::gecos_with_full_name("Old,Room,555,444", "Jane Smith") == "Jane Smith,Room,555,444");
+  EXPECT(lcos::gecos_with_full_name("Old,Room,,", "Jane Smith") == "Jane Smith,Room");
+  EXPECT(lcos::gecos_with_full_name("", "Jane Smith") == "Jane Smith");
+  EXPECT(lcos::gecos_real_name(lcos::gecos_with_full_name("Name,,,", "Jane Q. Smith")) ==
+         "Jane Q. Smith");
+  EXPECT(lcos::aspect_ratio_text(1920, 1200) == "16:10");
+  EXPECT(lcos::aspect_ratio_text(2560, 1440) == "16:9");
+  EXPECT(lcos::aspect_ratio_text(1600, 1200) == "4:3");
+  const auto os = lcos::parse_os_release(
+      "NAME=\"LCOS\"\nVERSION=\"1.0.1\"\nPRETTY_NAME=\"LCOS 1.0.1\"\n");
+  EXPECT(os.version_line == "LCOS 1.0.1");
+  EXPECT(os.kicker == "LCOS");
+  EXPECT(lcos::os_identity_is_lcos(os));
+  const auto ubuntu = lcos::parse_os_release("NAME=\"Ubuntu\"\nID=ubuntu\nPRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\n");
+  EXPECT(ubuntu.version_line == "Ubuntu 24.04.5 LTS");
+  EXPECT(!lcos::os_identity_is_lcos(ubuntu));
+  EXPECT(os.version_line.find("1.1") == std::string::npos);
+  const auto cpu = lcos::parse_cpuinfo("processor\t: 0\nmodel name\t: Intel Core i5-1135G7\n"
+                                      "processor\t: 1\nmodel name\t: Intel Core i5-1135G7\n");
+  EXPECT(cpu.threads == 2);
+  EXPECT(cpu.label.find("Intel Core i5-1135G7") != std::string::npos);
+  EXPECT(cpu.label.find("× 2") != std::string::npos);
+  EXPECT(lcos::meminfo_total_kib("MemTotal:       16384000 kB\n") == 16384000);
+  EXPECT(lcos::format_gigabytes(16LL * 1024 * 1024 * 1024) == "16 GB");
+  const std::string pci = "8086  Intel Corporation\n\t9a49  Iris Xe Graphics\n1002  AMD\n";
+  EXPECT(lcos::pci_device_name(pci, 0x8086, 0x9a49) == "Iris Xe Graphics");
+}
+
 int main() {
   test_backdrop_power_mime();
   test_names();
@@ -779,6 +815,7 @@ int main() {
   test_review_fixes();
   test_helper_files_and_status();
   test_themes_and_xkb();
+  test_redesign_helpers();
   if (failures != 0) {
     std::cerr << failures << " logic check(s) failed\n";
     return 1;

@@ -3,10 +3,18 @@
 #define LCOS_UI_UTIL_HPP
 
 #include <gtkmm/box.h>
+#include <gtkmm/combobox.h>
+#include <gtkmm/container.h>
 #include <gtkmm/frame.h>
 #include <gtkmm/grid.h>
 #include <gtkmm/label.h>
 #include <gtkmm/scrolledwindow.h>
+#include <gtkmm/separator.h>
+#include <gtkmm/spinbutton.h>
+#include <gtkmm/widget.h>
+#include <gtkmm/window.h>
+
+#include <gtk/gtk.h>
 
 namespace lcos {
 
@@ -42,14 +50,61 @@ inline Gtk::ScrolledWindow* make_page_scroll(Gtk::Widget& child) {
   return scroll;
 }
 
-inline Gtk::Frame* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
-  auto* frame = Gtk::manage(new Gtk::Frame(title));
-  frame->set_margin_bottom(12);
+// A wheel over an unfocused spin button or combo used to change its value
+// while the page scrolled. Eat the control's handler so the scroll reaches
+// the page instead. A focused control still changes.
+inline void guard_scroll_unless_focused(Gtk::Widget& widget) {
+  if (widget.get_data("lcos-scroll-guard") != nullptr) {
+    return;
+  }
+  widget.set_data("lcos-scroll-guard", widget.gobj());
+  widget.add_events(Gdk::SCROLL_MASK | Gdk::SMOOTH_SCROLL_MASK);
+  widget.signal_scroll_event().connect([&widget](GdkEventScroll*) {
+    Gtk::Widget* focus = nullptr;
+    if (auto* window = dynamic_cast<Gtk::Window*>(widget.get_toplevel())) {
+      focus = window->get_focus();
+    }
+    const bool focused =
+        widget.has_focus() || widget.is_focus() ||
+        (focus != nullptr && (focus == &widget || focus->is_ancestor(widget)));
+    if (!focused) {
+      g_signal_stop_emission_by_name(widget.gobj(), "scroll-event");
+    }
+    return false;
+  });
+}
+
+inline void guard_scroll_tree(Gtk::Widget& widget) {
+  if (dynamic_cast<Gtk::SpinButton*>(&widget) != nullptr ||
+      dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr) {
+    guard_scroll_unless_focused(widget);
+  }
+  if (auto* container = dynamic_cast<Gtk::Container*>(&widget)) {
+    container->foreach ([&](Gtk::Widget& child) { guard_scroll_tree(child); });
+  }
+}
+
+// Heading plus a light rule, in place of a boxed frame, so every page uses
+// the same group chrome.
+inline Gtk::Box* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
+  auto* frame = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+  frame->get_style_context()->add_class("lcos-group");
+  frame->set_margin_top(18);
+  auto* head = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
+  auto* label = Gtk::manage(new Gtk::Label(title));
+  label->set_halign(Gtk::ALIGN_START);
+  label->get_style_context()->add_class("lcos-group-title");
+  auto* rule = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
+  rule->set_hexpand(true);
+  rule->set_valign(Gtk::ALIGN_CENTER);
+  head->pack_start(*label, Gtk::PACK_SHRINK);
+  head->pack_start(*rule, Gtk::PACK_EXPAND_WIDGET);
   child.set_margin_start(12);
-  child.set_margin_end(12);
-  child.set_margin_top(8);
-  child.set_margin_bottom(10);
-  frame->add(child);
+  child.set_margin_end(2);
+  child.set_margin_top(12);
+  child.set_margin_bottom(0);
+  frame->pack_start(*head, Gtk::PACK_SHRINK);
+  frame->pack_start(child, Gtk::PACK_SHRINK);
   return frame;
 }
 
@@ -57,14 +112,14 @@ class FormGrid {
  public:
   explicit FormGrid(int label_width = 168) : label_width_(label_width) {
     grid_ = Gtk::manage(new Gtk::Grid());
-    grid_->set_row_spacing(8);
+    grid_->set_row_spacing(6);
     grid_->set_column_spacing(12);
     grid_->set_margin_top(2);
   }
 
   Gtk::Grid& grid() { return *grid_; }
 
-  void add(const Glib::ustring& caption, Gtk::Widget& widget) {
+  Gtk::Label* add(const Glib::ustring& caption, Gtk::Widget& widget) {
     auto* label = Gtk::manage(new Gtk::Label(caption));
     label->set_halign(Gtk::ALIGN_START);
     label->set_valign(Gtk::ALIGN_CENTER);
@@ -85,13 +140,16 @@ class FormGrid {
     }
     widget.set_hexpand(true);
     widget.set_halign(Gtk::ALIGN_FILL);
+    guard_scroll_unless_focused(widget);
     grid_->attach(*label, 0, row_, 1, 1);
     grid_->attach(widget, 1, row_, 1, 1);
     ++row_;
+    return label;
   }
 
   void add_full(Gtk::Widget& widget) {
     widget.set_hexpand(true);
+    guard_scroll_unless_focused(widget);
     grid_->attach(widget, 0, row_, 2, 1);
     ++row_;
   }
@@ -100,6 +158,7 @@ class FormGrid {
   void add_control(Gtk::Widget& widget) {
     widget.set_hexpand(true);
     widget.set_halign(Gtk::ALIGN_START);
+    guard_scroll_unless_focused(widget);
     grid_->attach(widget, 1, row_, 1, 1);
     ++row_;
   }

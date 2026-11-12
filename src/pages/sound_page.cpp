@@ -5,6 +5,8 @@
 #include "logic/themes.hpp"
 #include "ui_util.hpp"
 
+#include <algorithm>
+
 #include <gtkmm/label.h>
 #include <gtkmm/scrolledwindow.h>
 
@@ -336,6 +338,40 @@ void SoundPage::take_snapshot() {
     stream_snapshot_.push_back(std::move(snap));
   }
   have_snapshot_ = true;
+}
+
+bool SoundPage::discard_pending() {
+  if (!sound_dirty_) {
+    return false;
+  }
+  revert_page();
+  return true;
+}
+
+std::string SoundPage::pending_detail() const {
+  if (!sound_dirty_) {
+    return {};
+  }
+  return "Sound levels have not been kept.";
+}
+
+int SoundPage::output_volume_percent() const {
+  if (const PaDevice* sink = selected_sink()) {
+    return sink->volume_percent;
+  }
+  return static_cast<int>(output_volume_.get_value());
+}
+
+void SoundPage::set_output_volume_percent(int percent) {
+  if (!have_snapshot_) {
+    take_snapshot();
+  }
+  const int clamped = std::max(0, std::min(150, percent));
+  output_volume_.set_value(clamped);
+}
+
+bool SoundPage::output_ready() const {
+  return pulse_.state().ready && selected_sink() != nullptr;
 }
 
 bool SoundPage::commit_pending() {

@@ -87,6 +87,8 @@ class XfconfStore {
   void set_tracking(bool on) { tracking_ = on; }
   bool tracking() const { return tracking_; }
   void revert_session();
+  // Puts back only the listed channels and leaves the rest of the visit.
+  void revert_channels(const std::vector<std::string>& channels);
   // Apply and OK keep what has been written. Later Cancel only restores
   // changes made after the checkpoint.
   void drop_originals();

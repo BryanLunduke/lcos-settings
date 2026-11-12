@@ -2,7 +2,13 @@
 #ifndef LCOS_SETTINGS_PAGE_HPP
 #define LCOS_SETTINGS_PAGE_HPP
 
+#include <gtk/gtk.h>
+
 #include <gtkmm/box.h>
+#include <gtkmm/container.h>
+#include <gtkmm/grid.h>
+#include <gtkmm/label.h>
+#include <gtkmm/sizegroup.h>
 #include <sigc++/signal.h>
 
 namespace lcos {
@@ -22,6 +28,15 @@ class SettingsPage : public Gtk::Box {
   // Files outside xfconf (helpers.rc, mimeapps.list) restore themselves here.
   virtual void revert_page() {}
   virtual void on_page_shown() {}
+  // How many edits on this page are still local (not yet written).
+  virtual int unsaved_count() const { return has_pending() ? 1 : 0; }
+  // One line naming the edit, for the yellow info bar. Empty when there is none.
+  virtual std::string pending_detail() const { return {}; }
+  // Puts the local edit back and updates the controls. False if this page
+  // has nothing local to undo.
+  virtual bool discard_pending() { return false; }
+  // One horizontal size group so every form on the page shares a label column.
+  void align_labels();
   // Extra frames for sections that contain their own tabs.
   virtual int screenshot_count() const { return 1; }
   virtual void prepare_screenshot(int index) { (void)index; }
@@ -31,7 +46,39 @@ class SettingsPage : public Gtk::Box {
   }
 
   sigc::signal<void> pending_changed;
+
+ private:
+  void align_widget(Gtk::Widget& widget);
+
+  Glib::RefPtr<Gtk::SizeGroup> label_group_;
 };
+
+inline void SettingsPage::align_labels() {
+  if (!label_group_) {
+    label_group_ = Gtk::SizeGroup::create(Gtk::SIZE_GROUP_HORIZONTAL);
+  }
+  align_widget(*this);
+}
+
+inline void SettingsPage::align_widget(Gtk::Widget& widget) {
+  if (auto* grid = dynamic_cast<Gtk::Grid*>(&widget)) {
+    grid->foreach ([&](Gtk::Widget& child) {
+      int column = 0;
+      gtk_container_child_get(GTK_CONTAINER(grid->gobj()), child.gobj(), "left-attach", &column,
+                              nullptr);
+      if (column == 0) {
+        if (auto* label = dynamic_cast<Gtk::Label*>(&child)) {
+          label_group_->add_widget(*label);
+        }
+      }
+      align_widget(child);
+    });
+    return;
+  }
+  if (auto* container = dynamic_cast<Gtk::Container*>(&widget)) {
+    container->foreach ([&](Gtk::Widget& child) { align_widget(child); });
+  }
+}
 
 }  // namespace lcos
 

@@ -30,7 +30,12 @@ class SoundPage : public SettingsPage {
   bool has_pending() const override { return sound_dirty_; }
   bool commit_pending() override;
   void revert_page() override;
+  bool discard_pending() override;
+  std::string pending_detail() const override;
   void on_page_shown() override;
+  int output_volume_percent() const;
+  void set_output_volume_percent(int percent);
+  bool output_ready() const;
 
  private:
   struct StreamSnap {
