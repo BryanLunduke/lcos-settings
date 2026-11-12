@@ -194,6 +194,8 @@ std::vector<OutputConfig> XrandrBackend::read() {
     output.friendly = friendly_output_name(info->name, "");
     output.primary = resources->outputs[i] == primary;
     output.scale = 1.0;
+    output.mm_width = info->mm_width;
+    output.mm_height = info->mm_height;
 
     for (int m = 0; m < info->nmode; ++m) {
       for (int k = 0; k < resources->nmode; ++k) {

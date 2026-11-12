@@ -21,6 +21,7 @@
 #include <gtkmm/scrollbar.h>
 #include <gtkmm/label.h>
 #include <gtkmm/messagedialog.h>
+#include <gtkmm/popover.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/separator.h>
 
@@ -31,25 +32,146 @@
 namespace lcos {
 namespace {
 
+std::string output_ui_name(const OutputConfig& output) {
+  if (output.name.rfind("eDP", 0) == 0 || output.name.rfind("LVDS", 0) == 0 ||
+      output.name.rfind("DSI", 0) == 0) {
+    return "Built-in Display";
+  }
+  if (!output.friendly.empty() && output.friendly != "Laptop") {
+    return output.friendly;
+  }
+  return output.name;
+}
+
+std::string layout_names(const std::vector<OutputConfig>& layout) {
+  if (layout.empty()) {
+    return "the display layout";
+  }
+  std::string text;
+  for (const auto& output : layout) {
+    if (!text.empty()) {
+      text += ", ";
+    }
+    const std::string friendly = output_ui_name(output);
+    if (friendly == output.name) {
+      text += output.name;
+    } else {
+      text += friendly + " (" + output.name + ")";
+    }
+  }
+  return text;
+}
+
+std::string scale_percent(double scale) {
+  return std::to_string(static_cast<int>(std::lround(scale * 100.0))) + "%";
+}
+
+std::string output_summary_line(const OutputConfig& output) {
+  if (!output.active) {
+    return output_ui_name(output) + "  off";
+  }
+  char rate[32];
+  std::snprintf(rate, sizeof rate, "%.0f Hz", output.refresh);
+  return output_ui_name(output) + "  " + std::to_string(output.width) + " × " +
+         std::to_string(output.height) + " · " + rate + " · " + scale_percent(output.scale);
+}
+
+class CountdownRing : public Gtk::DrawingArea {
+ public:
+  CountdownRing() { set_size_request(84, 84); }
+  void set_seconds(int seconds) {
+    seconds_ = seconds;
+    queue_draw();
+  }
+
+ protected:
+  bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override {
+    const double size = std::min(get_allocated_width(), get_allocated_height());
+    const double cx = get_allocated_width() / 2.0;
+    const double cy = get_allocated_height() / 2.0;
+    const double radius = size / 2.0 - 6.0;
+    cr->set_line_width(6);
+    cr->set_source_rgb(0.82, 0.81, 0.78);
+    cr->arc(cx, cy, radius, 0, 6.28318530718);
+    cr->stroke();
+    const double fraction =
+        std::max(0.0, std::min(1.0, static_cast<double>(seconds_) / kDisplayConfirmSeconds));
+    cr->set_source_rgb(0.435, 0.592, 0.788);
+    cr->arc(cx, cy, radius, -1.57079632679, -1.57079632679 + fraction * 6.28318530718);
+    cr->stroke();
+    cr->set_source_rgb(0.184, 0.333, 0.498);
+    cr->select_font_face("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_BOLD);
+    cr->set_font_size(26);
+    const std::string number = std::to_string(seconds_);
+    Cairo::TextExtents extents;
+    cr->get_text_extents(number, extents);
+    cr->move_to(cx - extents.width / 2.0 - extents.x_bearing, cy - 2);
+    cr->show_text(number);
+    cr->set_source_rgb(0.55, 0.54, 0.51);
+    cr->select_font_face("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_BOLD);
+    cr->set_font_size(9);
+    const std::string unit = "SECONDS";
+    cr->get_text_extents(unit, extents);
+    cr->move_to(cx - extents.width / 2.0 - extents.x_bearing, cy + 16);
+    cr->show_text(unit);
+    return true;
+  }
+
+ private:
+  int seconds_ = kDisplayConfirmSeconds;
+};
+
 class ConfirmDialog : public Gtk::Dialog {
  public:
-  explicit ConfirmDialog(Gtk::Window& parent)
+  ConfirmDialog(Gtk::Window& parent, const std::vector<OutputConfig>& outputs)
       : Gtk::Dialog("Keep this display configuration?", parent, true) {
-    set_default_size(420, 140);
-    label_.set_margin_top(12);
-    label_.set_margin_bottom(12);
-    label_.set_margin_start(12);
-    label_.set_margin_end(12);
-    label_.set_line_wrap(true);
-    get_content_area()->pack_start(label_, Gtk::PACK_EXPAND_WIDGET);
-    add_button("Revert", Gtk::RESPONSE_REJECT);
-    add_button("Keep", Gtk::RESPONSE_ACCEPT);
+    set_default_size(520, 230);
+    get_style_context()->add_class("lcos-keep");
+    auto* body = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 18));
+    body->set_margin_top(24);
+    body->set_margin_bottom(18);
+    body->set_margin_start(24);
+    body->set_margin_end(24);
+    ring_.set_valign(Gtk::ALIGN_START);
+    body->pack_start(ring_, Gtk::PACK_SHRINK);
+    auto* text = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+    auto* title = Gtk::manage(new Gtk::Label("Keep this display configuration?"));
+    title->set_halign(Gtk::ALIGN_START);
+    title->get_style_context()->add_class("lcos-dialog-title");
+    auto* explain = Gtk::manage(new Gtk::Label(
+        "Your displays were changed. If you don't answer, LCOS restores the previous settings."));
+    explain->set_halign(Gtk::ALIGN_START);
+    explain->set_line_wrap(true);
+    explain->set_max_width_chars(42);
+    explain->set_xalign(0);
+    text->pack_start(*title, Gtk::PACK_SHRINK);
+    text->pack_start(*explain, Gtk::PACK_SHRINK);
+    summary_.set_halign(Gtk::ALIGN_START);
+    summary_.set_line_wrap(true);
+    summary_.set_xalign(0);
+    summary_.get_style_context()->add_class("lcos-faint");
+    std::string lines;
+    for (const auto& output : outputs) {
+      if (!lines.empty()) {
+        lines.push_back('\n');
+      }
+      lines += output_summary_line(output);
+    }
+    summary_.set_text(lines);
+    text->pack_start(summary_, Gtk::PACK_SHRINK);
+    body->pack_start(*text, Gtk::PACK_EXPAND_WIDGET);
+    get_content_area()->pack_start(*body, Gtk::PACK_EXPAND_WIDGET);
+    auto* revert = add_button("Revert", Gtk::RESPONSE_REJECT);
+    auto* keep = add_button("Keep Changes", Gtk::RESPONSE_ACCEPT);
+    (void)revert;
+    keep->get_style_context()->add_class("lcos-primary");
+    keep->set_can_default(true);
+    set_default(*keep);
     set_keep_above(true);
     show_all();
     present();
-    refresh_label();
-    timer_ = Glib::signal_timeout().connect_seconds(
-        sigc::mem_fun(*this, &ConfirmDialog::tick), 1);
+    ring_.set_seconds(countdown_.seconds);
+    timer_ = Glib::signal_timeout().connect_seconds(sigc::mem_fun(*this, &ConfirmDialog::tick), 1);
   }
 
   ~ConfirmDialog() override {
@@ -61,22 +183,17 @@ class ConfirmDialog : public Gtk::Dialog {
  private:
   bool tick() {
     countdown_.tick();
+    ring_.set_seconds(countdown_.seconds);
     if (countdown_.decided) {
       response(countdown_.keep ? Gtk::RESPONSE_ACCEPT : Gtk::RESPONSE_REJECT);
       return false;
     }
-    refresh_label();
     return true;
   }
 
-  void refresh_label() {
-    label_.set_text("The new layout is on screen. It will revert in " +
-                    std::to_string(countdown_.seconds) +
-                    " seconds unless you keep it.");
-  }
-
   ConfirmCountdown countdown_;
-  Gtk::Label label_;
+  CountdownRing ring_;
+  Gtk::Label summary_;
   sigc::connection timer_;
 };
 
@@ -98,7 +215,8 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
     : store_(store), randr_(randr), parent_(parent) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
-  auto* right = make_vbox(10);
+  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+  auto* right = make_vbox(0);
   right->set_border_width(12);
   right->set_hexpand(true);
   scroll->add(*right);
@@ -116,21 +234,108 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
     });
   });
 
+  arrange_.set_size_request(-1, 196);
+  arrange_.set_hexpand(true);
+  arrange_.get_style_context()->add_class("lcos-arrange");
+  arrange_.add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK |
+                      Gdk::BUTTON_MOTION_MASK);
+  arrange_.signal_draw().connect(sigc::mem_fun(*this, &DisplayPage::on_arrange_draw));
+  arrange_.signal_button_press_event().connect(sigc::mem_fun(*this, &DisplayPage::on_button_press));
+  arrange_.signal_motion_notify_event().connect(sigc::mem_fun(*this, &DisplayPage::on_motion));
+  arrange_.signal_button_release_event().connect(
+      sigc::mem_fun(*this, &DisplayPage::on_button_release));
+  right->pack_start(arrange_, Gtk::PACK_SHRINK);
+
+  auto* arrange_tools = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  arrange_tools->set_margin_top(12);
+  auto* hint = make_label("Drag the displays to match how they sit on your desk.");
+  hint->set_hexpand(true);
+  hint->set_halign(Gtk::ALIGN_START);
+  hint->get_style_context()->add_class("lcos-faint");
+  auto* identify = Gtk::manage(new Gtk::Button("Identify"));
+  extend_button_ = Gtk::manage(new Gtk::Button("Extend"));
+  mirror_button_ = Gtk::manage(new Gtk::Button("Mirror"));
+  auto* modes = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+  modes->get_style_context()->add_class("lcos-linked");
+  modes->pack_start(*extend_button_, Gtk::PACK_SHRINK);
+  modes->pack_start(*mirror_button_, Gtk::PACK_SHRINK);
+  identify->signal_clicked().connect(sigc::mem_fun(*this, &DisplayPage::identify));
+  extend_button_->signal_clicked().connect([this] {
+    arrange_extend(outputs_);
+    mark_dirty();
+    show_selected();
+    redraw();
+  });
+  mirror_button_->signal_clicked().connect([this] {
+    arrange_mirror(outputs_);
+    ensure_primary();
+    mark_dirty();
+    show_selected();
+    redraw();
+  });
+  arrange_tools->pack_start(*hint, Gtk::PACK_EXPAND_WIDGET);
+  arrange_tools->pack_start(*identify, Gtk::PACK_SHRINK);
+  arrange_tools->pack_start(*modes, Gtk::PACK_SHRINK);
+  right->pack_start(*arrange_tools, Gtk::PACK_SHRINK);
+
+  auto* selected_group = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+  selected_group->get_style_context()->add_class("lcos-group");
+  selected_group->set_margin_top(18);
+  auto* head = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
+  output_heading_ = Gtk::manage(new Gtk::Label("Display"));
+  output_heading_->set_halign(Gtk::ALIGN_START);
+  output_heading_->set_ellipsize(Pango::ELLIPSIZE_END);
+  output_heading_->get_style_context()->add_class("lcos-group-title");
+  auto* rule = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
+  rule->set_hexpand(true);
+  rule->set_valign(Gtk::ALIGN_CENTER);
+  head->pack_start(*output_heading_, Gtk::PACK_SHRINK);
+  head->pack_start(*rule, Gtk::PACK_EXPAND_WIDGET);
+  selected_group->pack_start(*head, Gtk::PACK_SHRINK);
+
   FormGrid form;
-  form.add("Display", output_combo_);
-  enabled_.set_label("Use this display");
   primary_.set_label("Primary display");
-  form.add_control(enabled_);
-  form.add_control(primary_);
+  auto* use_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 18));
+  enabled_.set_valign(Gtk::ALIGN_CENTER);
+  enabled_.set_size_request(48, 22);
+  use_row->pack_start(enabled_, Gtk::PACK_SHRINK);
+  use_row->pack_start(primary_, Gtk::PACK_SHRINK);
+  form.add("Use this display", *use_row);
   form.add("Resolution", resolution_);
   form.add("Refresh rate", refresh_);
-  form.add("Rotation", rotation_);
-  form.add("Reflection", reflection_);
   scale_.set_range(0.1, 10.0);
   scale_.set_increments(0.1, 1.0);
   scale_.set_digits(2);
   scale_.set_value(1.0);
-  form.add("Scale", scale_);
+  auto* scale_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
+  auto* linked = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+  linked->get_style_context()->add_class("lcos-linked");
+  const double presets[] = {1.0, 1.25, 1.5, 1.75, 2.0};
+  const char* preset_labels[] = {"100%", "125%", "150%", "175%", "200%"};
+  for (int i = 0; i < 5; ++i) {
+    scale_buttons_[i] = Gtk::manage(new Gtk::Button(preset_labels[i]));
+    const double preset = presets[i];
+    scale_buttons_[i]->signal_clicked().connect([this, preset] {
+      scale_.set_value(preset);
+    });
+    linked->pack_start(*scale_buttons_[i], Gtk::PACK_SHRINK);
+  }
+  custom_scale_ = Gtk::manage(new Gtk::Button("Custom…"));
+  scale_popover_ = Gtk::manage(new Gtk::Popover(*custom_scale_));
+  auto* pop = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+  pop->set_margin_top(12);
+  pop->set_margin_bottom(12);
+  pop->set_margin_start(12);
+  pop->set_margin_end(12);
+  scale_.set_numeric(true);
+  pop->pack_start(scale_, Gtk::PACK_SHRINK);
+  scale_popover_->add(*pop);
+  custom_scale_->signal_clicked().connect([this] { scale_popover_->popup(); });
+  scale_row->pack_start(*linked, Gtk::PACK_SHRINK);
+  scale_row->pack_end(*custom_scale_, Gtk::PACK_SHRINK);
+  form.add("Scale", *scale_row);
+  form.add("Rotation", rotation_);
+  form.add("Reflection", reflection_);
   x_pos_.set_range(-8000, 16000);
   y_pos_.set_range(-8000, 16000);
   x_pos_.set_increments(1, 50);
@@ -139,41 +344,11 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
   y_pos_.set_digits(0);
   form.add("Position X", x_pos_);
   form.add("Position Y", y_pos_);
-  right->pack_start(form.grid(), Gtk::PACK_SHRINK);
-
-  auto* arrange = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
-  arrange->set_margin_top(4);
-  auto* mirror = Gtk::manage(new Gtk::Button("Mirror"));
-  auto* extend = Gtk::manage(new Gtk::Button("Extend"));
-  auto* identify = Gtk::manage(new Gtk::Button("Identify"));
-  mirror->signal_clicked().connect([this] {
-    arrange_mirror(outputs_);
-    ensure_primary();
-    mark_dirty();
-    show_selected();
-    redraw();
-  });
-  extend->signal_clicked().connect([this] {
-    arrange_extend(outputs_);
-    mark_dirty();
-    show_selected();
-    redraw();
-  });
-  identify->signal_clicked().connect(sigc::mem_fun(*this, &DisplayPage::identify));
-  arrange->pack_start(*mirror, Gtk::PACK_SHRINK);
-  arrange->pack_start(*extend, Gtk::PACK_SHRINK);
-  arrange->pack_start(*identify, Gtk::PACK_SHRINK);
-  right->pack_start(*arrange, Gtk::PACK_SHRINK);
-
-  preview_.set_halign(Gtk::ALIGN_CENTER);
-  right->pack_start(preview_, Gtk::PACK_SHRINK);
-  preview_.add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK |
-                      Gdk::POINTER_MOTION_MASK | Gdk::BUTTON_MOTION_MASK);
-  preview_.signal_button_press_event().connect(
-      sigc::mem_fun(*this, &DisplayPage::on_button_press));
-  preview_.signal_motion_notify_event().connect(sigc::mem_fun(*this, &DisplayPage::on_motion));
-  preview_.signal_button_release_event().connect(
-      sigc::mem_fun(*this, &DisplayPage::on_button_release));
+  form.grid().set_margin_start(12);
+  form.grid().set_margin_end(8);
+  form.grid().set_margin_top(12);
+  selected_group->pack_start(form.grid(), Gtk::PACK_SHRINK);
+  right->pack_start(*selected_group, Gtk::PACK_SHRINK);
 
   rotation_.append("0", "Normal");
   rotation_.append("90", "Clockwise");
@@ -192,7 +367,7 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
     show_selected();
     redraw();
   });
-  enabled_.signal_toggled().connect([this] {
+  enabled_.property_active().signal_changed().connect([this] {
     if (freeze_ > 0) {
       return;
     }
@@ -242,6 +417,7 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
       return;
     }
     push_selected_from_fields();
+    sync_scale_buttons();
   });
   auto move_output = [this] {
     if (freeze_ > 0) {
@@ -329,6 +505,7 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
 }
 
 DisplayPage::~DisplayPage() {
+  close_keep_preview();
   // The widget's display pointer is already gone while gtkmm destroys it.
   // Removing the filter through get_display() crashed on every OK, Cancel,
   // and window close. A queued scrollbar refresh must not run after that.
@@ -429,15 +606,30 @@ void DisplayPage::show_selected() {
   primary_.set_active(output->primary);
   resolution_.remove_all();
   std::set<std::string> seen;
+  long long best_area = 0;
   for (const auto& mode : output->modes) {
-    const std::string label = format_resolution(mode.width, mode.height);
-    if (seen.insert(label).second) {
-      resolution_.append(label, label);
+    best_area = std::max(best_area, static_cast<long long>(mode.width) * mode.height);
+  }
+  auto describe = [&](int width, int height) {
+    std::string text = std::to_string(width) + " × " + std::to_string(height);
+    const std::string aspect = aspect_ratio_text(width, height);
+    if (!aspect.empty()) {
+      text += "    " + aspect;
+    }
+    if (best_area > 0 && static_cast<long long>(width) * height == best_area) {
+      text += " · Recommended";
+    }
+    return text;
+  };
+  for (const auto& mode : output->modes) {
+    const std::string id = format_resolution(mode.width, mode.height);
+    if (seen.insert(id).second) {
+      resolution_.append(id, describe(mode.width, mode.height));
     }
   }
   const std::string current = format_resolution(output->width, output->height);
   if (seen.count(current) == 0 && output->width > 0) {
-    resolution_.append(current, current);
+    resolution_.append(current, describe(output->width, output->height));
   }
   resolution_.set_active_id(current);
   refresh_.remove_all();
@@ -468,6 +660,8 @@ void DisplayPage::show_selected() {
   scale_.set_value(output->scale > 0 ? output->scale : 1.0);
   x_pos_.set_value(output->x);
   y_pos_.set_value(output->y);
+  sync_scale_buttons();
+  refresh_output_heading();
 }
 
 void DisplayPage::push_selected_from_fields() {
@@ -612,8 +806,7 @@ void DisplayPage::paint_now() {
   int natural_height = 0;
   child->get_preferred_height(minimum_height, natural_height);
   const bool overflow = natural_height > scroll_->get_allocated_height() + 8;
-  scroll_->set_policy(Gtk::POLICY_AUTOMATIC,
-                      overflow ? Gtk::POLICY_ALWAYS : Gtk::POLICY_AUTOMATIC);
+  scroll_->set_policy(Gtk::POLICY_NEVER, overflow ? Gtk::POLICY_ALWAYS : Gtk::POLICY_AUTOMATIC);
   if (overflow) {
     auto* bar = scroll_->get_vscrollbar();
     bar->set_size_request(14, -1);
@@ -622,15 +815,104 @@ void DisplayPage::paint_now() {
 }
 
 void DisplayPage::redraw() {
-  const int allocated = get_allocated_width();
-  preview_width_ = allocated > 80 ? allocated - 48 : 720;
-  preview_height_ = 130;
-  auto surface =
-      Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, preview_width_, preview_height_);
-  auto context = Cairo::Context::create(surface);
-  paint_preview(context);
-  preview_.set(Gdk::Pixbuf::create(surface, 0, 0, preview_width_, preview_height_));
+  arrange_.queue_draw();
+  sync_arrange_buttons();
   paint_now();
+}
+
+bool DisplayPage::on_arrange_draw(const Cairo::RefPtr<Cairo::Context>& context) {
+  preview_width_ = std::max(1, arrange_.get_allocated_width());
+  preview_height_ = std::max(1, arrange_.get_allocated_height());
+  paint_preview(context);
+  return true;
+}
+
+void DisplayPage::sync_scale_buttons() {
+  const double value = scale_.get_value();
+  const double presets[] = {1.0, 1.25, 1.5, 1.75, 2.0};
+  bool matched = false;
+  for (int i = 0; i < 5; ++i) {
+    if (scale_buttons_[i] == nullptr) {
+      continue;
+    }
+    const bool on = std::abs(value - presets[i]) < 0.011;
+    matched = matched || on;
+    if (on) {
+      scale_buttons_[i]->get_style_context()->add_class("lcos-on");
+    } else {
+      scale_buttons_[i]->get_style_context()->remove_class("lcos-on");
+    }
+  }
+  if (custom_scale_ != nullptr) {
+    if (matched) {
+      custom_scale_->get_style_context()->remove_class("lcos-on");
+    } else {
+      custom_scale_->get_style_context()->add_class("lcos-on");
+    }
+  }
+}
+
+void DisplayPage::sync_arrange_buttons() {
+  if (extend_button_ == nullptr || mirror_button_ == nullptr) {
+    return;
+  }
+  int active = 0;
+  bool mirror = true;
+  bool first = true;
+  int x = 0;
+  int y = 0;
+  for (const auto& output : outputs_) {
+    if (!output.active) {
+      continue;
+    }
+    ++active;
+    if (first) {
+      x = output.x;
+      y = output.y;
+      first = false;
+    } else if (output.x != x || output.y != y) {
+      mirror = false;
+    }
+  }
+  if (active < 2) {
+    mirror = false;
+  }
+  if (mirror) {
+    mirror_button_->get_style_context()->add_class("lcos-on");
+    extend_button_->get_style_context()->remove_class("lcos-on");
+  } else {
+    extend_button_->get_style_context()->add_class("lcos-on");
+    mirror_button_->get_style_context()->remove_class("lcos-on");
+  }
+}
+
+void DisplayPage::refresh_output_heading() {
+  if (output_heading_ == nullptr) {
+    return;
+  }
+  const OutputConfig* output = selected();
+  if (output == nullptr) {
+    output_heading_->set_text("Display");
+    return;
+  }
+  const std::string title = output_ui_name(*output);
+  std::string text = title == output->name ? title : title + "  —  " + output->name;
+  if (output->mm_width > 0 && output->mm_height > 0) {
+    const double inches = std::sqrt(static_cast<double>(output->mm_width) * output->mm_width +
+                                    static_cast<double>(output->mm_height) * output->mm_height) /
+                          25.4;
+    char buffer[32];
+    std::snprintf(buffer, sizeof buffer, ", %.1f″", inches);
+    text += buffer;
+  }
+  output_heading_->set_text(text);
+}
+
+const OutputConfig* DisplayPage::selected() const {
+  if (selected_index_ < 0 || selected_index_ >= static_cast<int>(outputs_.size())) {
+    return nullptr;
+  }
+  return &outputs_[static_cast<std::size_t>(selected_index_)];
 }
 
 void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
@@ -639,8 +921,18 @@ void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
   context->save();
   context->rectangle(0, 0, width, height);
   context->clip();
-  context->set_source_rgb(0.91, 0.88, 0.82);
+  auto backdrop = Cairo::LinearGradient::create(0, 0, 0, height);
+  backdrop->add_color_stop_rgb(0, 0.863, 0.847, 0.824);
+  backdrop->add_color_stop_rgb(1, 0.831, 0.812, 0.784);
+  context->set_source(backdrop);
   context->paint();
+  context->set_source_rgba(0, 0, 0, 0.09);
+  for (int y = 8; y < height; y += 16) {
+    for (int x = 8; x < width; x += 16) {
+      context->arc(x, y, 1.0, 0, 6.28318530718);
+      context->fill();
+    }
+  }
   int max_x = 1;
   int max_y = 1;
   for (const auto& output : outputs_) {
@@ -660,28 +952,76 @@ void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
     const double y = origin_y_ + output.y * view_scale_;
     const double box_w = std::max(48.0, footprint_width(output) * view_scale_);
     const double box_h = std::max(36.0, footprint_height(output) * view_scale_);
-    if (!output.active) {
-      context->set_source_rgb(0.55, 0.53, 0.49);
-    } else if (i == selected_index_) {
-      context->set_source_rgb(0.77, 0.46, 0.16);
-    } else {
-      context->set_source_rgb(0.12, 0.23, 0.37);
-    }
-    rounded_rect(context, x, y, box_w, box_h, 8);
+    context->set_source_rgba(0.12, 0.12, 0.16, 0.28);
+    rounded_rect(context, x + 3, y + 6, box_w, box_h, 7);
     context->fill();
+    auto bezel = Cairo::LinearGradient::create(x, y, x, y + box_h);
+    bezel->add_color_stop_rgb(0, 0.29, 0.31, 0.34);
+    bezel->add_color_stop_rgb(1, 0.20, 0.22, 0.24);
+    context->set_source(bezel);
+    rounded_rect(context, x, y, box_w, box_h, 7);
+    context->fill();
+    const double inset = 5;
+    auto screen = Cairo::LinearGradient::create(x, y, x + box_w, y + box_h);
+    if (!output.active) {
+      screen->add_color_stop_rgb(0, 0.55, 0.56, 0.58);
+      screen->add_color_stop_rgb(1, 0.42, 0.43, 0.45);
+    } else if (i == selected_index_) {
+      screen->add_color_stop_rgb(0, 0.663, 0.776, 0.918);
+      screen->add_color_stop_rgb(1, 0.435, 0.592, 0.796);
+    } else {
+      screen->add_color_stop_rgb(0, 0.663, 0.710, 0.769);
+      screen->add_color_stop_rgb(1, 0.498, 0.561, 0.647);
+    }
+    context->set_source(screen);
+    rounded_rect(context, x + inset, y + inset, std::max(1.0, box_w - 2 * inset),
+                 std::max(1.0, box_h - 2 * inset), 3);
+    context->fill();
+    if (i == selected_index_) {
+      context->set_source_rgb(1, 1, 1);
+      context->set_line_width(2);
+      rounded_rect(context, x - 2, y - 2, box_w + 4, box_h + 4, 8);
+      context->stroke();
+      context->set_source_rgb(0.435, 0.592, 0.788);
+      context->set_line_width(2);
+      rounded_rect(context, x - 4, y - 4, box_w + 8, box_h + 8, 9);
+      context->stroke();
+    }
     context->set_source_rgb(1, 1, 1);
+    context->arc(x + inset + 16, y + inset + 16, 10, 0, 6.28318530718);
+    context->set_source_rgba(1, 1, 1, 0.92);
+    context->fill();
+    context->set_source_rgb(0.184, 0.333, 0.498);
     context->select_font_face("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_BOLD);
+    context->set_font_size(11);
+    const std::string number = std::to_string(i + 1);
+    context->move_to(x + inset + 12, y + inset + 20);
+    context->show_text(number);
+    context->set_source_rgb(1, 1, 1);
     context->set_font_size(13);
-    context->move_to(x + 10, y + 22);
-    context->show_text(output.friendly.empty() ? output.name : output.friendly);
+    context->move_to(x + inset + 30, y + inset + 20);
+    context->show_text(output_ui_name(output));
     context->set_font_size(11);
     context->select_font_face("Sans", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_NORMAL);
-    context->move_to(x + 10, y + 40);
-    context->show_text(output.active ? format_resolution(output.width, output.height)
+    context->move_to(x + inset + 10, y + inset + 38);
+    context->show_text(output.active ? output.name + " · " + std::to_string(output.width) + " × " +
+                                           std::to_string(output.height)
                                      : std::string("Off"));
-    if (output.primary && output.active) {
-      context->move_to(x + 10, y + box_h - 12);
-      context->show_text("Primary");
+    if (output.primary && output.active && box_h > 70) {
+      const std::string chip = "Primary";
+      context->set_font_size(10);
+      Cairo::TextExtents chip_extents;
+      context->get_text_extents(chip, chip_extents);
+      const double chip_w = chip_extents.width + 14;
+      const double chip_h = 16;
+      const double chip_x = x + inset + 8;
+      const double chip_y = y + box_h - inset - chip_h - 4;
+      context->set_source_rgba(1, 1, 1, 0.25);
+      rounded_rect(context, chip_x, chip_y, chip_w, chip_h, 8);
+      context->fill();
+      context->set_source_rgb(1, 1, 1);
+      context->move_to(chip_x + 7, chip_y + 12);
+      context->show_text(chip);
     }
   }
   if (outputs_.empty()) {
@@ -860,7 +1200,7 @@ bool DisplayPage::commit_pending() {
   store_.set_string_untracked("displays", "/Schemes/Apply", "Temp");
 
   confirming_ = true;
-  ConfirmDialog dialog(parent_);
+  ConfirmDialog dialog(parent_, outputs_);
   const int response = dialog.run();
   confirming_ = false;
   if (response == Gtk::RESPONSE_ACCEPT) {
@@ -888,7 +1228,13 @@ bool DisplayPage::commit_pending() {
   clear_temp_scheme(false);
   std::string revert_error;
   if (!apply_saved_layout(revert_to, revert_error)) {
-    status_->set_text(revert_error.empty() ? "The previous layout was not restored." : revert_error);
+    const std::string named =
+        revert_error.empty() ? "Could not restore " + layout_names(revert_to) + "." : revert_error;
+    status_->set_text(named);
+    Gtk::MessageDialog failed(parent_, "The previous display layout was not restored.", false,
+                              Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+    failed.set_secondary_text(named);
+    failed.run();
     show_selected();
     redraw();
     return false;
@@ -921,42 +1267,119 @@ void DisplayPage::clear_temp_scheme(bool trigger_apply) {
 
 bool DisplayPage::apply_saved_layout(const std::vector<OutputConfig>& layout, std::string& error) {
   if (layout.empty()) {
-    error = "The previous layout was not restored.";
+    error = "Could not restore the display layout: there is no saved layout.";
     return false;
   }
   applying_ = true;
   error = randr_.apply(layout);
   applying_ = false;
   if (!error.empty()) {
+    error = "Could not restore " + layout_names(layout) + ". " + error;
     return false;
   }
   const auto now = randr_.read();
   if (!layouts_equivalent(now, layout)) {
-    error = "The previous layout was not restored.";
+    error = "Could not restore " + layout_names(layout) +
+            ". The screen is still using a different layout.";
     return false;
   }
   confirmed_ = now.empty() ? layout : now;
   return true;
 }
 
-void DisplayPage::restore_session_hardware() {
+std::string DisplayPage::restore_session_hardware() {
   if (!hardware_changed_) {
-    return;
+    return {};
   }
   const std::vector<OutputConfig> target = !pending_revert_.empty() ? pending_revert_ : session_open_;
   // RandR is last. /Schemes/Apply is not set here; a missing Default scheme
   // must not run after the restore and put the rejected mode back.
   clear_temp_scheme(false);
   std::string error;
-  if (apply_saved_layout(target, error)) {
-    outputs_ = confirmed_;
-    session_open_ = confirmed_;
-    rebuild_output_combo();
-    show_selected();
-    redraw();
+  if (!apply_saved_layout(target, error)) {
+    return error.empty() ? "Could not restore " + layout_names(target) + "." : error;
   }
+  outputs_ = confirmed_;
+  session_open_ = confirmed_;
   hardware_changed_ = false;
   pending_revert_.clear();
+  rebuild_output_combo();
+  show_selected();
+  redraw();
+  return {};
+}
+
+std::string DisplayPage::pending_detail() const {
+  if (!dirty_) {
+    return {};
+  }
+  std::string text;
+  for (const auto& output : outputs_) {
+    const OutputConfig* was = nullptr;
+    for (const auto& old : confirmed_) {
+      if (old.name == output.name) {
+        was = &old;
+        break;
+      }
+    }
+    const bool changed =
+        was == nullptr || output.active != was->active || output.width != was->width ||
+        output.height != was->height || !refresh_matches(output.refresh, was->refresh) ||
+        std::abs(output.scale - was->scale) > 0.01 || output.rotation != was->rotation ||
+        output.reflection != was->reflection || output.primary != was->primary ||
+        output.x != was->x || output.y != was->y;
+    if (!changed) {
+      continue;
+    }
+    if (!text.empty()) {
+      text += "; ";
+    }
+    if (was == nullptr) {
+      text += output_summary_line(output);
+    } else {
+      text += output_ui_name(output) + ": " + output_summary_line(*was) + " → " +
+              output_summary_line(output);
+    }
+  }
+  if (text.empty()) {
+    return "Display layout has not been kept.";
+  }
+  return text;
+}
+
+bool DisplayPage::discard_pending() {
+  if (!dirty_ || confirming_ || applying_) {
+    return false;
+  }
+  outputs_ = confirmed_.empty() ? session_open_ : confirmed_;
+  dirty_ = false;
+  pending_changed.emit();
+  selected_index_ = outputs_.empty()
+                        ? 0
+                        : std::clamp(selected_index_, 0, static_cast<int>(outputs_.size()) - 1);
+  rebuild_output_combo();
+  show_selected();
+  redraw();
+  return true;
+}
+
+void DisplayPage::open_keep_preview() {
+  close_keep_preview();
+  auto* dialog = new ConfirmDialog(parent_, outputs_);
+  dialog->set_modal(false);
+  keep_preview_ = dialog;
+  dialog->signal_response().connect([this](int) { close_keep_preview(); });
+  dialog->show_all();
+  dialog->present();
+}
+
+void DisplayPage::close_keep_preview() {
+  if (keep_preview_ != nullptr) {
+    Gtk::Window* dialog = keep_preview_;
+    keep_preview_ = nullptr;
+    dialog->hide();
+    delete dialog;
+  }
 }
 
 namespace {

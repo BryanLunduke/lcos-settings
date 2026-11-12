@@ -37,6 +37,7 @@ logic_lib = static_library(
     'src/logic/mime_files.cpp',
     'src/logic/wm_shortcuts.cpp',
     'src/logic/system_model.cpp',
+    'src/logic/host_info.cpp',
     'src/logic/atomic_file.cpp',
     'src/logic/helper_status.cpp',
   ),
@@ -54,7 +55,8 @@ backend_sources = files(
 )
 
 page_sources = files(
-  'src/pages/display_page.cpp',
+    'src/pages/overview_page.cpp',
+    'src/pages/display_page.cpp',
   'src/pages/desktop_page.cpp',
   'src/pages/appearance_page.cpp',
   'src/pages/power_page.cpp',

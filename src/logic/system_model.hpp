@@ -29,6 +29,9 @@ std::string timezone_from_localtime(const std::string& link_target);
 
 std::string normalize_locale_name(const std::string& name);
 std::string gecos_real_name(const std::string& gecos);
+// Replaces only the full-name field. Trailing empty GECOS fields are dropped,
+// so a name edit is stored as "Jane Smith" and not "Jane Smith,,,".
+std::string gecos_with_full_name(const std::string& gecos, const std::string& full_name);
 
 struct Account {
   std::string name;

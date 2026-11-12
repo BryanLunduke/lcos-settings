@@ -30,6 +30,8 @@ struct OutputConfig {
   int rotation = 0;              // 0, 90, 180, 270
   std::string reflection = "0";  // 0, X, Y, XY
   double scale = 1.0;
+  int mm_width = 0;
+  int mm_height = 0;
   std::vector<ModeInfo> modes;
 };
 
@@ -40,6 +42,9 @@ struct ScreenBounds {
 
 bool parse_resolution(const std::string& text, int& width, int& height);
 std::string format_resolution(int width, int height);
+// Common ratios (16:10, 16:9, 4:3, …) when the mode is close. Otherwise the
+// reduced width:height pair.
+std::string aspect_ratio_text(int width, int height);
 bool refresh_matches(double a, double b);
 double mode_refresh_hz(unsigned long dot_clock, unsigned int h_total,
                        unsigned int v_total);

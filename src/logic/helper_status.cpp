@@ -5,19 +5,56 @@
 #include <sys/wait.h>
 
 #include <string>
+#include <vector>
 
 namespace lcos {
 namespace {
 
-std::string first_line(std::string text) {
-  while (!text.empty() && (text.back() == '\n' || text.back() == '\r')) {
+std::string trim_line(std::string text) {
+  while (!text.empty() && (text.back() == '\n' || text.back() == '\r' || text.back() == ' ')) {
     text.pop_back();
   }
-  const auto nl = text.find('\n');
-  if (nl != std::string::npos) {
-    text.resize(nl);
+  std::size_t start = 0;
+  while (start < text.size() && text[start] == ' ') {
+    ++start;
+  }
+  if (start > 0) {
+    text.erase(0, start);
   }
   return text;
+}
+
+// The helper prints a generic header and then one line per item that failed.
+// The dialog has to name those items, not only the header.
+std::string failure_text(const std::string& stderr_text) {
+  std::vector<std::string> lines;
+  std::string line;
+  for (std::size_t i = 0; i <= stderr_text.size(); ++i) {
+    if (i == stderr_text.size() || stderr_text[i] == '\n') {
+      line = trim_line(line);
+      if (!line.empty()) {
+        lines.push_back(line);
+      }
+      line.clear();
+    } else {
+      line.push_back(stderr_text[i]);
+    }
+  }
+  if (lines.empty()) {
+    return {};
+  }
+  std::size_t begin = 0;
+  if (lines.size() >= 2 && lines[0] == "could not restore every change") {
+    begin = 1;
+  }
+  std::string out;
+  for (std::size_t i = begin; i < lines.size(); ++i) {
+    if (!out.empty()) {
+      out.push_back('\n');
+    }
+    out += lines[i];
+  }
+  return out;
 }
 
 }  // namespace
@@ -32,7 +69,7 @@ HelperExit interpret_helper_exit(int wait_result, int status, const std::string&
     out.ok = true;
     return out;
   }
-  const std::string err = first_line(stderr_text);
+  const std::string err = failure_text(stderr_text);
   if (!WIFEXITED(status)) {
     out.error = err.empty() ? "The privileged helper did not finish." : err;
     return out;

@@ -914,12 +914,16 @@ void action_type(const std::string& token, const std::string& name, const std::s
 }
 
 void action_real_name(const std::string& token, const std::string& name, const std::string& real) {
-  account_or_fail(name);
+  const passwd* entry = account_or_fail(name);
   if (!lcos::valid_real_name(real)) {
     fail("invalid name");
   }
+  // chfn -f rewrites the whole GECOS as "Name,,," and drops room and phone
+  // fields. Keep every field after the full name, and omit empty trailing ones.
+  const std::string current = entry->pw_gecos != nullptr ? entry->pw_gecos : "";
+  const std::string next = lcos::gecos_with_full_name(current, real);
   remember_account(token, name);
-  if (!run_command({"chfn", "-f", real, name}, "")) {
+  if (!run_command({"usermod", "--comment", next, name}, "")) {
     fail("could not change the name");
   }
 }

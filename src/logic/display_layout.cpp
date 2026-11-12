@@ -35,6 +35,37 @@ std::string format_resolution(int width, int height) {
   return std::to_string(width) + "x" + std::to_string(height);
 }
 
+std::string aspect_ratio_text(int width, int height) {
+  if (width <= 0 || height <= 0) {
+    return {};
+  }
+  const double ratio = static_cast<double>(width) / static_cast<double>(height);
+  struct Known {
+    int w;
+    int h;
+    const char* label;
+  };
+  const Known known[] = {{16, 10, "16:10"}, {8, 5, "16:10"}, {16, 9, "16:9"}, {4, 3, "4:3"},
+                         {5, 4, "5:4"},     {3, 2, "3:2"},   {21, 9, "21:9"}, {32, 9, "32:9"},
+                         {1, 1, "1:1"},     {5, 3, "5:3"},   {2, 1, "2:1"}};
+  for (const auto& item : known) {
+    if (std::abs(ratio - static_cast<double>(item.w) / static_cast<double>(item.h)) < 0.02) {
+      return item.label;
+    }
+  }
+  int a = width;
+  int b = height;
+  while (b != 0) {
+    const int t = a % b;
+    a = b;
+    b = t;
+  }
+  if (a <= 0) {
+    return {};
+  }
+  return std::to_string(width / a) + ":" + std::to_string(height / a);
+}
+
 bool refresh_matches(double a, double b) {
   return std::llround(a * 100.0) == std::llround(b * 100.0);
 }

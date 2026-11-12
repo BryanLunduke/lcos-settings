@@ -4,6 +4,7 @@
 
 #include <xfconf/xfconf.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace lcos {
@@ -481,7 +482,18 @@ std::vector<std::pair<std::string, PropValue>> XfconfStore::list(
 }
 
 void XfconfStore::revert_session() {
-  if (!ready_ || originals_.empty()) {
+  std::vector<std::string> all;
+  for (const auto& entry : originals_) {
+    all.push_back(entry.second.channel);
+  }
+  revert_channels(all);
+}
+
+void XfconfStore::revert_channels(const std::vector<std::string>& channels) {
+  if (!ready_ || originals_.empty() || channels.empty()) {
+    if (channels.empty()) {
+      return;
+    }
     originals_.clear();
     return;
   }
@@ -489,14 +501,20 @@ void XfconfStore::revert_session() {
   tracking_ = false;
   std::vector<Saved> resets;
   std::vector<Saved> restores;
-  for (auto& entry : originals_) {
-    if (entry.second.value.type == PropType::Absent) {
-      resets.push_back(entry.second);
-    } else {
-      restores.push_back(entry.second);
+  for (auto it = originals_.begin(); it != originals_.end();) {
+    const bool match =
+        std::find(channels.begin(), channels.end(), it->second.channel) != channels.end();
+    if (!match) {
+      ++it;
+      continue;
     }
+    if (it->second.value.type == PropType::Absent) {
+      resets.push_back(it->second);
+    } else {
+      restores.push_back(it->second);
+    }
+    it = originals_.erase(it);
   }
-  originals_.clear();
   for (const auto& saved : resets) {
     auto* xfchannel = static_cast<XfconfChannel*>(channel_of(saved.channel));
     xfconf_channel_reset_property(xfchannel, saved.prop.c_str(), FALSE);

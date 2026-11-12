@@ -30,6 +30,9 @@ class PrivSession {
 
   const std::string& token() const { return token_; }
   bool dirty() const { return dirty_; }
+  bool accounts_dirty() const { return touched_accounts_; }
+  bool locale_dirty() const { return touched_locale_; }
+  bool system_dirty() const { return touched_system_; }
   bool busy() const { return busy_; }
 
   // Blocks until pkexec finishes. Reads both pipes so a noisy child cannot
