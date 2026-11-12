@@ -105,6 +105,7 @@ class MainWindow : public Gtk::ApplicationWindow {
   Gtk::Button cancel_;
   Gtk::ScrolledWindow side_scroll_;
   Gtk::Widget* side_chrome_ = nullptr;
+  Gtk::Widget* page_head_ = nullptr;
   bool closing_ = false;
   bool compact_ = false;
   bool filtering_ = false;

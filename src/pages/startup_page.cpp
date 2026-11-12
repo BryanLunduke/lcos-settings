@@ -145,7 +145,7 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   toggle->signal_toggled().connect(sigc::mem_fun(*this, &StartupPage::toggle_selected));
 
   auto* autostart = make_vbox(8);
-  autostart->set_border_width(12);
+  autostart->set_border_width(0);
   auto* app_scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*app_scroll);
   app_scroll->set_shadow_type(Gtk::SHADOW_IN);
@@ -163,7 +163,7 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   notebook_.append_page(*make_page_scroll(*autostart), "Autostart");
 
   auto* session_page = make_vbox(8);
-  session_page->set_border_width(12);
+  session_page->set_border_width(0);
   auto* general = make_vbox(6);
   general->pack_start(prompt_, Gtk::PACK_SHRINK);
   general->pack_start(save_, Gtk::PACK_SHRINK);

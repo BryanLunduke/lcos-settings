@@ -61,7 +61,7 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
   auto* page = make_vbox(8);
-  page->set_border_width(12);
+  page->set_border_width(0);
   scroll->add(*page);
 
   workspace_.set_range(1, 1);
@@ -516,7 +516,7 @@ void DesktopPage::build_icons() {
   show_unknown_.set_label("Unknown removable devices");
 
   auto* page = make_vbox(8);
-  page->set_border_width(12);
+  page->set_border_width(0);
   FormGrid style(180);
   style.add("Icons", icon_style_);
   style.add("Icon size", icon_size_);
@@ -715,7 +715,7 @@ void DesktopPage::build_menus() {
   winlist_add_.set_label("Show add and remove workspace options");
 
   auto* page = make_vbox(8);
-  page->set_border_width(12);
+  page->set_border_width(0);
   page->pack_start(menu_show_, Gtk::PACK_SHRINK);
   menu_options_ = make_vbox(6);
   menu_options_->pack_start(menu_icons_, Gtk::PACK_SHRINK);

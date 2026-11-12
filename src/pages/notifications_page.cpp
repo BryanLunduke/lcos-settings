@@ -96,7 +96,7 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
   pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
 
   auto* general = make_vbox(8);
-  general->set_border_width(12);
+  general->set_border_width(0);
   FormGrid general_form(240);
   general_form.add("When displaying notifications, show", display_fields_);
   general_form.add_control(do_not_disturb_);
@@ -107,7 +107,7 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
   notebook_.append_page(*make_page_scroll(*general), "General");
 
   auto* appearance = make_vbox(8);
-  appearance->set_border_width(12);
+  appearance->set_border_width(0);
   FormGrid look(220);
   look.add("Theme", theme_);
   look.add("Position", location_);
@@ -129,7 +129,7 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
   notebook_.append_page(*make_page_scroll(*appearance), "Appearance");
 
   auto* applications = make_vbox(8);
-  applications->set_border_width(12);
+  applications->set_border_width(0);
   auto* app_caption = make_label(
       "Applications appear here after they send a notification. Muted applications stay silent. "
       "Critical allows urgent notifications. Log keeps them in the notification log.");
@@ -180,7 +180,7 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
   notebook_.append_page(*make_page_scroll(*applications), "Applications");
 
   auto* log = make_vbox(8);
-  log->set_border_width(12);
+  log->set_border_width(0);
   FormGrid log_form(180);
   log_form.add_control(log_enabled_);
   log_form.add("Log notifications", log_level_);

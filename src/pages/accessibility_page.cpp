@@ -43,7 +43,7 @@ AccessibilityPage::AccessibilityPage(XfconfStore& store) : store_(store) {
   pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
 
   auto* technologies = make_vbox(8);
-  technologies->set_border_width(12);
+  technologies->set_border_width(0);
   auto* note = make_label(
       "When this is enabled, the session manager starts the applications required for screen "
       "readers and magnifiers the next time you log in.");
@@ -53,7 +53,7 @@ AccessibilityPage::AccessibilityPage(XfconfStore& store) : store_(store) {
   notebook_.append_page(*make_page_scroll(*technologies), "Assistive Technologies");
 
   auto* keyboard = make_vbox(8);
-  keyboard->set_border_width(12);
+  keyboard->set_border_width(0);
   auto* sticky_box = make_vbox(6);
   sticky_box->pack_start(sticky_, Gtk::PACK_SHRINK);
   sticky_box->pack_start(sticky_lock_, Gtk::PACK_SHRINK);
@@ -70,7 +70,7 @@ AccessibilityPage::AccessibilityPage(XfconfStore& store) : store_(store) {
   notebook_.append_page(*make_page_scroll(*keyboard), "Keyboard");
 
   auto* mouse = make_vbox(8);
-  mouse->set_border_width(12);
+  mouse->set_border_width(0);
   auto* mouse_note = make_label("The pointer can be moved with the numeric keypad.");
   mouse_note->set_line_wrap(true);
   mouse->pack_start(*mouse_note, Gtk::PACK_SHRINK);

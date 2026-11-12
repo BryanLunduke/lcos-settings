@@ -82,7 +82,7 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
   search_.set_placeholder_text("Search regions and cities");
 
   auto* scroll_page = make_vbox(8);
-  scroll_page->set_border_width(12);
+  scroll_page->set_border_width(0);
   now_ = make_label("");
   now_->set_line_wrap(true);
   scroll_page->pack_start(*make_frame("Current time", *now_), Gtk::PACK_SHRINK);
