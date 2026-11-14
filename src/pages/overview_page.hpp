@@ -2,6 +2,7 @@
 #ifndef LCOS_OVERVIEW_PAGE_HPP
 #define LCOS_OVERVIEW_PAGE_HPP
 
+#include "backends/priv_client.hpp"
 #include "backends/pulse_client.hpp"
 #include "backends/xfconf_store.hpp"
 #include "pages/settings_page.hpp"
@@ -21,7 +22,7 @@ class UsersPage;
 class OverviewPage : public SettingsPage {
  public:
   OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPage& users, PulseClient& pulse,
-               const std::function<void(const std::string&)>& open_page,
+               PrivSession& session, const std::function<void(const std::string&)>& open_page,
                const std::function<void(const std::string&)>& mark_page);
   Glib::ustring title() const override { return "Overview"; }
   Glib::ustring summary() const override { return ""; }
@@ -31,11 +32,13 @@ class OverviewPage : public SettingsPage {
   void refresh_host();
   void refresh_quick();
   void open(const std::string& id);
+  void rename_host();
 
   AppearancePage& appearance_;
   SoundPage& sound_;
   UsersPage& users_;
   PulseClient& pulse_;
+  PrivSession& session_;
   std::function<void(const std::string&)> open_page_;
   std::function<void(const std::string&)> mark_page_;
   int freeze_ = 0;

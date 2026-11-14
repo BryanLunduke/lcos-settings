@@ -507,6 +507,44 @@ std::string zoneinfo_target(const std::string& name) {
   return name;
 }
 
+bool try_write_file(const std::string& path, const std::string& text, mode_t mode, std::string& error);
+
+void action_hostname(const std::string& token, const std::string& name) {
+  if (!lcos::valid_hostname(name)) {
+    fail("that name is not a valid hostname");
+  }
+  remember_file(token, "hostname", "/etc/hostname");
+  remember_file(token, "hosts", "/etc/hosts");
+  char live[256];
+  std::memset(live, 0, sizeof(live));
+  if (gethostname(live, sizeof(live) - 1) == 0 && live[0] != '\0') {
+    remember_text(token, "hostname.live", std::string(live));
+  }
+  const std::string hosts = lcos::hosts_with_hostname(slurp("/etc/hosts"), name);
+  write_file("/etc/hostname", name + "\n", 0644);
+  std::string error;
+  if (!try_write_file("/etc/hosts", hosts, 0644, error)) {
+    // Put the name file back before reporting failure so a denied second
+    // step does not leave the two files disagreeing.
+    if (access(undo_path(token, "hostname.missing").c_str(), F_OK) == 0) {
+      unlink("/etc/hostname");
+    } else {
+      try_write_file("/etc/hostname", slurp(undo_path(token, "hostname")), 0644, error);
+    }
+    fail("could not update /etc/hosts");
+  }
+  if (sethostname(name.c_str(), name.size()) != 0) {
+    std::string ignored;
+    if (access(undo_path(token, "hostname.missing").c_str(), F_OK) == 0) {
+      unlink("/etc/hostname");
+    } else {
+      try_write_file("/etc/hostname", slurp(undo_path(token, "hostname")), 0644, ignored);
+    }
+    try_write_file("/etc/hosts", slurp(undo_path(token, "hosts")), 0644, ignored);
+    fail("could not apply the hostname");
+  }
+}
+
 void action_timezone(const std::string& token, const std::string& name) {
   const std::string zone = zoneinfo_target(name);
   char current[4096];
@@ -1182,6 +1220,31 @@ bool revert_token(const std::string& token, lcos::PrivDomain domain) {
         report.errors.push_back("could not restore the clock");
       }
     }
+    if (access((dir + "/hostname").c_str(), F_OK) == 0 ||
+        access((dir + "/hosts").c_str(), F_OK) == 0) {
+      std::string error;
+      bool ok = true;
+      if (access((dir + "/hostname.missing").c_str(), F_OK) == 0) {
+        if (unlink("/etc/hostname") != 0 && errno != ENOENT) {
+          ok = false;
+          error = "could not restore the hostname";
+        }
+      } else if (access((dir + "/hostname").c_str(), F_OK) == 0) {
+        ok = try_write_file("/etc/hostname", slurp(dir + "/hostname"), 0644, error);
+      }
+      report.check(ok, error.empty() ? "could not restore the hostname" : error);
+      if (access((dir + "/hosts").c_str(), F_OK) == 0) {
+        error.clear();
+        ok = try_write_file("/etc/hosts", slurp(dir + "/hosts"), 0644, error);
+        report.check(ok, error.empty() ? "could not restore /etc/hosts" : error);
+      }
+      if (access((dir + "/hostname.live").c_str(), F_OK) == 0) {
+        const std::string live = first_line(slurp(dir + "/hostname.live"));
+        if (!live.empty() && live.size() <= 64 && sethostname(live.c_str(), live.size()) != 0) {
+          report.errors.push_back("could not apply the previous hostname");
+        }
+      }
+    }
   }
 
   if (domain == lcos::PrivDomain::Locale) {
@@ -1456,6 +1519,8 @@ int main(int argc, char** argv) {
       action_avatar(token, argv[4], argv[5]);
     } else if (action == "set-autologin" && rest == 2) {
       action_autologin(token, argv[4]);
+    } else if (action == "set-hostname" && rest == 2) {
+      action_hostname(token, argv[4]);
     } else {
       fail("invalid request");
     }

@@ -9,7 +9,7 @@
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/liststore.h>
-#include <gtkmm/notebook.h>
+#include "ui_util.hpp"
 #include <gtkmm/scale.h>
 #include <gtkmm/spinbutton.h>
 #include <gtkmm/treeview.h>
@@ -57,7 +57,7 @@ class NotificationsPage : public SettingsPage {
   XfconfStore& store_;
   Gtk::Window& parent_;
   int freeze_ = 0;
-  Gtk::Notebook notebook_;
+  SectionNotebook notebook_;
 
   Gtk::ComboBoxText display_fields_;
   Gtk::CheckButton do_not_disturb_;

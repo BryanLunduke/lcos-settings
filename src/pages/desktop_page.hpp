@@ -13,7 +13,7 @@
 #include <gtkmm/filechooserbutton.h>
 #include <gtkmm/flowbox.h>
 #include <gtkmm/label.h>
-#include <gtkmm/notebook.h>
+#include "ui_util.hpp"
 #include <gtkmm/spinbutton.h>
 
 #include <string>
@@ -53,7 +53,7 @@ class DesktopPage : public SettingsPage {
   XfconfStore& store_;
   XrandrBackend& randr_;
   int freeze_ = 0;
-  Gtk::Notebook notebook_;
+  SectionNotebook notebook_;
   std::vector<std::string> image_paths_;
 
   Gtk::ComboBoxText monitor_;

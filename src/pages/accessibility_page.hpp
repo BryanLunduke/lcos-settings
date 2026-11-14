@@ -6,7 +6,7 @@
 #include "pages/settings_page.hpp"
 
 #include <gtkmm/checkbutton.h>
-#include <gtkmm/notebook.h>
+#include "ui_util.hpp"
 #include <gtkmm/spinbutton.h>
 
 namespace lcos {
@@ -31,7 +31,7 @@ class AccessibilityPage : public SettingsPage {
 
   XfconfStore& store_;
   int freeze_ = 0;
-  Gtk::Notebook notebook_;
+  SectionNotebook notebook_;
 
   Gtk::CheckButton assistive_;
   Gtk::CheckButton sticky_;

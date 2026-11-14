@@ -3,6 +3,7 @@
 #define LCOS_UI_UTIL_HPP
 
 #include <gtkmm/box.h>
+#include <gtkmm/button.h>
 #include <gtkmm/combobox.h>
 #include <gtkmm/container.h>
 #include <gtkmm/frame.h>
@@ -11,8 +12,13 @@
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/separator.h>
 #include <gtkmm/spinbutton.h>
+#include <gtkmm/stack.h>
 #include <gtkmm/widget.h>
 #include <gtkmm/window.h>
+
+#include <algorithm>
+#include <string>
+#include <vector>
 
 #include <gtk/gtk.h>
 
@@ -36,12 +42,73 @@ inline Gtk::Box* make_vbox(int spacing = 8) {
 inline void prepare_page_scroll(Gtk::ScrolledWindow& scroll) {
   scroll.set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
   scroll.set_shadow_type(Gtk::SHADOW_NONE);
-  scroll.set_overlay_scrolling(false);
+  // Overlay scrolling draws the bar on top of the page, so a trough is not
+  // reserved when the page already fits, and the window can still shrink.
+  scroll.set_overlay_scrolling(true);
   scroll.set_propagate_natural_height(false);
   scroll.set_propagate_natural_width(false);
   scroll.set_min_content_height(0);
   scroll.set_min_content_width(0);
+  scroll.get_style_context()->add_class("lcos-page");
 }
+
+// Segmented section control used in place of a stock notebook. The pages that
+// were not redrawn as cards still have several groups; this keeps that
+// organization and matches the linked buttons on Display and Appearance.
+class SectionNotebook : public Gtk::Box {
+ public:
+  SectionNotebook() : Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0) {
+    bar_.get_style_context()->add_class("lcos-sections");
+    bar_.set_halign(Gtk::ALIGN_START);
+    bar_.set_margin_bottom(10);
+    stack_.set_vexpand(true);
+    stack_.set_hexpand(true);
+    pack_start(bar_, Gtk::PACK_SHRINK);
+    pack_start(stack_, Gtk::PACK_EXPAND_WIDGET);
+  }
+
+  void append_page(Gtk::Widget& child, const Glib::ustring& title) {
+    auto* button = Gtk::manage(new Gtk::Button(title));
+    button->set_relief(Gtk::RELIEF_NONE);
+    button->set_focus_on_click(true);
+    const int index = static_cast<int>(pages_.size());
+    button->signal_clicked().connect([this, index] { set_current_page(index); });
+    bar_.pack_start(*button, Gtk::PACK_SHRINK);
+    stack_.add(child, "page-" + std::to_string(index));
+    pages_.push_back(&child);
+    buttons_.push_back(button);
+    if (pages_.size() == 1) {
+      set_current_page(0);
+    }
+  }
+
+  int get_n_pages() const { return static_cast<int>(pages_.size()); }
+
+  int get_current_page() const { return current_; }
+
+  void set_current_page(int index) {
+    if (index < 0 || index >= get_n_pages()) {
+      return;
+    }
+    current_ = index;
+    stack_.set_visible_child(*pages_[static_cast<std::size_t>(index)]);
+    for (int i = 0; i < get_n_pages(); ++i) {
+      auto context = buttons_[static_cast<std::size_t>(i)]->get_style_context();
+      if (i == index) {
+        context->add_class("lcos-on");
+      } else {
+        context->remove_class("lcos-on");
+      }
+    }
+  }
+
+ private:
+  Gtk::Box bar_{Gtk::ORIENTATION_HORIZONTAL, 0};
+  Gtk::Stack stack_;
+  std::vector<Gtk::Widget*> pages_;
+  std::vector<Gtk::Button*> buttons_;
+  int current_ = 0;
+};
 
 inline Gtk::ScrolledWindow* make_page_scroll(Gtk::Widget& child) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());

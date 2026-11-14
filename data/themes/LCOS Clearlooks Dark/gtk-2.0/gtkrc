@@ -1,0 +1,32 @@
+# LCOS Clearlooks Dark — GTK 2 colors.
+# Original theme for LCOS. SPDX-License-Identifier: GPL-3.0-or-later
+# No external theme engine is required.
+
+style "lcos-clearlooks-dark" {
+  fg[NORMAL]        = "#e6e4e0"
+  fg[ACTIVE]        = "#ffffff"
+  fg[PRELIGHT]      = "#ffffff"
+  fg[SELECTED]      = "#ffffff"
+  fg[INSENSITIVE]   = "#8d8982"
+
+  bg[NORMAL]        = "#3a3c40"
+  bg[ACTIVE]        = "#4d6f99"
+  bg[PRELIGHT]      = "#4a4d52"
+  bg[SELECTED]      = "#4d6f99"
+  bg[INSENSITIVE]   = "#2e3033"
+
+  base[NORMAL]      = "#1e2023"
+  base[ACTIVE]      = "#2a3340"
+  base[PRELIGHT]    = "#26282b"
+  base[SELECTED]    = "#4d6f99"
+  base[INSENSITIVE] = "#2a2c2f"
+
+  text[NORMAL]      = "#e6e4e0"
+  text[ACTIVE]      = "#ffffff"
+  text[PRELIGHT]    = "#e6e4e0"
+  text[SELECTED]    = "#ffffff"
+  text[INSENSITIVE] = "#8d8982"
+}
+
+class "GtkWidget" style "lcos-clearlooks-dark"
+widget_class "*" style "lcos-clearlooks-dark"

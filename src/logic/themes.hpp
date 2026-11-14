@@ -12,6 +12,8 @@ struct IndexTheme {
   bool hidden = false;
   bool icon_theme = false;
   bool sound_theme = false;
+  // Icon-theme Directories= entries. Empty for other index files.
+  std::vector<std::string> directories;
 };
 
 struct ThemeEntry {

@@ -169,6 +169,105 @@ bool valid_password(const std::string& password) {
          password.find('\0') == std::string::npos;
 }
 
+bool valid_hostname(const std::string& name) {
+  if (name.empty() || name.size() > 64) {
+    return false;
+  }
+  if (name.front() == '.' || name.back() == '.') {
+    return false;
+  }
+  std::size_t start = 0;
+  while (start <= name.size()) {
+    const auto dot = name.find('.', start);
+    const auto end = dot == std::string::npos ? name.size() : dot;
+    const auto length = end - start;
+    if (length < 1 || length > 63) {
+      return false;
+    }
+    if (name[start] == '-' || name[end - 1] == '-') {
+      return false;
+    }
+    for (std::size_t i = start; i < end; ++i) {
+      const unsigned char c = static_cast<unsigned char>(name[i]);
+      if (!std::isalnum(c) && name[i] != '-') {
+        return false;
+      }
+    }
+    if (dot == std::string::npos) {
+      return true;
+    }
+    start = dot + 1;
+  }
+  return false;
+}
+
+namespace {
+
+std::string hostname_hosts_line(const std::string& hostname) {
+  std::string line = "127.0.1.1\t" + hostname;
+  const auto dot = hostname.find('.');
+  if (dot != std::string::npos && dot > 0) {
+    line.push_back(' ');
+    line += hostname.substr(0, dot);
+  }
+  return line;
+}
+
+bool line_is_loopback_alias(const std::string& line) {
+  std::size_t i = 0;
+  while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) {
+    ++i;
+  }
+  const std::string address = "127.0.1.1";
+  if (line.compare(i, address.size(), address) != 0) {
+    return false;
+  }
+  const std::size_t after = i + address.size();
+  return after >= line.size() || line[after] == ' ' || line[after] == '\t' || line[after] == '#';
+}
+
+}  // namespace
+
+std::string hosts_with_hostname(const std::string& hosts, const std::string& hostname) {
+  const std::string replacement = hostname_hosts_line(hostname);
+  std::string out;
+  std::string line;
+  bool wrote = false;
+  auto consider = [&](const std::string& current) {
+    if (line_is_loopback_alias(current)) {
+      if (!wrote) {
+        out += replacement;
+        out.push_back('\n');
+        wrote = true;
+      }
+      return;
+    }
+    out += current;
+    out.push_back('\n');
+  };
+  for (std::size_t i = 0; i <= hosts.size(); ++i) {
+    if (i == hosts.size() || hosts[i] == '\n') {
+      if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+      }
+      if (!(i == hosts.size() && line.empty() && !hosts.empty() && hosts.back() == '\n')) {
+        consider(line);
+      }
+      line.clear();
+    } else {
+      line.push_back(hosts[i]);
+    }
+  }
+  if (!wrote) {
+    if (!out.empty() && out.back() != '\n') {
+      out.push_back('\n');
+    }
+    out += replacement;
+    out.push_back('\n');
+  }
+  return out;
+}
+
 bool valid_timezone_name(const std::string& name) {
   if (name.empty() || name.size() > 80 || name.front() == '/' || name.back() == '/') {
     return false;
@@ -1223,7 +1322,9 @@ bool undo_file_belongs_to(PrivDomain domain, const std::string& filename) {
   };
   const bool system = filename == "localtime" || filename == "timezone" ||
                       filename == "timezone.missing" || filename == "ntp" ||
-                      filename == "clock-wall" || filename == "clock-mono";
+                      filename == "clock-wall" || filename == "clock-mono" ||
+                      filename == "hostname" || filename == "hostname.missing" ||
+                      filename == "hostname.live" || filename == "hosts";
   const bool locale = filename == "locale" || filename == "locale.missing" ||
                       filename == "locale.dir" || starts(filename, "locale.gen") ||
                       starts(filename, "locale.archive");

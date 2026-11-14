@@ -7,8 +7,8 @@
   <vendor_url>https://lunduke.com</vendor_url>
 
   <action id="org.lunduke.lcos-settings.time">
-    <description>Change the system clock and time zone</description>
-    <message>Authentication is required to change the system clock or time zone</message>
+    <description>Change the system clock, time zone, or hostname</description>
+    <message>Authentication is required to change the system clock, time zone, or hostname</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>

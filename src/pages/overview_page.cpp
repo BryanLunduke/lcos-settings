@@ -3,6 +3,7 @@
 #include "pages/overview_page.hpp"
 
 #include "logic/host_info.hpp"
+#include "logic/system_model.hpp"
 #include "pages/appearance_page.hpp"
 #include "pages/sound_page.hpp"
 #include "pages/users_page.hpp"
@@ -12,7 +13,10 @@
 #include <gdkmm/pixbuf.h>
 #include <glibmm/markup.h>
 #include <gtkmm/button.h>
+#include <gtkmm/dialog.h>
+#include <gtkmm/entry.h>
 #include <gtkmm/icontheme.h>
+#include <gtkmm/messagedialog.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/grid.h>
 #include <gtkmm/image.h>
@@ -154,12 +158,14 @@ Gtk::Image* icon_image(const char* name, int size) {
 }  // namespace
 
 OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPage& users,
-                           PulseClient& pulse, const std::function<void(const std::string&)>& open_page,
+                           PulseClient& pulse, PrivSession& session,
+                           const std::function<void(const std::string&)>& open_page,
                            const std::function<void(const std::string&)>& mark_page)
     : appearance_(appearance),
       sound_(sound),
       users_(users),
       pulse_(pulse),
+      session_(session),
       open_page_(open_page),
       mark_page_(mark_page),
       volume_(Gtk::ORIENTATION_HORIZONTAL) {
@@ -183,21 +189,34 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   info->set_valign(Gtk::ALIGN_CENTER);
   info->set_hexpand(true);
   kicker_ = Gtk::manage(new Gtk::Label());
-  kicker_->set_halign(Gtk::ALIGN_START);
+  kicker_->set_halign(Gtk::ALIGN_FILL);
+  kicker_->set_hexpand(true);
+  kicker_->set_ellipsize(Pango::ELLIPSIZE_END);
+  kicker_->set_xalign(0);
   kicker_->get_style_context()->add_class("lcos-kicker");
   version_ = Gtk::manage(new Gtk::Label());
-  version_->set_halign(Gtk::ALIGN_START);
+  version_->set_halign(Gtk::ALIGN_FILL);
   version_->set_hexpand(true);
   version_->set_line_wrap(false);
   version_->set_ellipsize(Pango::ELLIPSIZE_END);
   version_->set_xalign(0);
   version_->get_style_context()->add_class("lcos-version");
   auto* host_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  host_row->set_hexpand(true);
   host_row->pack_start(*icon_image("computer", 16), Gtk::PACK_SHRINK);
   hostname_ = Gtk::manage(new Gtk::Label());
   hostname_->set_halign(Gtk::ALIGN_START);
+  hostname_->set_ellipsize(Pango::ELLIPSIZE_END);
+  hostname_->set_hexpand(false);
   hostname_->get_style_context()->add_class("lcos-host");
+  auto* rename = Gtk::manage(new Gtk::Button("Rename…"));
+  rename->set_relief(Gtk::RELIEF_NONE);
+  rename->set_valign(Gtk::ALIGN_CENTER);
+  rename->get_style_context()->add_class("lcos-link-button");
+  rename->set_tooltip_text("Change the name of this computer");
+  rename->signal_clicked().connect(sigc::mem_fun(*this, &OverviewPage::rename_host));
   host_row->pack_start(*hostname_, Gtk::PACK_SHRINK);
+  host_row->pack_start(*rename, Gtk::PACK_SHRINK);
   info->pack_start(*kicker_, Gtk::PACK_SHRINK);
   info->pack_start(*version_, Gtk::PACK_SHRINK);
   info->pack_start(*host_row, Gtk::PACK_SHRINK);
@@ -214,15 +233,16 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
     cap->get_style_context()->add_class("lcos-faint");
     cap->get_style_context()->add_class("lcos-fact");
     *values[i] = Gtk::manage(new Gtk::Label());
-    (*values[i])->set_halign(Gtk::ALIGN_START);
+    (*values[i])->set_halign(Gtk::ALIGN_FILL);
     (*values[i])->set_hexpand(true);
     (*values[i])->set_line_wrap(false);
-    (*values[i])->set_ellipsize(Pango::ELLIPSIZE_NONE);
+    (*values[i])->set_ellipsize(Pango::ELLIPSIZE_END);
     (*values[i])->set_xalign(0);
     (*values[i])->get_style_context()->add_class("lcos-fact");
     facts->attach(*cap, 0, i, 1, 1);
     facts->attach(**values[i], 1, i, 1, 1);
   }
+  info->set_size_request(120, -1);
   info->pack_start(*facts, Gtk::PACK_SHRINK);
   hero->pack_start(*info, Gtk::PACK_EXPAND_WIDGET);
 
@@ -230,7 +250,9 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   quick->set_column_spacing(10);
   quick->set_row_spacing(8);
   quick->set_valign(Gtk::ALIGN_CENTER);
+  quick->set_halign(Gtk::ALIGN_END);
   quick->set_hexpand(false);
+  quick->set_size_request(210, -1);
   quick->get_style_context()->add_class("lcos-quick");
   auto* qh = Gtk::manage(new Gtk::Label());
   set_small_caps(*qh, "Quick settings");
@@ -374,6 +396,77 @@ void OverviewPage::open(const std::string& id) {
   if (open_page_) {
     open_page_(id);
   }
+}
+
+void OverviewPage::rename_host() {
+  auto* parent = dynamic_cast<Gtk::Window*>(get_toplevel());
+  Gtk::Dialog dialog("Rename this computer", true);
+  if (parent != nullptr && parent != &dialog) {
+    dialog.set_transient_for(*parent);
+  }
+  dialog.set_modal(true);
+  dialog.set_default_size(420, -1);
+  auto* box = dialog.get_content_area();
+  box->set_margin_top(12);
+  box->set_margin_bottom(6);
+  box->set_margin_start(16);
+  box->set_margin_end(16);
+  box->set_spacing(8);
+  auto* note = Gtk::manage(new Gtk::Label(
+      "Letters, digits, and hyphens. Separate extra parts with a dot. At most 64 characters."));
+  note->set_line_wrap(true);
+  note->set_max_width_chars(46);
+  note->set_halign(Gtk::ALIGN_START);
+  note->set_xalign(0);
+  auto* entry = Gtk::manage(new Gtk::Entry());
+  const std::string current = hostname_ != nullptr ? std::string(hostname_->get_text()) : std::string();
+  entry->set_text(current);
+  entry->set_activates_default(true);
+  auto* error = Gtk::manage(new Gtk::Label(""));
+  error->set_halign(Gtk::ALIGN_START);
+  error->set_xalign(0);
+  error->get_style_context()->add_class("lcos-faint");
+  box->pack_start(*note, Gtk::PACK_SHRINK);
+  box->pack_start(*entry, Gtk::PACK_SHRINK);
+  box->pack_start(*error, Gtk::PACK_SHRINK);
+  dialog.add_button("_Cancel", Gtk::RESPONSE_CANCEL);
+  dialog.add_button("_Rename", Gtk::RESPONSE_OK);
+  dialog.set_default_response(Gtk::RESPONSE_OK);
+  entry->signal_changed().connect([&] {
+    const std::string name = entry->get_text();
+    const bool unchanged = name == current;
+    const bool ok = valid_hostname(name) && !unchanged;
+    dialog.set_response_sensitive(Gtk::RESPONSE_OK, ok);
+    if (name.empty() || unchanged) {
+      error->set_text("");
+    } else if (!valid_hostname(name)) {
+      error->set_text("That name is not a valid hostname.");
+    } else {
+      error->set_text("");
+    }
+  });
+  dialog.show_all();
+  dialog.set_response_sensitive(Gtk::RESPONSE_OK, false);
+  if (dialog.run() != Gtk::RESPONSE_OK) {
+    return;
+  }
+  const std::string name = entry->get_text();
+  dialog.hide();
+  if (!valid_hostname(name) || name == current) {
+    return;
+  }
+  const PrivResult result = session_.run({"set-hostname", name});
+  if (!result.ok) {
+    const std::string message =
+        result.error.empty() ? "The hostname was not changed." : result.error;
+    Gtk::MessageDialog alert(message, false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+    if (parent != nullptr) {
+      alert.set_transient_for(*parent);
+    }
+    alert.run();
+    return;
+  }
+  refresh_host();
 }
 
 void OverviewPage::refresh_host() {

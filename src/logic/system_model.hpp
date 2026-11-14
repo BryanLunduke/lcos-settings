@@ -15,6 +15,14 @@ bool valid_real_name(const std::string& name);
 // 128 bytes, or contain a newline or NUL.
 bool valid_password(const std::string& password);
 bool valid_timezone_name(const std::string& name);
+// RFC 1123 hostname: labels of letters, digits, and hyphens, not starting or
+// ending with a hyphen, separated by dots. The whole name is at most 64
+// characters so sethostname can apply it (Linux HOST_NAME_MAX).
+bool valid_hostname(const std::string& name);
+// Rewrites only the 127.0.1.1 line Debian and Devuan use for this machine.
+// Other addresses, including 127.0.0.1 and 127.0.1.10, stay. A dotted name
+// also lists its first label as an alias. A missing line is appended.
+std::string hosts_with_hostname(const std::string& hosts, const std::string& hostname);
 bool valid_locale_name(const std::string& name);
 bool valid_undo_token(const std::string& token);
 

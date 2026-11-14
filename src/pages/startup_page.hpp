@@ -8,7 +8,7 @@
 
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/liststore.h>
-#include <gtkmm/notebook.h>
+#include "ui_util.hpp"
 #include <gtkmm/treeview.h>
 
 #include <map>
@@ -73,7 +73,7 @@ class StartupPage : public SettingsPage {
   std::string session_dir_;
   std::string session_file_;
 
-  Gtk::Notebook notebook_;
+  SectionNotebook notebook_;
   AppColumns columns_;
   Glib::RefPtr<Gtk::ListStore> apps_;
   Gtk::TreeView apps_view_;

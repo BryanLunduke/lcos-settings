@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=LCOS Clearlooks Dark
+Comment=Dark Clearlooks theme for the Lunduke Computer Operating System
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=LCOS Clearlooks Dark
+IconTheme=AdwaitaLegacy
+CursorTheme=Adwaita
+ButtonLayout=menu:minimize,maximize,close

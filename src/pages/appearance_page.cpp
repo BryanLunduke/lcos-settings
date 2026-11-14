@@ -419,12 +419,9 @@ void AppearancePage::fill_themes(Gtk::ComboBoxText& combo,
       saw = true;
     }
   }
-  if (!current.empty() && !saw) {
-    combo.append(current, current);
-  }
-  if (!current.empty()) {
+  if (!current.empty() && saw) {
     combo.set_active_id(current);
-  } else if (!themes.empty()) {
+  } else if (current.empty() && !themes.empty()) {
     combo.set_active(0);
   }
 }
@@ -515,8 +512,17 @@ void AppearancePage::set_dark_style(bool on) {
       light_theme_ = current;
     }
     std::string chosen;
+    for (const auto& theme : gtk_themes_) {
+      if (theme.id == "LCOS Clearlooks Dark") {
+        chosen = theme.id;
+        break;
+      }
+    }
     const std::string folded = current;
     for (const auto& theme : gtk_themes_) {
+      if (!chosen.empty()) {
+        break;
+      }
       if (!name_is_dark(theme.id) && !name_is_dark(theme.name)) {
         continue;
       }
