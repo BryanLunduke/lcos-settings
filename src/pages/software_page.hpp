@@ -8,7 +8,7 @@
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/liststore.h>
-#include <gtkmm/notebook.h>
+#include "ui_util.hpp"
 #include <gtkmm/treeview.h>
 
 #include <string>
@@ -44,7 +44,7 @@ class SoftwarePage : public SettingsPage {
   void choose_mime_default();
   std::string app_name(const std::string& desktop_id) const;
 
-  Gtk::Notebook notebook_;
+  SectionNotebook notebook_;
   int freeze_ = 0;
   std::string helpers_path_;
   std::string mime_path_;

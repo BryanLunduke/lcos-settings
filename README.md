@@ -37,6 +37,12 @@ dpkg-buildpackage -us -uc -b
 
 `packaging/build-deb.sh` runs that and copies the `.deb` into `packaging/debs/`.
 
+The dark style **LCOS Clearlooks Dark** is installed by this package to
+`/usr/share/themes/LCOS Clearlooks Dark` (GTK 3 and GTK 2). It is an original
+theme. The live image can ship the same directory from lcos-live/branding;
+Command Center lists it as soon as that directory is on the theme path.
+Window borders stay on the selected window-manager theme.
+
 Runtime pieces LCOS already ships: an X11 session (XLibre or Xorg), `xfconfd`
 on the session bus, `xfsettingsd` (so the values take effect), and PulseAudio.
 The program forces the X11 GDK backend.

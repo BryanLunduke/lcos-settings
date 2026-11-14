@@ -531,23 +531,59 @@ void test_themes_and_xkb() {
   fs::create_directories(root / "themes" / "Sample" / "gtk-3.0");
   fs::create_directories(root / "themes" / "Sample" / "xfwm4");
   fs::create_directories(root / "themes" / "Hidden" / "gtk-3.0");
+  fs::create_directories(root / "themes" / "KeysOnly" / "gtk-3.0");
+  fs::create_directories(root / "themes" / "CommentOnly" / "gtk-2.0");
+  fs::create_directories(root / "themes" / "MissingEngine" / "gtk-2.0");
+  fs::create_directories(root / "themes" / "PlainGtk2" / "gtk-2.0");
+  fs::create_directories(root / "themes" / "BareXfwm" / "xfwm4");
   fs::create_directories(root / "icons" / "Cursors" / "cursors");
+  fs::create_directories(root / "icons" / "Real" / "16x16" / "apps");
+  fs::create_directories(root / "icons" / "IndexOnly");
   {
     std::ofstream((root / "themes" / "Sample" / "index.theme").string())
         << "[X-GNOME-Metatheme]\nName=Sample Theme\n";
+    std::ofstream((root / "themes" / "Sample" / "gtk-3.0" / "gtk.css").string()) << "window {}\n";
     std::ofstream((root / "themes" / "Sample" / "xfwm4" / "themerc").string()) << "button_offset=0\n";
+    std::ofstream((root / "themes" / "Sample" / "xfwm4" / "close-active.png").string()) << "x";
     std::ofstream((root / "themes" / "Hidden" / "index.theme").string())
         << "[Desktop Entry]\nName=Hidden\nHidden=true\n";
+    std::ofstream((root / "themes" / "Hidden" / "gtk-3.0" / "gtk.css").string()) << "window {}\n";
+    std::ofstream((root / "themes" / "KeysOnly" / "gtk-3.0" / "gtk-keys.css").string()) << "/* keys */\n";
+    std::ofstream((root / "themes" / "CommentOnly" / "gtk-2.0" / "gtkrc").string())
+        << "# This theme is only a comment.\n";
+    std::ofstream((root / "themes" / "MissingEngine" / "gtk-2.0" / "gtkrc").string())
+        << "style \"default\" { engine \"lcos-missing-engine\" { } }\n";
+    std::ofstream((root / "themes" / "PlainGtk2" / "gtk-2.0" / "gtkrc").string())
+        << "style \"plain\" { bg[NORMAL] = \"#fff\" }\nclass \"GtkWidget\" style \"plain\"\n";
+    std::ofstream((root / "themes" / "BareXfwm" / "xfwm4" / "themerc").string()) << "button_offset=0\n";
     std::ofstream((root / "icons" / "Cursors" / "index.theme").string())
         << "[Icon Theme]\nName=Cursors\n";
     std::ofstream((root / "icons" / "Cursors" / "cursors" / "left_ptr").string()) << "x";
+    std::ofstream((root / "icons" / "Real" / "index.theme").string())
+        << "[Icon Theme]\nName=Real\nDirectories=16x16/apps\n";
+    std::ofstream((root / "icons" / "Real" / "16x16" / "apps" / "folder.png").string()) << "x";
+    std::ofstream((root / "icons" / "IndexOnly" / "index.theme").string())
+        << "[Icon Theme]\nName=Index Only\n";
   }
   const auto gtk = lcos::scan_gtk_themes({(root / "themes").string()});
-  EXPECT(gtk.size() == 1 && gtk[0].id == "Sample");
+  EXPECT(gtk.size() == 2);
+  bool saw_sample = false;
+  bool saw_plain = false;
+  for (const auto& theme : gtk) {
+    EXPECT(theme.id != "KeysOnly");
+    EXPECT(theme.id != "CommentOnly");
+    EXPECT(theme.id != "MissingEngine");
+    EXPECT(theme.id != "Hidden");
+    saw_sample = saw_sample || theme.id == "Sample";
+    saw_plain = saw_plain || theme.id == "PlainGtk2";
+  }
+  EXPECT(saw_sample && saw_plain);
   const auto xfwm = lcos::scan_xfwm_themes({(root / "themes").string()});
   EXPECT(xfwm.size() == 1 && xfwm[0].id == "Sample");
   const auto cursors = lcos::scan_cursor_themes({(root / "icons").string()});
   EXPECT(cursors.size() == 1 && cursors[0].id == "Cursors");
+  const auto icons = lcos::scan_icon_themes({(root / "icons").string()});
+  EXPECT(icons.size() == 1 && icons[0].id == "Real");
   fs::remove_all(root);
 
   std::string error;
@@ -761,6 +797,37 @@ void test_review_fixes() {
 
   EXPECT(lcos::priv_domain_for_action("remove-user") == lcos::PrivDomain::Accounts);
   EXPECT(lcos::priv_domain_for_action("set-locale") == lcos::PrivDomain::Locale);
+  EXPECT(lcos::valid_hostname("lcos-desk"));
+  EXPECT(lcos::valid_hostname("desk.example"));
+  EXPECT(lcos::valid_hostname(std::string(63, 'a')));
+  EXPECT(!lcos::valid_hostname(""));
+  EXPECT(!lcos::valid_hostname("-bad"));
+  EXPECT(!lcos::valid_hostname("bad-"));
+  EXPECT(!lcos::valid_hostname("bad name"));
+  EXPECT(!lcos::valid_hostname("under_score"));
+  EXPECT(!lcos::valid_hostname(".leading"));
+  EXPECT(!lcos::valid_hostname("trailing."));
+  EXPECT(!lcos::valid_hostname(std::string(64, 'a')));
+  EXPECT(!lcos::valid_hostname(std::string(65, 'b')));
+  const std::string hosts = "127.0.0.1 localhost\n127.0.1.1 oldbox\n# note\n127.0.1.10 other\n";
+  const std::string renamed = lcos::hosts_with_hostname(hosts, "lcos-desk");
+  EXPECT(renamed.find("127.0.0.1 localhost") != std::string::npos);
+  EXPECT(renamed.find("127.0.1.1\tlcos-desk\n") != std::string::npos);
+  EXPECT(renamed.find("oldbox") == std::string::npos);
+  EXPECT(renamed.find("# note") != std::string::npos);
+  EXPECT(renamed.find("127.0.1.10 other") != std::string::npos);
+  const std::string with_alias = lcos::hosts_with_hostname("127.0.0.1 localhost\n", "desk.example");
+  EXPECT(with_alias.find("127.0.1.1\tdesk.example desk\n") != std::string::npos);
+  EXPECT(lcos::hosts_with_hostname(hosts, "lcos-desk").find("127.0.1.1\tlcos-desk\n") !=
+         std::string::npos);
+
+  EXPECT(lcos::priv_domain_for_action("set-hostname") == lcos::PrivDomain::System);
+  EXPECT(lcos::priv_action_allowed(lcos::PrivDomain::System, "set-hostname"));
+  EXPECT(!lcos::priv_action_allowed(lcos::PrivDomain::Accounts, "set-hostname"));
+  EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::System, "hostname"));
+  EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::System, "hostname.live"));
+  EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::System, "hosts"));
+  EXPECT(!lcos::undo_file_belongs_to(lcos::PrivDomain::Accounts, "hosts"));
   EXPECT(lcos::priv_domain_for_action("set-timezone") == lcos::PrivDomain::System);
   EXPECT(!lcos::priv_action_allowed(lcos::PrivDomain::System, "remove-user"));
   EXPECT(lcos::priv_action_allowed(lcos::PrivDomain::Accounts, "set-autologin"));

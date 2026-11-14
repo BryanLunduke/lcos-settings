@@ -12,7 +12,7 @@
 #include <gtkmm/grid.h>
 #include <gtkmm/label.h>
 #include <gtkmm/listbox.h>
-#include <gtkmm/notebook.h>
+#include "ui_util.hpp"
 #include <gtkmm/spinbutton.h>
 #include <gtkmm/stack.h>
 
@@ -45,7 +45,7 @@ class PowerPage : public SettingsPage {
 
   XfconfStore& store_;
   UpowerClient upower_;
-  Gtk::Notebook notebook_;
+  SectionNotebook notebook_;
   Gtk::ListBox device_list_;
   Gtk::Grid detail_grid_;
   Gtk::Label device_empty_;

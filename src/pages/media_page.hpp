@@ -5,7 +5,7 @@
 #include "backends/xfconf_store.hpp"
 #include "pages/settings_page.hpp"
 
-#include <gtkmm/notebook.h>
+#include "ui_util.hpp"
 
 namespace lcos {
 
@@ -25,7 +25,7 @@ class MediaPage : public SettingsPage {
  private:
   XfconfStore& store_;
   int freeze_ = 0;
-  Gtk::Notebook notebook_;
+  SectionNotebook notebook_;
 };
 
 }  // namespace lcos

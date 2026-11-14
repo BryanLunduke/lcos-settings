@@ -92,7 +92,7 @@ lcos_settings_priv = executable(
 
 lcos_settings = executable(
   'lcos-settings',
-  files('src/main.cpp'),
+  files('src/main.cpp', 'src/widgets/drawn_controls.cpp'),
   backend_sources,
   page_sources,
   link_with: logic_lib,
@@ -175,6 +175,11 @@ configure_file(
 
 fs = import('fs')
 app_icon_sizes = ['16', '22', '24', '32', '48', '64', '96', '128', '256', '512']
+install_subdir(
+  'data/themes/LCOS Clearlooks Dark',
+  install_dir: join_paths(get_option('datadir'), 'themes'),
+)
+
 foreach size : app_icon_sizes
   icon = 'data/icons/hicolor/' + size + 'x' + size + '/apps/org.lunduke.LcosSettings.png'
   if fs.exists(icon)

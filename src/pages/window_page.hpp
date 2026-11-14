@@ -8,7 +8,7 @@
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/liststore.h>
-#include <gtkmm/notebook.h>
+#include "ui_util.hpp"
 #include <gtkmm/radiobutton.h>
 #include <gtkmm/scale.h>
 #include <gtkmm/treeview.h>
@@ -58,7 +58,7 @@ class WindowPage : public SettingsPage {
   XfconfStore& store_;
   Gtk::Window& parent_;
   int freeze_ = 0;
-  Gtk::Notebook notebook_;
+  SectionNotebook notebook_;
 
   Gtk::RadioButton click_focus_;
   Gtk::RadioButton follow_focus_;

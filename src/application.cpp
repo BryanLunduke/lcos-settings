@@ -4,6 +4,7 @@
 
 #include "display_minimal.hpp"
 #include "main_window.hpp"
+#include "widgets/drawn_controls.hpp"
 
 #include <gdk/gdkx.h>
 
@@ -136,7 +137,31 @@ void install_css() {
       "border-radius: 3px; min-width: 22px; min-height: 18px; margin: 0; }"
       "button.lcos-infobar { min-height: 28px; padding: 0 14px; border-radius: 4px; border-image: none; }"
       "dialog.lcos-keep { background-color: #edeceb; border: 1px solid #35475f; }"
-      "notebook header tabs tab { padding: 6px 14px; }");
+      "notebook header tabs tab { padding: 6px 14px; }"
+      "button.lcos-link-button { background-image: none; background-color: transparent; "
+      "border: none; border-image: none; box-shadow: none; color: #3f6597; padding: 0 2px; "
+      "min-width: 0; min-height: 0; font-weight: 400; }"
+      "button.lcos-link-button:hover { color: #2c4d78; }"
+      "box.lcos-sections button, stackswitcher.lcos-sections button { min-width: 0; min-height: 26px; "
+      "padding: 2px 12px; border-image: none; border-style: solid; border-width: 1px; "
+      "border-color: #9b968f; margin-left: -1px; border-radius: 0; color: #1a1a1a; font-weight: 400; "
+      "background-image: linear-gradient(to bottom, #fefefd, #f4f3f2 45%, #ebe9e7 55%, #e4e2df); "
+      "box-shadow: inset 0 1px 0 #fff; }"
+      "box.lcos-sections button:first-child, stackswitcher.lcos-sections button:first-child { "
+      "border-radius: 4px 0 0 4px; margin-left: 0; }"
+      "box.lcos-sections button:last-child, stackswitcher.lcos-sections button:last-child { "
+      "border-radius: 0 4px 4px 0; }"
+      "box.lcos-sections button.lcos-on, stackswitcher.lcos-sections button:checked { color: #ffffff; "
+      "font-weight: 700; border-color: #5279ad; "
+      "background-image: linear-gradient(to bottom, #b6cfee, #98b9e3 45%, #85a9d9 55%, #7ea3d4); "
+      "box-shadow: inset 0 1px 0 alpha(#fff, 0.55); }"
+      "scrolledwindow.lcos-list { border: 1px solid #cdc9c3; border-radius: 6px; "
+      "background-color: #ffffff; }"
+      "scrolledwindow.lcos-list treeview.view { background-color: #ffffff; color: #1a1a1a; }"
+      "scrolledwindow.lcos-list treeview.view:selected, scrolledwindow.lcos-list treeview.view:selected:focus { "
+      "background-color: #8fb2df; color: #ffffff; }"
+      "scrolledwindow.lcos-page scrollbar.vertical { min-width: 8px; }"
+      ".lcos-sidebar { padding-left: 8px; padding-right: 4px; }");
   Gtk::StyleContext::add_provider_for_screen(screen, css,
                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
@@ -154,6 +179,7 @@ void Application::on_startup() {
   Gtk::Application::on_startup();
   Gtk::Window::set_default_icon_name(kAppId);
   install_css();
+  install_drawn_controls();
   std::string error;
   if (!store_.init(&error)) {
     g_warning("xfconf: %s", error.c_str());

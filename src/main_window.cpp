@@ -44,41 +44,11 @@
 namespace lcos {
 namespace {
 
-constexpr int kSidebarWidth = 284;
-constexpr int kContentWidth = 748;
-
-class WidthClamp : public Gtk::Bin {
- public:
-  WidthClamp() { set_hexpand(true); }
-  void set_child(Gtk::Widget& child) { add(child); }
-
- protected:
-  Gtk::SizeRequestMode get_request_mode_vfunc() const override { return Gtk::SIZE_REQUEST_HEIGHT_FOR_WIDTH; }
-  void get_preferred_width_vfunc(int& minimum, int& natural) const override {
-    minimum = 280;
-    natural = kContentWidth;
-    if (get_child() != nullptr) {
-      int child_min = 0;
-      int child_nat = 0;
-      get_child()->get_preferred_width(child_min, child_nat);
-      minimum = std::min(minimum, std::max(0, child_min));
-    }
-  }
-  void on_size_allocate(Gtk::Allocation& allocation) override {
-    set_allocation(allocation);
-    Gtk::Widget* child = get_child();
-    if (child == nullptr || !child->get_visible()) {
-      return;
-    }
-    const int width = std::min(kContentWidth, allocation.get_width());
-    Gtk::Allocation inner;
-    inner.set_x(allocation.get_x() + std::max(0, (allocation.get_width() - width) / 2));
-    inner.set_y(allocation.get_y());
-    inner.set_width(width);
-    inner.set_height(allocation.get_height());
-    child->size_allocate(inner);
-  }
-};
+// Narrow enough to match the mockup, wide enough for a wrapped
+// "Removable Drives and Media" plus the icon.
+constexpr int kSidebarWidth = 220;
+constexpr int kWindowMinWidth = 900;
+constexpr int kWindowMinHeight = 600;
 
 std::string state_path() {
   return Glib::build_filename(Glib::get_user_config_dir(), "lcos-settings", "state.ini");
@@ -133,6 +103,7 @@ MainWindow::MainWindow(XfconfStore& store)
       apply_("_Apply", true),
       cancel_("_Cancel", true) {
   set_title("LCOS Command Center");
+  set_resizable(true);
   get_style_context()->add_class("lcos-app");
   set_icon_name("org.lunduke.LcosSettings");
   if (g_file_test("data/icons/hicolor/48x48/apps/org.lunduke.LcosSettings.png", G_FILE_TEST_EXISTS)) {
@@ -160,7 +131,7 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* startup = Gtk::manage(new StartupPage(store_, privileged_, *this));
   auto* software = Gtk::manage(new SoftwarePage());
   auto* overview = Gtk::manage(new OverviewPage(
-      *appearance, *sound, *users, pulse_,
+      *appearance, *sound, *users, pulse_, privileged_,
       [this](const std::string& id) { show_page(id); },
       [this](const std::string& id) { mark_page(id); }));
 
@@ -205,6 +176,10 @@ MainWindow::MainWindow(XfconfStore& store)
   side_scroll_.add(*side);
   side_box->pack_start(side_scroll_, Gtk::PACK_EXPAND_WIDGET);
   side_box->set_size_request(kSidebarWidth, -1);
+  side_box->set_halign(Gtk::ALIGN_START);
+  side_box->set_valign(Gtk::ALIGN_FILL);
+  side_box->set_hexpand(false);
+  side_box->set_vexpand(true);
   side_chrome_ = side_box;
   body->pack_start(*side_box, Gtk::PACK_SHRINK);
 
@@ -269,11 +244,10 @@ MainWindow::MainWindow(XfconfStore& store)
   infobar_reveal_.set_transition_duration(duration);
   infobar_reveal_.set_reveal_child(false);
   column->pack_start(infobar_reveal_, Gtk::PACK_SHRINK);
+  column->set_hexpand(true);
+  column->set_halign(Gtk::ALIGN_FILL);
   column->pack_start(stack_, Gtk::PACK_EXPAND_WIDGET);
-
-  auto* clamp = Gtk::manage(new WidthClamp());
-  clamp->set_child(*column);
-  body->pack_start(*clamp, Gtk::PACK_EXPAND_WIDGET);
+  body->pack_start(*column, Gtk::PACK_EXPAND_WIDGET);
   root->pack_start(*body, Gtk::PACK_EXPAND_WIDGET);
 
   auto* footer = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
@@ -386,7 +360,6 @@ void MainWindow::build_sidebar() {
     }
     auto* row = Gtk::manage(new Gtk::ListBoxRow());
     row->get_style_context()->add_class("lcos-nav");
-    row->set_size_request(-1, 28);
     row->set_tooltip_text(item.page->title());
     auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 9));
     line->set_margin_top(0);
@@ -398,8 +371,14 @@ void MainWindow::build_sidebar() {
     nav_images_.push_back(image);
     auto* label = Gtk::manage(new Gtk::Label(item.title));
     label->set_halign(Gtk::ALIGN_START);
+    label->set_valign(Gtk::ALIGN_CENTER);
     label->set_hexpand(true);
-    label->set_ellipsize(Pango::ELLIPSIZE_NONE);
+    label->set_xalign(0);
+    label->set_line_wrap(true);
+    label->set_line_wrap_mode(Pango::WRAP_WORD);
+    label->set_lines(2);
+    label->set_max_width_chars(16);
+    label->set_ellipsize(Pango::ELLIPSIZE_END);
     row_labels_.push_back(label);
     auto* dot = Gtk::manage(new Gtk::Label("●"));
     dot->get_style_context()->add_class("lcos-dot");
@@ -551,9 +530,12 @@ void MainWindow::fit_to_screen() {
   const Gdk::Rectangle work = screen->get_monitor_workarea(monitor);
   const int max_w = std::max(320, work.get_width() - 8);
   const int max_h = std::max(240, work.get_height() - 8);
+  // The minimum is the width of the widest page (the overview card, with the
+  // quick settings fully visible) plus the fixed sidebar. A smaller screen
+  // still gets a window that fits, and the sidebar collapses to icons.
   Gdk::Geometry hints;
-  hints.min_width = std::min(640, max_w);
-  hints.min_height = std::min(400, max_h);
+  hints.min_width = std::min(kWindowMinWidth, max_w);
+  hints.min_height = std::min(kWindowMinHeight, max_h);
   set_geometry_hints(*this, hints, Gdk::HINT_MIN_SIZE);
   set_default_size(std::min(1100, max_w), std::min(720, max_h));
 }
@@ -858,14 +840,27 @@ void MainWindow::dump_pages(const std::string& directory) {
       if (!suffix.empty()) {
         shot.name += "-" + suffix;
       }
+      shot.width = 1100;
+      shot.height = 720;
       shots_.push_back(shot);
     }
   }
-  const int overview = std::max(0, nav_index("overview"));
+  const int overview_index = std::max(0, nav_index("overview"));
+  const int pin_sizes[][2] = {{900, 600}, {1100, 720}, {1400, 900}};
+  for (const auto& size : pin_sizes) {
+    Shot pinned;
+    pinned.page = overview_index;
+    pinned.name = std::string("sidebar-overview-") + std::to_string(size[0]) + "x" +
+                  std::to_string(size[1]);
+    pinned.width = size[0];
+    pinned.height = size[1];
+    shots_.push_back(pinned);
+  }
+  const int overview = overview_index;
   const int display = std::max(0, nav_index("display"));
   const int appearance = std::max(0, nav_index("appearance"));
   const int users = std::max(0, nav_index("users"));
-  const int sizes[][2] = {{1100, 720}, {1000, 550}};
+  const int sizes[][2] = {{900, 600}, {1100, 720}, {1400, 900}};
   for (const auto& size : sizes) {
     for (int page : {overview, display, appearance, users}) {
       Shot shot;
@@ -898,8 +893,8 @@ void MainWindow::dump_pages(const std::string& directory) {
   compact.page = static_cast<int>(nav_.size()) - 1;
   compact.frame = 1;
   compact.name = "window-short";
-  compact.width = 1000;
-  compact.height = 550;
+  compact.width = 900;
+  compact.height = 600;
   shots_.push_back(compact);
   shot_index_ = 0;
   dump_phase_ = 0;
@@ -919,10 +914,13 @@ bool MainWindow::dump_step() {
     }
     if (shot.width > 0 && shot.height > 0) {
       resize(shot.width, shot.height);
-    } else if (shot_index_ == 0) {
-      resize(1200, 1040);
+    } else {
+      resize(1100, 720);
     }
     select_nav(shot.page);
+    if (shot.width <= 0) {
+      resize(1100, 720);
+    }
     nav_[static_cast<std::size_t>(shot.page)].page->prepare_screenshot(shot.frame);
     if (shot.unsaved) {
       if (auto* users = dynamic_cast<UsersPage*>(nav_[static_cast<std::size_t>(shot.page)].page)) {

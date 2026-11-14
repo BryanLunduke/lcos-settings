@@ -1,0 +1,355 @@
+/* LCOS Clearlooks Dark
+ * Original theme for the Lunduke Computer Operating System.
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ * Copyright 2026 The Lunduke Journal
+ *
+ * Clearlooks is the name of a well-known GTK look. This file is not
+ * derived from Clearlooks-Phenix or any other third-party theme.
+ */
+
+@define-color theme_bg_color #2e3033;
+@define-color theme_fg_color #e6e4e0;
+@define-color theme_base_color #1e2023;
+@define-color theme_text_color #e6e4e0;
+@define-color theme_selected_bg_color #4d6f99;
+@define-color theme_selected_fg_color #ffffff;
+@define-color borders #151618;
+@define-color accent #6f97c9;
+@define-color button_top #4e5156;
+@define-color button_mid #3c3f44;
+@define-color button_bottom #34373b;
+@define-color insensitive_fg #8d8982;
+
+* {
+  -GtkArrow-arrow-scaling: 0.8;
+  outline-color: alpha(@accent, 0.8);
+  outline-style: solid;
+  outline-offset: -2px;
+}
+
+window, dialog, .background, messagedialog, .titlebar, decoration {
+  background-color: @theme_bg_color;
+  color: @theme_fg_color;
+}
+
+headerbar, .titlebar, menubar {
+  background-image: linear-gradient(to bottom, #3d4e66, #2c3a4d);
+  color: #f4f7fb;
+  border-bottom: 1px solid #1a2430;
+  box-shadow: inset 0 1px 0 alpha(#fff, 0.18);
+}
+
+headerbar label, .titlebar label, menubar label {
+  color: #f4f7fb;
+}
+
+button {
+  background-image: linear-gradient(to bottom, @button_top, @button_mid 48%, @button_bottom);
+  border: 1px solid #1c1e21;
+  border-radius: 4px;
+  color: @theme_fg_color;
+  box-shadow: inset 0 1px 0 alpha(#fff, 0.14);
+  padding: 3px 10px;
+  min-height: 22px;
+}
+
+button:hover {
+  background-image: linear-gradient(to bottom, #5a5e64, #45484d 48%, #3c3f44);
+}
+
+button:active, button:checked {
+  background-image: linear-gradient(to bottom, #3a4e68, #4d6f99);
+  color: #ffffff;
+  box-shadow: inset 0 1px 2px alpha(#000, 0.35);
+}
+
+button:disabled {
+  color: @insensitive_fg;
+  background-image: none;
+  background-color: #333538;
+  box-shadow: none;
+}
+
+button.suggested-action, button.destructive-action {
+  color: #ffffff;
+}
+
+entry, spinbutton, spinbutton entry {
+  background-color: @theme_base_color;
+  color: @theme_text_color;
+  border: 1px solid #101114;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 2px alpha(#000, 0.45);
+  caret-color: @theme_text_color;
+}
+
+entry:focus, spinbutton:focus {
+  border-color: @accent;
+}
+
+entry:disabled {
+  color: @insensitive_fg;
+  background-color: #2a2c2f;
+}
+
+entry selection, textview selection, label selection {
+  background-color: @theme_selected_bg_color;
+  color: @theme_selected_fg_color;
+}
+
+combobox button, combobox box.linked button {
+  background-image: linear-gradient(to bottom, #f7f6f4, #e4e2df);
+  color: #1a1a1a;
+  border-color: #9b968f;
+}
+
+textview, textview text {
+  background-color: @theme_base_color;
+  color: @theme_text_color;
+}
+
+check, radio {
+  background-color: #1e2023;
+  border: 1px solid #6a6e74;
+  color: #ffffff;
+  min-width: 16px;
+  min-height: 16px;
+}
+
+check {
+  border-radius: 3px;
+}
+
+radio {
+  border-radius: 100%;
+}
+
+check:checked, radio:checked {
+  background-color: @accent;
+  border-color: #3d628c;
+  color: #ffffff;
+}
+
+check:disabled, radio:disabled {
+  background-color: #2a2c2f;
+  color: @insensitive_fg;
+}
+
+switch {
+  background-color: #3a3c40;
+  border: 1px solid #1c1e21;
+  border-radius: 11px;
+  min-width: 46px;
+  min-height: 22px;
+}
+
+switch:checked {
+  background-color: @accent;
+  border-color: #3d628c;
+}
+
+switch slider {
+  background-color: #ffffff;
+  border-radius: 100%;
+  min-width: 16px;
+  min-height: 16px;
+}
+
+scale trough {
+  background-color: #1e2023;
+  border: 1px solid #101114;
+  border-radius: 4px;
+  min-height: 8px;
+}
+
+scale highlight {
+  background-color: @accent;
+  border-radius: 4px;
+}
+
+scale slider {
+  background-color: #f4f3f1;
+  border: 1px solid #6a6e74;
+  border-radius: 100%;
+  min-width: 16px;
+  min-height: 16px;
+}
+
+scrollbar {
+  background-color: transparent;
+}
+
+scrollbar trough {
+  background-color: #26282b;
+  border-radius: 4px;
+}
+
+scrollbar slider {
+  background-color: #6a6e74;
+  border-radius: 4px;
+  min-width: 8px;
+  min-height: 8px;
+}
+
+scrollbar slider:hover {
+  background-color: #8a8e94;
+}
+
+treeview.view, list, row, iconview, flowbox {
+  background-color: @theme_base_color;
+  color: @theme_text_color;
+}
+
+treeview.view:selected, treeview.view:selected:focus,
+list row:selected, row:selected {
+  background-color: @theme_selected_bg_color;
+  color: @theme_selected_fg_color;
+}
+
+treeview header button {
+  background-image: linear-gradient(to bottom, #3a3c40, #2e3033);
+  color: @theme_fg_color;
+  border-bottom: 1px solid #151618;
+}
+
+notebook {
+  background-color: transparent;
+}
+
+notebook header {
+  background-color: transparent;
+}
+
+notebook header tabs tab {
+  background-image: linear-gradient(to bottom, #4a4d52, #3a3d42);
+  border: 1px solid #1c1e21;
+  color: @theme_fg_color;
+  padding: 4px 12px;
+}
+
+notebook header tabs tab:checked {
+  background-image: linear-gradient(to bottom, #6f97c9, #4d6f99);
+  color: #ffffff;
+  border-color: #3d628c;
+}
+
+notebook stack {
+  background-color: transparent;
+}
+
+menu, .menu, popover, .popup {
+  background-color: #32353a;
+  color: @theme_fg_color;
+  border: 1px solid #151618;
+}
+
+menuitem, menuitem label {
+  color: @theme_fg_color;
+}
+
+menuitem:hover, menuitem:hover label {
+  background-color: @theme_selected_bg_color;
+  color: #ffffff;
+}
+
+menubar > menuitem:hover {
+  background-color: alpha(#fff, 0.12);
+}
+
+toolbar, searchbar {
+  background-color: #32353a;
+  border-color: #151618;
+}
+
+frame, .frame, border {
+  border-color: #4a4d52;
+}
+
+separator {
+  background-color: #4a4d52;
+  min-height: 1px;
+  min-width: 1px;
+}
+
+tooltip, tooltip.background {
+  background-color: #1a1c1f;
+  color: #f4f3f1;
+  border: 1px solid #4a4d52;
+}
+
+tooltip label {
+  color: #f4f3f1;
+}
+
+progressbar trough {
+  background-color: #1e2023;
+  border-radius: 4px;
+}
+
+progressbar progress {
+  background-image: linear-gradient(to bottom, #8fb2df, #4d6f99);
+  border-radius: 4px;
+}
+
+infobar {
+  background-color: #3d3420;
+  color: #f4e7c4;
+  border: 1px solid #8a7040;
+}
+
+calendar {
+  background-color: @theme_base_color;
+  color: @theme_text_color;
+}
+
+calendar:selected {
+  background-color: @theme_selected_bg_color;
+  color: #ffffff;
+}
+
+label, .view {
+  color: @theme_fg_color;
+}
+
+label:disabled {
+  color: @insensitive_fg;
+}
+
+paned separator {
+  background-color: #3a3c40;
+}
+
+stackswitcher button {
+  border-radius: 0;
+}
+
+stackswitcher button:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+stackswitcher button:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+stackswitcher button:checked {
+  background-image: linear-gradient(to bottom, #6f97c9, #4d6f99);
+  color: #ffffff;
+}
+
+selection {
+  background-color: @theme_selected_bg_color;
+  color: @theme_selected_fg_color;
+}
+
+.sidebar, placessidebar {
+  background-color: #26282b;
+  color: @theme_fg_color;
+}
+
+link {
+  color: #9ec0e8;
+}
+
+link:hover {
+  color: #c5daf3;
+}

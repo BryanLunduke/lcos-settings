@@ -6,6 +6,12 @@ Files: *
 Copyright: 2026 The Lunduke Journal
 License: GPL-3.0-or-later
 
+Files: data/themes/LCOS Clearlooks Dark/*
+Copyright: 2026 The Lunduke Journal
+License: GPL-3.0-or-later
+Comment: Original dark Clearlooks-style theme written for LCOS.
+ Not copied from Clearlooks-Phenix or another third-party theme.
+
 License: GPL-3.0-or-later
  This program is free software: you can redistribute it and/or modify
  it under the terms of the GNU General Public License as published by
