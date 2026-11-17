@@ -7,6 +7,7 @@
 #include <gdkmm/general.h>
 #include <glibmm/main.h>
 #include <gtkmm/comboboxtext.h>
+#include <gtkmm/window.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/stackswitcher.h>
 #include <gtkmm/switch.h>
@@ -46,18 +47,41 @@ void rounded_rect(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, d
 }
 
 bool widget_focused(Gtk::Widget& widget) {
+  const auto flags = widget.get_state_flags();
+  if ((flags & Gtk::STATE_FLAG_FOCUSED) != static_cast<Gtk::StateFlags>(0)) {
+    return true;
+  }
   if (widget.has_focus() || widget.is_focus()) {
     return true;
+  }
+  if (auto* top = dynamic_cast<Gtk::Window*>(widget.get_toplevel())) {
+    if (Gtk::Widget* focus = top->get_focus()) {
+      if (focus == &widget || widget.is_ancestor(*focus) || focus->is_ancestor(widget)) {
+        return true;
+      }
+    }
   }
   bool focused = false;
   if (auto* container = dynamic_cast<Gtk::Container*>(&widget)) {
     container->forall([&](Gtk::Widget& child) {
-      if (!focused && (child.has_focus() || child.is_focus())) {
+      if (!focused && widget_focused(child)) {
         focused = true;
       }
     });
   }
   return focused;
+}
+
+void stroke_focus_ring(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, double w,
+                       double h, double radius) {
+  rounded_rect(cr, x, y, w, h, radius);
+  cr->set_source_rgba(1, 1, 1, 0.9);
+  cr->set_line_width(3.0);
+  cr->stroke();
+  rounded_rect(cr, x + 1.2, y + 1.2, w - 2.4, h - 2.4, std::max(1.0, radius - 1.2));
+  cr->set_source_rgb(0.22, 0.40, 0.62);
+  cr->set_line_width(2.0);
+  cr->stroke();
 }
 
 void fade_combo_children(Gtk::ComboBox& combo) {
@@ -108,10 +132,7 @@ bool draw_switch(Gtk::Switch& sw, const Cairo::RefPtr<Cairo::Context>& cr) {
   cr->set_line_width(1);
   cr->stroke();
   if (widget_focused(sw)) {
-    rounded_rect(cr, 1.5, 1.5, width - 3, height - 3, track_r);
-    cr->set_source_rgba(1, 1, 1, 0.85);
-    cr->set_line_width(1.4);
-    cr->stroke();
+    stroke_focus_ring(cr, 1.0, 1.0, width - 2.0, height - 2.0, track_r);
   }
   if (!enabled) {
     cr->pop_group_to_source();
@@ -191,12 +212,16 @@ bool draw_combo(Gtk::ComboBox& combo, const Cairo::RefPtr<Cairo::Context>& cr) {
   cr->set_source(fill);
   cr->fill_preserve();
   if (focused) {
-    cr->set_source_rgb(111.0 / 255.0, 151.0 / 255.0, 201.0 / 255.0);
+    cr->set_source_rgb(0.22, 0.40, 0.62);
+    cr->set_line_width(2.4);
   } else {
     cr->set_source_rgb(155.0 / 255.0, 150.0 / 255.0, 143.0 / 255.0);
+    cr->set_line_width(1);
   }
-  cr->set_line_width(1);
   cr->stroke();
+  if (focused) {
+    stroke_focus_ring(cr, 2.0, 2.0, width - 4.0, height - 4.0, 3.0);
+  }
 
   const double chevron_x = width - 16;
   const double chevron_y = height / 2.0;
@@ -257,6 +282,9 @@ void dress_scroll(Gtk::ScrolledWindow& scroll) {
 }
 
 void dress(Gtk::Widget& widget) {
+  if (GTK_IS_FILE_CHOOSER_BUTTON(widget.gobj())) {
+    return;
+  }
   if (auto* combo = dynamic_cast<Gtk::ComboBox*>(&widget)) {
     install_combo(*combo);
   }
@@ -274,6 +302,9 @@ void dress(Gtk::Widget& widget) {
 gboolean on_realize(GSignalInvocationHint*, guint, const GValue* values, gpointer) {
   auto* gwidget = GTK_WIDGET(g_value_get_object(values));
   if (gwidget == nullptr) {
+    return TRUE;
+  }
+  if (GTK_IS_FILE_CHOOSER_BUTTON(gwidget)) {
     return TRUE;
   }
   if (!GTK_IS_COMBO_BOX(gwidget) && !GTK_IS_SWITCH(gwidget) && !GTK_IS_SCROLLED_WINDOW(gwidget) &&

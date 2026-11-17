@@ -6,6 +6,8 @@
 #include "logic/text.hpp"
 #include "ui_util.hpp"
 
+#include "backends/xfconf_store.hpp"
+
 #include <gdk/gdkkeysyms.h>
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
@@ -79,8 +81,10 @@ bool ask_command(Gtk::Window& parent, std::string& command, bool& startup) {
   grid->attach(*browse, 2, 0, 1, 1);
   grid->attach(*notify, 1, 1, 2, 1);
   dialog.get_content_area()->pack_start(*grid, Gtk::PACK_SHRINK);
+  entry->set_activates_default(true);
   dialog.add_button("Cancel", Gtk::RESPONSE_CANCEL);
   dialog.add_button("OK", Gtk::RESPONSE_OK);
+  dialog.set_default_response(Gtk::RESPONSE_OK);
   dialog.show_all();
   browse->signal_clicked().connect([&] {
     Gtk::FileChooserDialog chooser(dialog, "Command", Gtk::FILE_CHOOSER_ACTION_OPEN);
@@ -96,6 +100,42 @@ bool ask_command(Gtk::Window& parent, std::string& command, bool& startup) {
   command = trim_copy(entry->get_text());
   startup = notify->get_active();
   return !command.empty();
+}
+
+std::map<std::string, std::string> string_props(XfconfStore& store, const std::string& channel,
+                                                const std::string& base) {
+  std::map<std::string, std::string> values;
+  for (const auto& entry : store.list(channel, base)) {
+    if (entry.second.type == PropType::String) {
+      values[entry.first] = entry.second.s;
+    }
+  }
+  return values;
+}
+
+bool confirm_shortcut_conflict(XfconfStore& store, Gtk::Window& parent, const std::string& accel,
+                               const std::string& ignore_command, const std::string& ignore_feature) {
+  const auto hits = conflicting_shortcuts(
+      accel, string_props(store, kShortcutsChannel, "/commands"),
+      string_props(store, kShortcutsChannel, "/xfwm4"), string_props(store, "xfwm4", "/"),
+      ignore_command, ignore_feature);
+  if (hits.empty()) {
+    return true;
+  }
+  std::string body = accel + " is already used.";
+  for (const auto& hit : hits) {
+    body += "\n";
+    body += hit.scope;
+    body += ": ";
+    body += hit.detail;
+  }
+  Gtk::MessageDialog dialog(parent, "Replace the existing shortcut?", false, Gtk::MESSAGE_QUESTION,
+                            Gtk::BUTTONS_NONE, true);
+  dialog.set_secondary_text(body);
+  dialog.add_button("Cancel", Gtk::RESPONSE_CANCEL);
+  dialog.add_button("Replace", Gtk::RESPONSE_OK);
+  dialog.set_default_response(Gtk::RESPONSE_CANCEL);
+  return dialog.run() == Gtk::RESPONSE_OK;
 }
 
 }  // namespace
@@ -128,12 +168,12 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
   blink_time_.set_digits(0);
   numlock_.set_label("Restore Num Lock at login");
   FormGrid behavior_form;
-  behavior_form.add_full(repeat_);
+  behavior_form.add_control(repeat_);
   behavior_form.add("Delay (ms)", delay_);
   behavior_form.add("Speed (per second)", rate_);
-  behavior_form.add_full(blink_);
+  behavior_form.add_control(blink_);
   behavior_form.add("Blink time (ms)", blink_time_);
-  behavior_form.add_full(numlock_);
+  behavior_form.add_control(numlock_);
   auto* test = Gtk::manage(new Gtk::Entry());
   test->set_placeholder_text("Type here to try key repeat");
   behavior_form.add("Test", *test);
@@ -180,18 +220,22 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
   shortcuts_view_.append_column("Shortcut", shortcut_columns_.accel);
   shortcuts_view_.append_column("Command", shortcut_columns_.command);
   shortcuts_view_.append_column("From", shortcut_columns_.origin);
+  fit_tree_view(layouts_view_);
+  fit_tree_view(shortcuts_view_);
   auto* shortcut_scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*shortcut_scroll);
   shortcut_scroll->set_size_request(-1, -1);
   shortcut_scroll->add(shortcuts_view_);
   shortcuts->pack_start(*shortcut_scroll, Gtk::PACK_SHRINK);
   auto* shortcut_buttons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
-  auto* add_shortcut = Gtk::manage(new Gtk::Button("Add"));
-  auto* edit_shortcut = Gtk::manage(new Gtk::Button("Edit"));
+  auto* add_shortcut = Gtk::manage(new Gtk::Button("Add…"));
+  auto* edit_shortcut = Gtk::manage(new Gtk::Button("Edit…"));
   auto* remove_shortcut = Gtk::manage(new Gtk::Button("Remove"));
+  auto* reset_shortcut = Gtk::manage(new Gtk::Button("Reset to defaults"));
   shortcut_buttons->pack_start(*add_shortcut, Gtk::PACK_SHRINK);
   shortcut_buttons->pack_start(*edit_shortcut, Gtk::PACK_SHRINK);
   shortcut_buttons->pack_start(*remove_shortcut, Gtk::PACK_SHRINK);
+  shortcut_buttons->pack_start(*reset_shortcut, Gtk::PACK_SHRINK);
   shortcuts->pack_start(*shortcut_buttons, Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Application shortcuts", *shortcuts), Gtk::PACK_SHRINK);
 
@@ -334,6 +378,19 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
   add_shortcut->signal_clicked().connect(sigc::mem_fun(*this, &KeyboardPage::add_shortcut));
   edit_shortcut->signal_clicked().connect(sigc::mem_fun(*this, &KeyboardPage::edit_shortcut));
   remove_shortcut->signal_clicked().connect(sigc::mem_fun(*this, &KeyboardPage::remove_shortcut));
+  reset_shortcut->signal_clicked().connect([this] {
+    Gtk::MessageDialog dialog(parent_, "Reset application shortcuts?", false, Gtk::MESSAGE_QUESTION,
+                              Gtk::BUTTONS_NONE, true);
+    dialog.set_secondary_text("Custom application shortcuts from this visit can be restored with Cancel.");
+    dialog.add_button("Cancel", Gtk::RESPONSE_CANCEL);
+    dialog.add_button("Reset", Gtk::RESPONSE_OK);
+    dialog.set_default_response(Gtk::RESPONSE_CANCEL);
+    if (dialog.run() != Gtk::RESPONSE_OK) {
+      return;
+    }
+    store_.reset(kShortcutsChannel, kShortcutCustomBase, true);
+    load_shortcuts();
+  });
 
   load_rules();
   load_behavior();
@@ -523,18 +580,8 @@ void KeyboardPage::add_shortcut() {
   if (grab.run() != Gtk::RESPONSE_OK || grab.accel.empty()) {
     return;
   }
-  for (auto row : shortcuts_->children()) {
-    const std::string existing = static_cast<Glib::ustring>((*row)[shortcut_columns_.accel]);
-    if (existing == grab.accel) {
-      Gtk::MessageDialog dialog(parent_, "Replace the existing shortcut?", false,
-                                Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO, true);
-      dialog.set_secondary_text(existing + " currently runs " +
-                                static_cast<Glib::ustring>((*row)[shortcut_columns_.command]));
-      if (dialog.run() != Gtk::RESPONSE_YES) {
-        return;
-      }
-      break;
-    }
+  if (!confirm_shortcut_conflict(store_, parent_, grab.accel, "", "")) {
+    return;
   }
   store_.set_string(kShortcutsChannel, shortcut_command_path(true, grab.accel), command);
   store_.set_bool(kShortcutsChannel, shortcut_notify_path(true, grab.accel), startup);
@@ -561,6 +608,9 @@ void KeyboardPage::edit_shortcut() {
       return;
     }
     accel = grab.accel;
+    if (!confirm_shortcut_conflict(store_, parent_, accel, command, "")) {
+      return;
+    }
   }
   if (accel != previous) {
     store_.reset(kShortcutsChannel, shortcut_command_path(true, previous), true);

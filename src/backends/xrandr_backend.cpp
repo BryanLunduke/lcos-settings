@@ -2,6 +2,7 @@
 
 #include "xrandr_backend.hpp"
 
+#include "logic/display_layout.hpp"
 #include "logic/names.hpp"
 
 #include <glib.h>
@@ -45,7 +46,8 @@ void set_crtc_matrix(Display* display, RRCrtc crtc, double matrix) {
   XSync(display, False);
 }
 
-std::string edid_checksum(Display* display, RROutput output, const XRROutputInfo* info) {
+std::string edid_checksum(Display* display, RROutput output, const XRROutputInfo* info,
+                          std::string* name_out) {
   Atom edid_atom = XInternAtom(display, "EDID", True);
   if (edid_atom != None) {
     Atom actual_type = None;
@@ -57,6 +59,9 @@ std::string edid_checksum(Display* display, RROutput output, const XRROutputInfo
                              AnyPropertyType, &actual_type, &actual_format, &count,
                              &after, &data) == Success &&
         data != nullptr && actual_format == 8 && count >= 128) {
+      if (name_out != nullptr && name_out->empty()) {
+        *name_out = edid_monitor_name(data, static_cast<std::size_t>(count));
+      }
       gchar* sum = g_compute_checksum_for_data(G_CHECKSUM_SHA1, data, 128);
       std::string hex = sum != nullptr ? sum : "";
       g_free(sum);
@@ -190,8 +195,9 @@ std::vector<OutputConfig> XrandrBackend::read() {
     }
     OutputConfig output;
     output.name = output_xfconf_name(info->name);
-    output.edid = edid_checksum(display_, resources->outputs[i], info);
-    output.friendly = friendly_output_name(info->name, "");
+    std::string edid_name;
+    output.edid = edid_checksum(display_, resources->outputs[i], info, &edid_name);
+    output.friendly = friendly_output_name(info->name, edid_name);
     output.primary = resources->outputs[i] == primary;
     output.scale = 1.0;
     output.mm_width = info->mm_width;
@@ -208,6 +214,7 @@ std::vector<OutputConfig> XrandrBackend::read() {
         stored.width = static_cast<int>(mode.width);
         stored.height = static_cast<int>(mode.height);
         stored.refresh = mode_refresh_hz(mode.dotClock, mode.hTotal, mode.vTotal);
+        stored.preferred = info->npreferred > 0 && m < info->npreferred;
         output.modes.push_back(stored);
       }
     }

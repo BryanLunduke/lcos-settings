@@ -25,11 +25,12 @@ class DateTimePage : public SettingsPage {
   DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window& parent);
   ~DateTimePage() override;
 
-  Glib::ustring title() const override { return "Date & Time"; }
+  Glib::ustring title() const override { return "Date and Time"; }
   Glib::ustring summary() const override {
-    return "Time zone, clock, and automatic time. Administrator changes are undone by Cancel.";
+    return "Time zone, clock, and whether the time is set automatically.";
   }
   void on_page_shown() override;
+  void reload_from_store() override { on_page_shown(); }
 
  private:
   class ZoneColumns : public Gtk::TreeModel::ColumnRecord {
@@ -55,6 +56,7 @@ class DateTimePage : public SettingsPage {
   std::string current_zone() const;
 
   Gtk::Label* now_ = nullptr;
+  Gtk::Label* zone_now_ = nullptr;
   Gtk::Label* clock_note_ = nullptr;
   Gtk::Entry search_;
   ZoneColumns zone_columns_;

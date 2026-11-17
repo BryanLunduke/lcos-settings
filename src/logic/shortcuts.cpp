@@ -2,6 +2,8 @@
 
 #include "shortcuts.hpp"
 
+#include "wm_shortcuts.hpp"
+
 namespace lcos {
 namespace {
 
@@ -90,6 +92,62 @@ std::vector<Shortcut> merge_shortcuts(
     rows.push_back(std::move(entry.second));
   }
   return rows;
+}
+
+std::vector<ShortcutConflict> conflicting_shortcuts(
+    const std::string& accel, const std::map<std::string, std::string>& commands,
+    const std::map<std::string, std::string>& window_shortcuts,
+    const std::map<std::string, std::string>& xfwm_properties,
+    const std::string& ignore_command, const std::string& ignore_feature) {
+  std::vector<ShortcutConflict> hits;
+  if (accel.empty()) {
+    return hits;
+  }
+  for (const auto& row : merge_shortcuts(commands)) {
+    if (row.accel != accel || row.command.empty()) {
+      continue;
+    }
+    if (!ignore_command.empty() && row.command == ignore_command) {
+      continue;
+    }
+    ShortcutConflict hit;
+    hit.scope = "Application";
+    hit.detail = row.command;
+    hits.push_back(std::move(hit));
+  }
+  for (const auto& row : merge_wm_shortcuts(window_shortcuts)) {
+    if (row.accel != accel || row.feature.empty()) {
+      continue;
+    }
+    if (!ignore_feature.empty() && row.feature == ignore_feature) {
+      continue;
+    }
+    ShortcutConflict hit;
+    hit.scope = "Window manager";
+    const char* label = wm_feature_label(row.feature);
+    hit.detail = (label != nullptr && label[0] != '\0') ? label : row.label;
+    hits.push_back(std::move(hit));
+  }
+  for (const auto& entry : xfwm_properties) {
+    if (entry.second != accel) {
+      continue;
+    }
+    bool already = false;
+    for (const auto& hit : hits) {
+      if (hit.detail == entry.first) {
+        already = true;
+        break;
+      }
+    }
+    if (already) {
+      continue;
+    }
+    ShortcutConflict hit;
+    hit.scope = "Window manager";
+    hit.detail = entry.first;
+    hits.push_back(std::move(hit));
+  }
+  return hits;
 }
 
 }  // namespace lcos

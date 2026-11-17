@@ -29,7 +29,8 @@ class AppearancePage : public SettingsPage {
   bool dark_style_available() const;
   bool dark_style_on() const;
   void set_dark_style(bool on);
-  void reload_from_store() { load(); }
+  void reload_from_store() override { load(); }
+  void on_page_shown() override { load(); }
 
  private:
   void load();

@@ -42,24 +42,24 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   auto* out = make_vbox(8);
   FormGrid out_form;
   out_form.add("Device", output_);
-  out_form.add("Port", output_port_);
+  output_port_label_ = out_form.add("Port", output_port_);
   out_form.add("Volume", output_volume_);
-  out_form.add_full(output_mute_);
+  out_form.add_control(output_mute_);
   out->pack_start(out_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Output", *out), Gtk::PACK_SHRINK);
 
   auto* in = make_vbox(8);
   FormGrid in_form;
   in_form.add("Device", input_);
-  in_form.add("Port", input_port_);
+  input_port_label_ = in_form.add("Port", input_port_);
   in_form.add("Volume", input_volume_);
-  in_form.add_full(input_mute_);
+  in_form.add_control(input_mute_);
   in->pack_start(in_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Input", *in), Gtk::PACK_SHRINK);
 
   auto* card = make_vbox(8);
   FormGrid card_form;
-  card_form.add("Profile", profile_);
+  profile_label_ = card_form.add("Profile", profile_);
   card->pack_start(card_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Sound card", *card), Gtk::PACK_SHRINK);
 
@@ -71,8 +71,8 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   input_feedback_.set_label("Input feedback sounds");
   FormGrid event_form;
   event_form.add("Sound theme", sound_theme_);
-  event_form.add_full(event_sounds_);
-  event_form.add_full(input_feedback_);
+  event_form.add_control(event_sounds_);
+  event_form.add_control(input_feedback_);
   events->pack_start(event_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Event sounds", *events), Gtk::PACK_SHRINK);
 
@@ -320,10 +320,12 @@ void SoundPage::take_snapshot() {
   }
   profile_snapshot_.clear();
   profile_card_ = 0;
+  have_profile_card_ = false;
   const PaDevice* owner = sink != nullptr ? sink : source;
   if (owner != nullptr) {
     if (const PaCard* card = card_for(owner->card)) {
       profile_card_ = card->index;
+      have_profile_card_ = true;
       profile_snapshot_ = card->active_profile;
     }
   }
@@ -432,7 +434,7 @@ void SoundPage::revert_page() {
       pulse_.set_source_port(source->index, input_snapshot_.port);
     }
   }
-  if (edit_.profile && profile_card_ != 0 && !profile_snapshot_.empty()) {
+  if (edit_.profile && have_profile_card_ && !profile_snapshot_.empty()) {
     pulse_.set_card_profile(profile_card_, profile_snapshot_);
   }
   std::vector<bool> used(pulse_.state().inputs.size(), false);
@@ -576,12 +578,15 @@ void SoundPage::refresh() {
     combo.remove_all();
     if (device == nullptr) {
       combo.set_sensitive(false);
+      combo.set_visible(false);
       return;
     }
     for (const auto& port : device->ports) {
       combo.append(port.name, port.description);
     }
-    combo.set_sensitive(!device->ports.empty());
+    const bool show = !device->ports.empty();
+    combo.set_visible(show);
+    combo.set_sensitive(show);
     if (!device->active_port.empty()) {
       combo.set_active_id(device->active_port);
     } else if (!previous.empty()) {
@@ -592,6 +597,12 @@ void SoundPage::refresh() {
   const PaDevice* source = selected_source();
   fill_ports(output_port_, sink, output_port_rows_);
   fill_ports(input_port_, source, input_port_rows_);
+  if (output_port_label_ != nullptr) {
+    output_port_label_->set_visible(output_port_.get_visible());
+  }
+  if (input_port_label_ != nullptr) {
+    input_port_label_->set_visible(input_port_.get_visible());
+  }
   if (sink != nullptr) {
     if (!output_dragging_) {
       output_volume_.set_value(sink->volume_percent);
@@ -627,6 +638,11 @@ void SoundPage::refresh() {
       profile_.set_active_id(active_profile);
     }
     profile_.set_sensitive(!profile_rows.empty());
+  }
+  const bool show_profile = !profile_rows.empty();
+  profile_.set_visible(show_profile);
+  if (profile_label_ != nullptr) {
+    profile_label_->set_visible(show_profile);
   }
   update_apps();
 }

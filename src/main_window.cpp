@@ -22,6 +22,7 @@
 #include "pages/window_tweaks_page.hpp"
 #include "ui_util.hpp"
 
+#include <gdk/gdkkeysyms.h>
 #include <gdk/gdkx.h>
 #include <gdkmm/display.h>
 #include <gdkmm/general.h>
@@ -39,6 +40,7 @@
 #include <gtkmm/separator.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <iostream>
 
 namespace lcos {
@@ -47,8 +49,8 @@ namespace {
 // Narrow enough to match the mockup, wide enough for a wrapped
 // "Removable Drives and Media" plus the icon.
 constexpr int kSidebarWidth = 220;
-constexpr int kWindowMinWidth = 900;
-constexpr int kWindowMinHeight = 600;
+constexpr int kWindowMinWidth = 760;
+constexpr int kWindowMinHeight = 480;
 
 std::string state_path() {
   return Glib::build_filename(Glib::get_user_config_dir(), "lcos-settings", "state.ini");
@@ -137,18 +139,18 @@ MainWindow::MainWindow(XfconfStore& store)
 
   nav_ = {
       {"overview", "Overview", "computer", "system version hostname memory processor graphics storage quick settings dark style volume", "", PrivKind::Off, overview},
-      {"appearance", "Appearance", "preferences-desktop-theme", "style theme icons font dpi antialias hinting toolbar scaling", "Look & Feel", PrivKind::Off, appearance},
-      {"desktop", "Desktop", "preferences-desktop-wallpaper", "wallpaper background icons menus", "Look & Feel", PrivKind::Off, desktop},
-      {"window-manager", "Window Manager", "preferences-system-windows", "focus shortcuts title bar theme placement", "Look & Feel", PrivKind::Off, windows},
-      {"window-tweaks", "WM Tweaks", "preferences-system", "compositor cycling focus accessibility zoom placement tweaks", "Look & Feel", PrivKind::Off, tweaks},
-      {"notifications", "Notifications", "preferences-system-notifications", "notify theme position log applications", "Look & Feel", PrivKind::Off, notifications},
+      {"appearance", "Appearance", "preferences-desktop-theme", "style theme icons font dpi antialias hinting toolbar scaling", "Look and Feel", PrivKind::Off, appearance},
+      {"desktop", "Desktop", "preferences-desktop-wallpaper", "wallpaper background icons menus", "Look and Feel", PrivKind::Off, desktop},
+      {"window-manager", "Window Manager", "preferences-system-windows", "focus shortcuts title bar theme placement", "Look and Feel", PrivKind::Off, windows},
+      {"window-tweaks", "Window Manager Tweaks", "preferences-system", "compositor cycling focus accessibility zoom placement tweaks", "Look and Feel", PrivKind::Off, tweaks},
+      {"notifications", "Notifications", "preferences-system-notifications", "notify theme position log applications", "Look and Feel", PrivKind::Off, notifications},
       {"display", "Display", "preferences-desktop-display", "resolution refresh scale rotation mirror extend monitor primary reflection", "Hardware", PrivKind::Off, display},
       {"sound", "Sound", "audio-volume-high", "volume mute output input microphone profile", "Hardware", PrivKind::Off, sound},
       {"power", "Power", "battery", "battery sleep lid blank brightness lock", "Hardware", PrivKind::Off, power},
       {"keyboard", "Keyboard", "preferences-desktop-keyboard", "layout repeat shortcut model compose", "Hardware", PrivKind::Off, keyboard},
       {"mouse", "Mouse", "input-mouse", "pointer touchpad scrolling cursor speed", "Hardware", PrivKind::Off, mouse},
       {"removable-media", "Removable Drives and Media", "drive-removable-media", "usb camera mount cd dvd printer tablet", "Hardware", PrivKind::Off, media},
-      {"date-time", "Date & Time", "appointment-soon", "clock timezone ntp calendar", "System", PrivKind::System, datetime},
+      {"date-time", "Date and Time", "appointment-soon", "clock timezone ntp calendar", "System", PrivKind::System, datetime},
       {"language", "Language", "preferences-desktop-locale", "locale region format language", "System", PrivKind::Locale, language},
       {"users", "Users", "system-users", "account password autologin real name picture administrator", "System", PrivKind::Accounts, users},
       {"startup", "Startup", "system-run", "autostart session login", "System", PrivKind::Off, startup},
@@ -173,6 +175,9 @@ MainWindow::MainWindow(XfconfStore& store)
   side_box->pack_start(search_, Gtk::PACK_SHRINK);
   build_sidebar();
   side->pack_start(sidebar_, Gtk::PACK_EXPAND_WIDGET);
+  if (search_empty_ != nullptr) {
+    side->pack_start(*search_empty_, Gtk::PACK_SHRINK);
+  }
   side_scroll_.add(*side);
   side_box->pack_start(side_scroll_, Gtk::PACK_EXPAND_WIDGET);
   side_box->set_size_request(kSidebarWidth, -1);
@@ -206,6 +211,7 @@ MainWindow::MainWindow(XfconfStore& store)
   heading_.set_halign(Gtk::ALIGN_START);
   heading_.get_style_context()->add_class("lcos-title");
   summary_.set_halign(Gtk::ALIGN_START);
+  summary_.set_xalign(0);
   summary_.set_line_wrap(true);
   summary_.get_style_context()->add_class("lcos-subtitle");
   titles->pack_start(heading_, Gtk::PACK_SHRINK);
@@ -266,14 +272,23 @@ MainWindow::MainWindow(XfconfStore& store)
     button->get_style_context()->add_class("lcos-action");
   }
   footer->pack_start(status_, Gtk::PACK_EXPAND_WIDGET);
-  footer->pack_start(ok_, Gtk::PACK_SHRINK);
-  footer->pack_start(apply_, Gtk::PACK_SHRINK);
   footer->pack_start(cancel_, Gtk::PACK_SHRINK);
+  footer->pack_start(apply_, Gtk::PACK_SHRINK);
+  footer->pack_start(ok_, Gtk::PACK_SHRINK);
+  set_default(ok_);
   root->pack_start(*footer, Gtk::PACK_SHRINK);
 
   search_.signal_search_changed().connect(sigc::mem_fun(*this, &MainWindow::apply_filter));
+  search_.signal_activate().connect([this] {
+    for (std::size_t i = 0; i < rows_.size() && i < nav_.size(); ++i) {
+      if (rows_[i] != nullptr && rows_[i]->get_visible()) {
+        show_page(nav_[i].id);
+        return;
+      }
+    }
+  });
   sidebar_.signal_row_selected().connect([this](Gtk::ListBoxRow* row) {
-    if (row == nullptr || filtering_) {
+    if (row == nullptr || filtering_ || nav_depth_ > 0) {
       return;
     }
     for (std::size_t i = 0; i < rows_.size(); ++i) {
@@ -288,20 +303,10 @@ MainWindow::MainWindow(XfconfStore& store)
   cancel_.signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::close_revert));
   infobar_apply_.signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::infobar_apply));
   infobar_revert_.signal_clicked().connect(sigc::mem_fun(*this, &MainWindow::infobar_revert));
-  store_.changed.connect([this] {
-    if (!store_.session_dirty()) {
-      dirty_ids_.clear();
-    } else if (current_index_ >= 0) {
-      const auto& item = nav_[static_cast<std::size_t>(current_index_)];
-      if (item.id != "overview") {
-        dirty_ids_.insert(item.id);
-      }
-    }
-    update_apply();
-  });
+  store_.changed.connect([this] { update_apply(); });
   privileged_.changed.connect(sigc::mem_fun(*this, &MainWindow::update_apply));
   signal_size_allocate().connect([this](Gtk::Allocation& allocation) {
-    const bool compact = allocation.get_width() > 0 && allocation.get_width() < 900;
+    const bool compact = allocation.get_width() > 0 && allocation.get_width() < 860;
     if (compact != compact_) {
       set_compact(compact);
     }
@@ -314,7 +319,7 @@ MainWindow::MainWindow(XfconfStore& store)
     start = 0;
   }
   show_all();
-  cancel_.grab_focus();
+  set_default(ok_);
   if (auto* row = rows_[static_cast<std::size_t>(start)]) {
     sidebar_.select_row(*row);
   }
@@ -339,6 +344,7 @@ void MainWindow::build_sidebar() {
         auto* row = Gtk::manage(new Gtk::ListBoxRow());
         row->set_selectable(false);
         row->set_activatable(false);
+        row->set_can_focus(false);
         row->set_size_request(-1, 22);
         row->get_style_context()->add_class("lcos-section");
         auto* label = Gtk::manage(new Gtk::Label());
@@ -346,9 +352,9 @@ void MainWindow::build_sidebar() {
         for (char& c : small) {
           c = static_cast<char>(g_unichar_tolower(static_cast<gunichar>(static_cast<unsigned char>(c))));
         }
-        label->set_markup(
-            "<span font_variant='smallcaps' weight='bold' color='#7c776f' letter_spacing='900'>" +
-            Glib::Markup::escape_text(small) + "</span>");
+        label->set_markup("<span font_variant='smallcaps' weight='bold' letter_spacing='900'>" +
+                          Glib::Markup::escape_text(small) + "</span>");
+        label->get_style_context()->add_class("lcos-kicker");
         label->set_halign(Gtk::ALIGN_START);
         label->set_margin_start(10);
         label->set_margin_bottom(3);
@@ -360,7 +366,7 @@ void MainWindow::build_sidebar() {
     }
     auto* row = Gtk::manage(new Gtk::ListBoxRow());
     row->get_style_context()->add_class("lcos-nav");
-    row->set_tooltip_text(item.page->title());
+    row->set_can_focus(false);
     auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 9));
     line->set_margin_top(0);
     line->set_margin_bottom(0);
@@ -388,9 +394,58 @@ void MainWindow::build_sidebar() {
     line->pack_start(*label, Gtk::PACK_EXPAND_WIDGET);
     line->pack_end(*dot, Gtk::PACK_SHRINK);
     row->add(*line);
+    const Glib::ustring tip = item.page->title();
+    label->signal_size_allocate().connect([row, label, tip](Gtk::Allocation&) {
+      bool ellipsized = false;
+      if (auto layout = label->get_layout()) {
+        ellipsized = layout->is_ellipsized();
+      }
+      row->set_has_tooltip(ellipsized);
+      if (ellipsized) {
+        row->set_tooltip_text(tip);
+      }
+    });
     sidebar_.append(*row);
     rows_.push_back(row);
   }
+  sidebar_.set_can_focus(true);
+  search_empty_ = Gtk::manage(new Gtk::Label("No matching settings"));
+  search_empty_->set_halign(Gtk::ALIGN_START);
+  search_empty_->set_xalign(0);
+  search_empty_->set_margin_top(8);
+  search_empty_->set_margin_start(10);
+  search_empty_->get_style_context()->add_class("lcos-faint");
+  search_empty_->set_no_show_all(true);
+  search_empty_->hide();
+  sidebar_.signal_key_press_event().connect([this](GdkEventKey* event) {
+    int delta = 0;
+    if (event->keyval == GDK_KEY_Up || event->keyval == GDK_KEY_KP_Up) {
+      delta = -1;
+    } else if (event->keyval == GDK_KEY_Down || event->keyval == GDK_KEY_KP_Down) {
+      delta = 1;
+    } else if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter ||
+               event->keyval == GDK_KEY_space) {
+      return true;
+    } else {
+      return false;
+    }
+    if (rows_.empty()) {
+      return true;
+    }
+    int index = current_index_ < 0 ? 0 : current_index_;
+    for (int step = 0; step < static_cast<int>(rows_.size()); ++step) {
+      index = (index + delta + static_cast<int>(rows_.size())) % static_cast<int>(rows_.size());
+      if (index < 0) {
+        continue;
+      }
+      auto* candidate = rows_[static_cast<std::size_t>(index)];
+      if (candidate != nullptr && candidate->get_visible() && candidate->get_selectable()) {
+        sidebar_.select_row(*candidate);
+        break;
+      }
+    }
+    return true;
+  });
 }
 
 void MainWindow::load_icons() {
@@ -424,10 +479,39 @@ void MainWindow::show_page(const std::string& id) {
   if (index < 0) {
     return;
   }
+  if (nav_depth_ > 0) {
+    queued_page_ = index;
+    return;
+  }
   if (auto* row = rows_[static_cast<std::size_t>(index)]) {
     sidebar_.select_row(*row);
   }
   select_nav(index);
+  // A page that is still inside on_page_shown (locale listing, a nested
+  // polkit loop) can put the previous page back. Apply the request again
+  // once that handler has returned.
+  Glib::signal_idle().connect([this, index] {
+    if (index < 0 || index >= static_cast<int>(nav_.size())) {
+      return false;
+    }
+    const bool showing = current_index_ == index &&
+                         stack_.get_visible_child() == nav_[static_cast<std::size_t>(index)].page;
+    const bool row_ok = rows_[static_cast<std::size_t>(index)] == nullptr ||
+                        sidebar_.get_selected_row() == rows_[static_cast<std::size_t>(index)];
+    if (showing && row_ok) {
+      return false;
+    }
+    if (auto* row = rows_[static_cast<std::size_t>(index)]) {
+      sidebar_.select_row(*row);
+    }
+    const int saved = current_index_;
+    current_index_ = -1;
+    select_nav(index);
+    if (current_index_ < 0) {
+      current_index_ = saved;
+    }
+    return false;
+  });
 }
 
 void MainWindow::mark_page(const std::string& id) {
@@ -441,12 +525,17 @@ void MainWindow::select_nav(int index) {
   if (index < 0 || index >= static_cast<int>(nav_.size())) {
     return;
   }
-  if (current_index_ == index && stack_.get_visible_child() == nav_[static_cast<std::size_t>(index)].page) {
-    update_apply();
+  if (nav_depth_ > 0) {
     return;
   }
+  ++nav_depth_;
+  if (current_index_ == index && stack_.get_visible_child() == nav_[static_cast<std::size_t>(index)].page) {
+    store_.set_edit_page(nav_[static_cast<std::size_t>(index)].id);
+    update_apply();
+  } else {
   current_index_ = index;
   auto& item = nav_[static_cast<std::size_t>(index)];
+  store_.set_edit_page(item.id);
   stack_.set_visible_child(*item.page);
   item.page->queue_draw();
   const bool overview = item.id == "overview";
@@ -466,6 +555,13 @@ void MainWindow::select_nav(int index) {
     remember_page(item.id);
   }
   update_apply();
+  }
+  --nav_depth_;
+  if (queued_page_ >= 0) {
+    const int next = queued_page_;
+    queued_page_ = -1;
+    show_page(nav_[static_cast<std::size_t>(next)].id);
+  }
 }
 
 void MainWindow::apply_filter() {
@@ -500,6 +596,18 @@ void MainWindow::apply_filter() {
   }
   flush();
   filtering_ = false;
+  if (search_empty_ != nullptr) {
+    bool any = query.empty();
+    if (!any) {
+      for (auto* row : rows_) {
+        if (row != nullptr && row->get_visible()) {
+          any = true;
+          break;
+        }
+      }
+    }
+    search_empty_->set_visible(!query.empty() && !any);
+  }
 }
 
 void MainWindow::set_compact(bool compact) {
@@ -572,16 +680,72 @@ void MainWindow::remember_page(const std::string& id) {
 }
 
 bool MainWindow::page_privileged(const NavItem& item) const {
+  if (item.id == "overview") {
+    return privileged_.action_open("set-hostname");
+  }
+  if (item.id == "date-time") {
+    return privileged_.action_open("set-timezone") || privileged_.action_open("set-time") ||
+           privileged_.action_open("set-ntp");
+  }
   if (item.priv == PrivKind::Accounts) {
     return privileged_.accounts_dirty();
   }
   if (item.priv == PrivKind::Locale) {
     return privileged_.locale_dirty();
   }
-  if (item.priv == PrivKind::System) {
-    return privileged_.system_dirty();
-  }
   return false;
+}
+
+void MainWindow::sync_dirty_from_store() {
+  dirty_ids_.clear();
+  for (const auto& id : store_.dirty_pages()) {
+    if (!id.empty() && id != "overview") {
+      dirty_ids_.insert(id);
+    }
+  }
+}
+
+int MainWindow::pending_total() const {
+  int count = store_.pending_count() + privileged_.open_action_count();
+  for (const auto& item : nav_) {
+    count += item.page->unsaved_count();
+  }
+  return count;
+}
+
+MainWindow::CloseChoice MainWindow::confirm_close() {
+  const int count = pending_total();
+  if (count <= 0) {
+    return CloseChoice::Discard;
+  }
+  const std::string title =
+      count == 1 ? "Discard 1 change?" : "Discard " + std::to_string(count) + " changes?";
+  Gtk::MessageDialog dialog(*this, title, false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_NONE, true);
+  dialog.set_title("LCOS Command Center");
+  dialog.set_secondary_text("Cancel restores changes. OK and Apply keep them.");
+  dialog.add_button("Keep editing", Gtk::RESPONSE_CANCEL);
+  dialog.add_button("Discard", Gtk::RESPONSE_REJECT);
+  dialog.add_button("Apply and close", Gtk::RESPONSE_OK);
+  dialog.set_default_response(Gtk::RESPONSE_CANCEL);
+  const int response = dialog.run();
+  if (response == Gtk::RESPONSE_OK) {
+    return CloseChoice::Apply;
+  }
+  if (response == Gtk::RESPONSE_REJECT) {
+    return CloseChoice::Discard;
+  }
+  return CloseChoice::Stay;
+}
+
+bool MainWindow::on_key_press_event(GdkEventKey* event) {
+  const bool control = event != nullptr && (event->state & GDK_CONTROL_MASK) != 0;
+  if (control && (event->keyval == GDK_KEY_f || event->keyval == GDK_KEY_F)) {
+    if (search_.get_visible()) {
+      search_.grab_focus();
+      return true;
+    }
+  }
+  return Gtk::ApplicationWindow::on_key_press_event(event);
 }
 
 bool MainWindow::page_marked(const NavItem& item) const {
@@ -589,9 +753,7 @@ bool MainWindow::page_marked(const NavItem& item) const {
 }
 
 void MainWindow::update_apply() {
-  if (!store_.session_dirty()) {
-    dirty_ids_.clear();
-  }
+  sync_dirty_from_store();
   int count = 0;
   bool any_local = false;
   for (std::size_t i = 0; i < nav_.size(); ++i) {
@@ -621,23 +783,25 @@ void MainWindow::update_apply() {
     }
   }
   const bool overview = current_index_ >= 0 && nav_[static_cast<std::size_t>(current_index_)].id == "overview";
-  if (count <= 0 && overview) {
+  const int changes = pending_total();
+  if (changes <= 0 && overview) {
     status_.set_text("Quick settings apply right away.");
     ok_.hide();
     apply_.hide();
     cancel_.set_label("Close");
   } else {
-    if (count <= 0) {
-      status_.set_text("");
-    } else if (count == 1) {
-      status_.set_markup("<span foreground=\"#e08a2c\">●</span>  1 unsaved change");
+    if (changes <= 0) {
+      status_.set_text("Cancel restores changes. OK and Apply keep them.");
+    } else if (changes == 1) {
+      status_.set_text("●  1 unsaved change. Cancel restores it. OK and Apply keep it.");
     } else {
-      status_.set_markup("<span foreground=\"#e08a2c\">●</span>  " + std::to_string(count) +
-                         " unsaved changes");
+      status_.set_text("●  " + std::to_string(changes) +
+                       " unsaved changes. Cancel restores them. OK and Apply keep them.");
     }
+    status_.get_style_context()->add_class("lcos-faint");
     ok_.show();
     apply_.show();
-    cancel_.set_label("Cancel");
+    cancel_.set_label(changes <= 0 && overview ? "Close" : "Cancel");
   }
   bool pending = privileged_.dirty() || store_.session_dirty() || count > 0;
   for (const auto& item : nav_) {
@@ -657,11 +821,13 @@ void MainWindow::update_apply() {
     can_revert = page->has_pending();
     can_apply = page->has_pending();
     if (detail.empty() && page_marked(nav_[static_cast<std::size_t>(current_index_)])) {
-      detail = "Changes on this page have not been kept.";
+      detail = "Cancel restores changes. OK and Apply keep them.";
       can_apply = true;
       can_revert = true;
     } else if (detail.empty() && page_privileged(nav_[static_cast<std::size_t>(current_index_)])) {
-      detail = "A change on this page has not been kept. Cancel can restore it.";
+      detail = "Cancel restores changes. OK and Apply keep them.";
+      can_apply = true;
+      can_revert = true;
     }
   }
   infobar_detail_.set_text(detail);
@@ -675,34 +841,28 @@ void MainWindow::infobar_revert() {
     return;
   }
   auto& item = nav_[static_cast<std::size_t>(current_index_)];
-  if (item.page->discard_pending()) {
-    dirty_ids_.erase(item.id);
-    update_apply();
-    return;
+  item.page->discard_pending();
+  if (store_.page_dirty(item.id)) {
+    store_.revert_page(item.id);
   }
-  if (page_marked(item)) {
-    store_.revert_session();
-    dirty_ids_.clear();
-    if (auto* appearance = dynamic_cast<AppearancePage*>(item.page)) {
-      appearance->reload_from_store();
-    }
-    update_apply();
-  }
+  item.page->reload_from_store();
+  dirty_ids_.erase(item.id);
+  update_apply();
 }
 
 void MainWindow::infobar_apply() {
   if (current_index_ < 0) {
     return;
   }
-  auto* page = nav_[static_cast<std::size_t>(current_index_)].page;
-  if (page->has_pending() && !page->commit_pending()) {
+  auto& item = nav_[static_cast<std::size_t>(current_index_)];
+  if (item.page->has_pending() && !item.page->commit_pending()) {
     update_apply();
     return;
   }
-  if (store_.session_dirty() && page_marked(nav_[static_cast<std::size_t>(current_index_)])) {
-    store_.drop_originals();
-    dirty_ids_.clear();
+  if (store_.page_dirty(item.id)) {
+    store_.drop_page(item.id);
   }
+  dirty_ids_.erase(item.id);
   update_apply();
 }
 
@@ -756,6 +916,21 @@ void MainWindow::close_revert() {
   if (closing_) {
     return;
   }
+  const CloseChoice choice = confirm_close();
+  if (choice == CloseChoice::Stay) {
+    return;
+  }
+  if (choice == CloseChoice::Apply) {
+    close_keep();
+    return;
+  }
+  revert_and_close();
+}
+
+void MainWindow::revert_and_close() {
+  if (closing_) {
+    return;
+  }
   if (privileged_.busy()) {
     privileged_.cancel();
     privileged_.wait_until_idle();
@@ -801,6 +976,25 @@ void MainWindow::dump_pages(const std::string& directory) {
   suppress_save_ = true;
   shots_.clear();
   stack_.set_transition_duration(0);
+  if (const char* spec = g_getenv("LCOS_SETTINGS_DUMP_SIZE")) {
+    int width = 1100;
+    int height = 720;
+    if (std::sscanf(spec, "%dx%d", &width, &height) == 2 && width > 0 && height > 0) {
+      for (int page = 0; page < static_cast<int>(nav_.size()); ++page) {
+        Shot shot;
+        shot.page = page;
+        shot.name = nav_[static_cast<std::size_t>(page)].id + std::string("-") + spec;
+        shot.width = width;
+        shot.height = height;
+        shots_.push_back(shot);
+      }
+      shot_index_ = 0;
+      dump_phase_ = 0;
+      resize(width, height);
+      Glib::signal_timeout().connect(sigc::mem_fun(*this, &MainWindow::dump_step), 280);
+      return;
+    }
+  }
   if (g_getenv("LCOS_SETTINGS_DUMP_FAST") != nullptr) {
     const int sizes[][2] = {{1100, 720}, {1000, 550}};
     for (const auto& size : sizes) {
@@ -936,6 +1130,13 @@ bool MainWindow::dump_step() {
     update_apply();
     dump_phase_ = 1;
     return true;
+  }
+  while (g_main_context_pending(nullptr)) {
+    g_main_context_iteration(nullptr, FALSE);
+  }
+  queue_draw();
+  if (auto gdk_window = get_window()) {
+    gdk_window->process_updates(true);
   }
   auto window = get_window();
   if (window) {

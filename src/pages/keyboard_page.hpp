@@ -20,7 +20,12 @@ class KeyboardPage : public SettingsPage {
   explicit KeyboardPage(XfconfStore& store, Gtk::Window& parent);
   Glib::ustring title() const override { return "Keyboard"; }
   Glib::ustring summary() const override {
-    return "Repeat, layouts, and application shortcuts. Changes apply immediately.";
+    return "Key repeat, keyboard layouts, and application shortcuts.";
+  }
+  void reload_from_store() override {
+    load_behavior();
+    load_layouts();
+    load_shortcuts();
   }
 
  private:

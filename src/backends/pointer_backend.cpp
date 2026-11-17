@@ -48,11 +48,12 @@ std::vector<PointerDevice> PointerBackend::list() const {
     if (info.name == nullptr) {
       continue;
     }
-    if (info.use != IsXExtensionPointer && info.use != IsXPointer) {
+    // Master pointers ("Virtual core pointer") are not devices the user configures.
+    if (info.use != IsXExtensionPointer) {
       continue;
     }
     const std::string name = info.name;
-    if (contains_ci(name, "XTEST")) {
+    if (contains_ci(name, "XTEST") || contains_ci(name, "Virtual core pointer")) {
       continue;
     }
     PointerDevice device;

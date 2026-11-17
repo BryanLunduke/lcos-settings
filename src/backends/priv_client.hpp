@@ -5,6 +5,7 @@
 #include "logic/system_model.hpp"
 
 #include <functional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,10 @@ class PrivSession {
   bool accounts_dirty() const { return touched_accounts_; }
   bool locale_dirty() const { return touched_locale_; }
   bool system_dirty() const { return touched_system_; }
+  bool action_open(const std::string& action) const {
+    return open_actions_.count(action) != 0;
+  }
+  int open_action_count() const { return static_cast<int>(open_actions_.size()); }
   bool busy() const { return busy_; }
 
   // Blocks until pkexec finishes. Reads both pipes so a noisy child cannot
@@ -81,6 +86,7 @@ class PrivSession {
   bool touched_system_ = false;
   bool touched_accounts_ = false;
   bool touched_locale_ = false;
+  std::set<std::string> open_actions_;
   AsyncOp* async_ = nullptr;
 };
 

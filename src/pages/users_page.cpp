@@ -2,6 +2,7 @@
 
 #include "pages/users_page.hpp"
 
+#include "logic/helper_status.hpp"
 #include "ui_util.hpp"
 
 #include <gdkmm/general.h>
@@ -300,6 +301,9 @@ UsersPage::UsersPage(PrivSession& session, Gtk::Window& parent) : session_(sessi
 }
 
 void UsersPage::tell(const std::string& message) {
+  if (message.empty() || authentication_was_dismissed(message)) {
+    return;
+  }
   std::string primary = message;
   std::string secondary;
   const auto nl = message.find('\n');
@@ -308,6 +312,7 @@ void UsersPage::tell(const std::string& message) {
     secondary = message.substr(nl + 1);
   }
   Gtk::MessageDialog dialog(parent_, primary, false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+  dialog.set_title("LCOS Command Center");
   if (!secondary.empty()) {
     dialog.set_secondary_text(secondary);
   }
@@ -574,7 +579,7 @@ void UsersPage::add_user() {
   kind->set_active_id("standard");
   grid->attach(*make_label("Username"), 0, 0, 1, 1);
   grid->attach(*username, 1, 0, 1, 1);
-  grid->attach(*make_label("Real name"), 0, 1, 1, 1);
+  grid->attach(*make_label("Full name"), 0, 1, 1, 1);
   grid->attach(*real, 1, 1, 1, 1);
   grid->attach(*make_label("Password"), 0, 2, 1, 1);
   grid->attach(*password, 1, 2, 1, 1);
@@ -582,24 +587,50 @@ void UsersPage::add_user() {
   grid->attach(*confirm, 1, 3, 1, 1);
   grid->attach(*make_label("Account type"), 0, 4, 1, 1);
   grid->attach(*kind, 1, 4, 1, 1);
+  auto* error = Gtk::manage(new Gtk::Label(""));
+  error->set_halign(Gtk::ALIGN_START);
+  error->set_xalign(0);
+  error->set_line_wrap(true);
+  error->get_style_context()->add_class("lcos-faint");
+  username->set_activates_default(true);
+  real->set_activates_default(true);
+  password->set_activates_default(true);
+  confirm->set_activates_default(true);
   dialog.get_content_area()->pack_start(*grid, Gtk::PACK_SHRINK);
+  dialog.get_content_area()->pack_start(*error, Gtk::PACK_SHRINK);
   dialog.add_button("Cancel", Gtk::RESPONSE_CANCEL);
   dialog.add_button("Add", Gtk::RESPONSE_OK);
+  dialog.set_default_response(Gtk::RESPONSE_OK);
   dialog.show_all();
-  if (dialog.run() != Gtk::RESPONSE_OK) {
-    return;
+  std::string name;
+  std::string full;
+  std::string secret;
+  while (true) {
+    if (dialog.run() != Gtk::RESPONSE_OK) {
+      return;
+    }
+    name = username->get_text();
+    full = real->get_text();
+    secret = password->get_text();
+    if (!valid_username(name)) {
+      error->set_text("Username must be lowercase letters, digits, _ or -, and cannot be root.");
+      continue;
+    }
+    if (!valid_real_name(full)) {
+      error->set_text("Full name cannot contain a colon, comma, or line break.");
+      continue;
+    }
+    if (!valid_password(secret)) {
+      error->set_text("Password cannot be empty or contain a line break.");
+      continue;
+    }
+    if (secret != confirm->get_text()) {
+      error->set_text("Password and Confirm do not match.");
+      continue;
+    }
+    break;
   }
-  const std::string name = username->get_text();
-  const std::string full = real->get_text();
-  const std::string secret = password->get_text();
-  if (!valid_username(name) || !valid_real_name(full) || !valid_password(secret)) {
-    tell("Use a lowercase username and a password without a line break.");
-    return;
-  }
-  if (secret != confirm->get_text()) {
-    tell("The passwords do not match.");
-    return;
-  }
+  dialog.hide();
   const PrivResult result =
       session_.run({"add-user", name, full, kind->get_active_id()}, secret + "\n");
   if (!result.ok) {
@@ -622,10 +653,14 @@ void UsersPage::remove_user() {
     return;
   }
   Gtk::MessageDialog confirm(parent_, "Remove " + account->name + "?", false, Gtk::MESSAGE_QUESTION,
-                             Gtk::BUTTONS_YES_NO, true);
+                             Gtk::BUTTONS_NONE, true);
+  confirm.set_title("LCOS Command Center");
   confirm.set_secondary_text(
-      "Cancel puts the account back. The home directory stays in place either way.");
-  if (confirm.run() != Gtk::RESPONSE_YES) {
+      "You can undo this with Cancel in the main window until you press OK.");
+  confirm.add_button("_Keep", Gtk::RESPONSE_CANCEL);
+  confirm.add_button("_Remove", Gtk::RESPONSE_OK);
+  confirm.set_default_response(Gtk::RESPONSE_CANCEL);
+  if (confirm.run() != Gtk::RESPONSE_OK) {
     return;
   }
   const PrivResult result = session_.run({"remove-user", account->name});
@@ -779,6 +814,22 @@ void UsersPage::set_automatic_for_current(bool on) {
   reload();
 }
 
+void UsersPage::set_automatic_keep(bool on) {
+  if (current_user_.empty()) {
+    return;
+  }
+  const std::string chosen = on ? current_user_ : "none";
+  const std::string current = autologin_.empty() ? "none" : autologin_;
+  if (chosen == current) {
+    return;
+  }
+  const PrivResult result = session_.run({"set-autologin", chosen, "keep"});
+  if (!result.ok && !authentication_was_dismissed(result.error)) {
+    tell(result.error.empty() ? "Automatic login was not changed." : result.error);
+  }
+  reload();
+}
+
 void UsersPage::stage_screenshot_edit() {
   const Account* account = selected();
   if (account == nullptr && !accounts_.empty()) {
@@ -794,7 +845,5 @@ void UsersPage::stage_screenshot_edit() {
   }
   name_entry_.set_text(next);
 }
-
-void UsersPage::on_page_shown() { reload(); }
 
 }  // namespace lcos

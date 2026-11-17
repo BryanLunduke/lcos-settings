@@ -22,7 +22,7 @@ class StartupPage : public SettingsPage {
 
   Glib::ustring title() const override { return "Startup"; }
   Glib::ustring summary() const override {
-    return "Applications started at login, and the session options from xfce4-session.";
+    return "Programs that start at login, and session options.";
   }
   bool has_pending() const override;
   bool commit_pending() override;

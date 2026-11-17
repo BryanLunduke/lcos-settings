@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <random>
@@ -142,6 +143,12 @@ void PrivSession::note_success(PrivDomain domain, const std::string& action, boo
   if (!ok && !locale_failed) {
     return;
   }
+  // A quick setting that asked not to be undone. Other open actions stay.
+  if (action.size() > 5 && action.compare(action.size() - 5, 5, "-keep") == 0) {
+    changed.emit();
+    return;
+  }
+  open_actions_.insert(action);
   if (domain == PrivDomain::Accounts) {
     touched_accounts_ = true;
   } else if (domain == PrivDomain::Locale) {
@@ -290,7 +297,9 @@ PrivResult PrivSession::run_domain(PrivDomain domain, const std::vector<std::str
       parsed.error = exit.error;
       return parsed;
     }();
-    note_success(domain, args[0], result.ok, result.error);
+    const bool keep = std::find(args.begin(), args.end(), "keep") != args.end();
+    const std::string noted = keep ? args[0] + "-keep" : args[0];
+    note_success(domain, noted, result.ok, result.error);
     return result;
   }
 
@@ -299,7 +308,9 @@ PrivResult PrivSession::run_domain(PrivDomain domain, const std::vector<std::str
   async_->in_fd = standard_in;
   async_->out_fd = standard_out;
   async_->err_fd = standard_err;
-  async_->command = args[0];
+  async_->command = (std::find(args.begin(), args.end(), "keep") != args.end())
+                        ? args[0] + "-keep"
+                        : args[0];
   async_->done = std::move(done);
   PrivSession* self = this;
   async_->out_src = g_unix_fd_add(standard_out, GIOCondition(G_IO_IN | G_IO_HUP | G_IO_ERR),
@@ -462,6 +473,13 @@ PrivResult PrivSession::finish_domains(const char* action, bool end_session) {
       touched_locale_ = false;
     } else {
       touched_system_ = false;
+    }
+    for (auto it = open_actions_.begin(); it != open_actions_.end();) {
+      if (priv_domain_for_action(*it) == domain) {
+        it = open_actions_.erase(it);
+      } else {
+        ++it;
+      }
     }
     return result;
   };

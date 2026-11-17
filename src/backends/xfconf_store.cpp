@@ -279,6 +279,8 @@ void XfconfStore::remember(const std::string& channel, const std::string& prop) 
   saved.channel = channel;
   saved.prop = prop;
   saved.value = get(channel, prop);
+  saved.page = edit_page_;
+  last_edit_page_ = edit_page_;
   originals_.emplace(key, std::move(saved));
   changed.emit();
 }
@@ -547,6 +549,92 @@ void XfconfStore::drop_channel(const std::string& channel) {
   if (removed) {
     changed.emit();
   }
+}
+
+void XfconfStore::revert_page(const std::string& page_id) {
+  if (!ready_ || page_id.empty()) {
+    return;
+  }
+  const bool previous = tracking_;
+  tracking_ = false;
+  std::vector<Saved> resets;
+  std::vector<Saved> restores;
+  for (auto it = originals_.begin(); it != originals_.end();) {
+    if (it->second.page != page_id) {
+      ++it;
+      continue;
+    }
+    if (it->second.value.type == PropType::Absent) {
+      resets.push_back(it->second);
+    } else {
+      restores.push_back(it->second);
+    }
+    it = originals_.erase(it);
+  }
+  for (const auto& saved : resets) {
+    auto* xfchannel = static_cast<XfconfChannel*>(channel_of(saved.channel));
+    xfconf_channel_reset_property(xfchannel, saved.prop.c_str(), FALSE);
+  }
+  for (const auto& saved : restores) {
+    write(saved.channel, saved.prop, saved.value, false);
+  }
+  tracking_ = previous;
+  last_edit_page_ = page_id;
+  changed.emit();
+}
+
+void XfconfStore::drop_page(const std::string& page_id) {
+  if (page_id.empty()) {
+    return;
+  }
+  bool removed = false;
+  for (auto it = originals_.begin(); it != originals_.end();) {
+    if (it->second.page == page_id) {
+      it = originals_.erase(it);
+      removed = true;
+    } else {
+      ++it;
+    }
+  }
+  if (removed) {
+    last_edit_page_ = page_id;
+    changed.emit();
+  }
+}
+
+void XfconfStore::commit_property(const std::string& channel, const std::string& prop) {
+  const auto found = originals_.find(key_of(channel, prop));
+  if (found == originals_.end()) {
+    return;
+  }
+  last_edit_page_ = found->second.page;
+  originals_.erase(found);
+  changed.emit();
+}
+
+bool XfconfStore::page_dirty(const std::string& page_id) const {
+  if (page_id.empty()) {
+    return false;
+  }
+  for (const auto& entry : originals_) {
+    if (entry.second.page == page_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<std::string> XfconfStore::dirty_pages() const {
+  std::vector<std::string> pages;
+  for (const auto& entry : originals_) {
+    if (entry.second.page.empty()) {
+      continue;
+    }
+    if (std::find(pages.begin(), pages.end(), entry.second.page) == pages.end()) {
+      pages.push_back(entry.second.page);
+    }
+  }
+  return pages;
 }
 
 bool XfconfStore::channel_touched(const std::string& channel) const {

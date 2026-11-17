@@ -26,7 +26,7 @@ class PowerPage : public SettingsPage {
 
   Glib::ustring title() const override { return "Power"; }
   Glib::ustring summary() const override {
-    return "Buttons, sleep, display blanking, and lock. Values are written only after you change them.";
+    return "Power buttons, sleep, display blanking, and the lock screen.";
   }
   int screenshot_count() const override { return 4; }
   void prepare_screenshot(int index) override;

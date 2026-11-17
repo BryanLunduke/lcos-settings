@@ -21,9 +21,10 @@ class WindowTweaksPage : public SettingsPage {
 
   Glib::ustring title() const override { return "Window Manager Tweaks"; }
   Glib::ustring summary() const override {
-    return "Cycling, focus, accessibility, placement, and the compositor. Changes apply immediately.";
+    return "Cycling, focus, accessibility, placement, and the compositor.";
   }
   void on_page_shown() override;
+  void reload_from_store() override { load(); }
   int screenshot_count() const override { return 5; }
   void prepare_screenshot(int index) override;
   std::string screenshot_suffix(int index) const override;

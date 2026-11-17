@@ -252,6 +252,12 @@ menuitem:hover, menuitem:hover label {
   color: #ffffff;
 }
 
+/* Clearlooks-Phenix separates menubar titles. Without this padding a
+   menubar reads as FileEditViewGo. */
+menubar > menuitem {
+  padding: 4px 8px;
+}
+
 menubar > menuitem:hover {
   background-color: alpha(#fff, 0.12);
 }

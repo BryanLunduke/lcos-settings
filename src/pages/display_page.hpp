@@ -29,7 +29,7 @@ class DisplayPage : public SettingsPage {
 
   Glib::ustring title() const override { return "Display"; }
   Glib::ustring summary() const override {
-    return "Resolution, arrangement, and scaling. Changes ask before they stay.";
+    return "Resolution, arrangement, and scaling.";
   }
   bool has_pending() const override { return dirty_; }
   std::string pending_detail() const override;
