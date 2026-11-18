@@ -6,6 +6,7 @@
 #include "logic/display_layout.hpp"
 #include "logic/helper_status.hpp"
 #include "logic/host_info.hpp"
+#include "logic/locales.hpp"
 #include "logic/mime_files.hpp"
 #include "logic/names.hpp"
 #include "logic/power.hpp"
@@ -422,6 +423,11 @@ void test_helper_files_and_status() {
   EXPECT(std::abs(lcos::ui_scale_from_xfconf(0.5) - 2.0) < 0.001);
   EXPECT(std::abs(lcos::xfconf_scale_from_ui(1.0) - 1.0) < 0.001);
 
+  const auto pkexec_dismissed = lcos::interpret_helper_exit(
+      1, 126 << 8, "Error executing command as another user: Request dismissed\n");
+  EXPECT(!pkexec_dismissed.ok);
+  EXPECT(lcos::authentication_was_dismissed(pkexec_dismissed.error));
+  EXPECT(pkexec_dismissed.error.find("pkexec") == std::string::npos);
   const auto dismissed = lcos::interpret_helper_exit(1, 126 << 8, "");
   EXPECT(!dismissed.ok);
   EXPECT(dismissed.error.find("dismissed") != std::string::npos);
@@ -566,18 +572,17 @@ void test_themes_and_xkb() {
         << "[Icon Theme]\nName=Index Only\n";
   }
   const auto gtk = lcos::scan_gtk_themes({(root / "themes").string()});
-  EXPECT(gtk.size() == 2);
+  EXPECT(gtk.size() == 1);
   bool saw_sample = false;
-  bool saw_plain = false;
   for (const auto& theme : gtk) {
     EXPECT(theme.id != "KeysOnly");
     EXPECT(theme.id != "CommentOnly");
     EXPECT(theme.id != "MissingEngine");
     EXPECT(theme.id != "Hidden");
+    EXPECT(theme.id != "PlainGtk2");
     saw_sample = saw_sample || theme.id == "Sample";
-    saw_plain = saw_plain || theme.id == "PlainGtk2";
   }
-  EXPECT(saw_sample && saw_plain);
+  EXPECT(saw_sample);
   const auto xfwm = lcos::scan_xfwm_themes({(root / "themes").string()});
   EXPECT(xfwm.size() == 1 && xfwm[0].id == "Sample");
   const auto cursors = lcos::scan_cursor_themes({(root / "icons").string()});
@@ -872,6 +877,49 @@ void test_redesign_helpers() {
   EXPECT(lcos::pci_device_name(pci, 0x8086, 0x9a49) == "Iris Xe Graphics");
 }
 
+void test_qa_helpers() {
+  EXPECT(lcos::locale_display_name("de_DE.UTF-8") == "German (Germany)");
+  EXPECT(lcos::locale_display_name("en_US.UTF-8") == "English (United States)");
+  EXPECT(lcos::locale_display_name("fr_FR.UTF-8") == "French (France)");
+  EXPECT(lcos::locale_display_name("C") == "C");
+
+  unsigned char edid[128] = {};
+  edid[54] = 0;
+  edid[55] = 0;
+  edid[56] = 0;
+  edid[57] = 0xFC;
+  const char* monitor = "LCOS Panel";
+  for (int i = 0; monitor[i] != '\0'; ++i) {
+    edid[59 + i] = static_cast<unsigned char>(monitor[i]);
+  }
+  edid[59 + 10] = 0x0A;
+  EXPECT(lcos::edid_monitor_name(edid, sizeof edid) == "LCOS Panel");
+  EXPECT(lcos::edid_monitor_name(edid, 20).empty());
+
+  lcos::ModeInfo preferred;
+  preferred.width = 1280;
+  preferred.height = 800;
+  preferred.preferred = true;
+  lcos::ModeInfo larger;
+  larger.width = 1920;
+  larger.height = 1080;
+  EXPECT(lcos::resolution_is_preferred({preferred, larger}, 1280, 800));
+  EXPECT(!lcos::resolution_is_preferred({preferred, larger}, 1920, 1080));
+
+  std::map<std::string, std::string> commands = {
+      {"/commands/custom/<Primary>t", "mousepad"},
+  };
+  std::map<std::string, std::string> windows = {
+      {"/xfwm4/custom/<Primary>t", "close_window_key"},
+  };
+  const auto hits = lcos::conflicting_shortcuts("<Primary>t", commands, windows, {}, "mousepad",
+                                                "close_window_key");
+  EXPECT(hits.empty());
+  const auto taken =
+      lcos::conflicting_shortcuts("<Primary>t", commands, windows, {}, "", "cycle_windows_key");
+  EXPECT(taken.size() == 2);
+}
+
 int main() {
   test_backdrop_power_mime();
   test_names();
@@ -883,6 +931,7 @@ int main() {
   test_helper_files_and_status();
   test_themes_and_xkb();
   test_redesign_helpers();
+  test_qa_helpers();
   if (failures != 0) {
     std::cerr << failures << " logic check(s) failed\n";
     return 1;

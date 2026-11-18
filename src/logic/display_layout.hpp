@@ -13,6 +13,8 @@ struct ModeInfo {
   int height = 0;
   double refresh = 0;
   unsigned long id = 0;
+  // Set for modes RandR lists in the output's preferred-mode prefix.
+  bool preferred = false;
 };
 
 // One connected RandR output, in the same units xfce4-display-settings stores.
@@ -81,6 +83,13 @@ double closest_refresh(const OutputConfig& output, int width, int height,
 
 std::string friendly_output_name(const std::string& randr_name,
                                  const std::string& edid_name);
+
+// Monitor name from an EDID display descriptor (tag 0xFC). Empty when the
+// blob is short or has no name descriptor.
+std::string edid_monitor_name(const unsigned char* data, std::size_t length);
+
+// True when some mode of this size is flagged preferred.
+bool resolution_is_preferred(const std::vector<ModeInfo>& modes, int width, int height);
 
 // XFCE 4.20 treats a top-level displays key as a user profile only when one
 // of its outputs has an EDID child. IdentityPopups and Notify are not profiles.

@@ -1014,7 +1014,7 @@ void action_avatar(const std::string& token, const std::string& name, const std:
   }
 }
 
-void action_autologin(const std::string& token, const std::string& user) {
+void action_autologin(const std::string& token, const std::string& user, bool keep) {
   if (!(user == "none" || lcos::valid_username(user))) {
     fail("invalid automatic login");
   }
@@ -1026,7 +1026,9 @@ void action_autologin(const std::string& token, const std::string& user) {
   // after every drop-in, so a key set there has to be changed in that file.
   const char* dropin = "/etc/lightdm/lightdm.conf.d/60-lcos-settings.conf";
   const char* main_conf = "/etc/lightdm/lightdm.conf";
-  remember_file(token, "lightdm.0", dropin);
+  if (!keep) {
+    remember_file(token, "lightdm.0", dropin);
+  }
   mkdir("/etc/lightdm", 0755);
   mkdir("/etc/lightdm/lightdm.conf.d", 0755);
   const std::string value = user == "none" ? std::string() : user;
@@ -1037,8 +1039,17 @@ void action_autologin(const std::string& token, const std::string& user) {
   const std::string main = slurp(main_conf);
   std::string existing;
   if (lcos::autologin_key_present(main, existing)) {
-    remember_file(token, "lightdm.1", main_conf);
+    if (!keep) {
+      remember_file(token, "lightdm.1", main_conf);
+    }
     write_file(main_conf, lcos::conf_with_autologin(main, value), 0644);
+  }
+  // Overview's switch commits this one setting. Other account undo files stay.
+  if (keep) {
+    drop_undo_file(token, "lightdm.0");
+    drop_undo_file(token, "lightdm.0.missing");
+    drop_undo_file(token, "lightdm.1");
+    drop_undo_file(token, "lightdm.1.missing");
   }
 }
 
@@ -1517,8 +1528,12 @@ int main(int argc, char** argv) {
       action_real_name(token, argv[4], argv[5]);
     } else if (action == "set-avatar" && rest == 3) {
       action_avatar(token, argv[4], argv[5]);
-    } else if (action == "set-autologin" && rest == 2) {
-      action_autologin(token, argv[4]);
+    } else if (action == "set-autologin" && (rest == 2 || rest == 3)) {
+      const bool keep = rest == 3 && std::string(argv[5]) == "keep";
+      if (rest == 3 && !keep) {
+        fail("invalid request");
+      }
+      action_autologin(token, argv[4], keep);
     } else if (action == "set-hostname" && rest == 2) {
       action_hostname(token, argv[4]);
     } else {

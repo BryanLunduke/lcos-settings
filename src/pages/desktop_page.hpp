@@ -27,7 +27,7 @@ class DesktopPage : public SettingsPage {
 
   Glib::ustring title() const override { return "Desktop"; }
   Glib::ustring summary() const override {
-    return "Background, desktop icons, and desktop menus from xfdesktop.";
+    return "Wallpaper, desktop icons, and desktop menus.";
   }
   void on_page_shown() override;
   int screenshot_count() const override { return 3; }
@@ -58,6 +58,7 @@ class DesktopPage : public SettingsPage {
 
   Gtk::ComboBoxText monitor_;
   Gtk::SpinButton workspace_;
+  Gtk::Label* workspace_caption_ = nullptr;
   Gtk::CheckButton all_workspaces_;
   Gtk::FileChooserButton folder_;
   Gtk::FlowBox images_;

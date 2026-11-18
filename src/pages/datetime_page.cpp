@@ -88,6 +88,9 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
   scroll_page->pack_start(*make_frame("Current time", *now_), Gtk::PACK_SHRINK);
 
   auto* zone_box = make_vbox(6);
+  zone_now_ = make_label("Current time zone:");
+  zone_now_->set_line_wrap(true);
+  zone_box->pack_start(*zone_now_, Gtk::PACK_SHRINK);
   zone_box->pack_start(search_, Gtk::PACK_SHRINK);
   auto* zone_scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*zone_scroll);
@@ -263,7 +266,8 @@ void DateTimePage::show_zones() {
   }
   if (selected) {
     zones_view_.get_selection()->select(selected);
-    zones_view_.scroll_to_row(zone_store_->get_path(selected));
+    const Gtk::TreeModel::Path path = zone_store_->get_path(selected);
+    zones_view_.scroll_to_row(path, 0.5);
   }
 }
 
@@ -348,6 +352,13 @@ void DateTimePage::apply_zone(const std::string& zone) {
 void DateTimePage::on_page_shown() {
   show_zones();
   load_clock();
+  if (zone_now_ != nullptr) {
+    zone_now_->set_text("Current time zone: " + current_zone());
+  }
+  Glib::signal_idle().connect([this] {
+    show_zones();
+    return false;
+  });
 }
 
 }  // namespace lcos

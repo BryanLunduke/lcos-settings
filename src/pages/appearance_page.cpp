@@ -130,7 +130,7 @@ Gtk::Button* make_card(Gtk::Widget& body, const Glib::ustring& title, const Glib
   overlay->add(*wrap);
   if (selected) {
     auto* badge = Gtk::manage(new Gtk::Label());
-    badge->set_markup("<span foreground='#ffffff' weight='bold'>✓</span>");
+    badge->set_text("✓");
     badge->get_style_context()->add_class("lcos-check");
     badge->set_halign(Gtk::ALIGN_END);
     badge->set_valign(Gtk::ALIGN_START);
@@ -213,7 +213,7 @@ AppearancePage::AppearancePage(XfconfStore& store)
   FormGrid border_form;
   border_form.add("Window manager", xfwm_theme_);
   sync_themes_.set_label("Use the widget theme for window borders when it includes one");
-  border_form.add_full(sync_themes_);
+  border_form.add_control(sync_themes_);
   borders->pack_start(border_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Window borders", *borders), Gtk::PACK_SHRINK);
 
@@ -242,7 +242,7 @@ AppearancePage::AppearancePage(XfconfStore& store)
   render_form.add("Hinting", hinting_);
   render_form.add("Subpixel order", rgba_);
   custom_dpi_.set_label("Custom DPI");
-  render_form.add_full(custom_dpi_);
+  render_form.add_control(custom_dpi_);
   render_form.add("DPI", dpi_);
   rendering->pack_start(render_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Font rendering", *rendering), Gtk::PACK_SHRINK);
@@ -261,10 +261,10 @@ AppearancePage::AppearancePage(XfconfStore& store)
   FormGrid ui_form;
   ui_form.add("Toolbar style", toolbar_);
   ui_form.add("Window scaling", window_scale_);
-  ui_form.add_full(menu_images_);
-  ui_form.add_full(button_images_);
-  ui_form.add_full(edit_accels_);
-  ui_form.add_full(header_buttons_);
+  ui_form.add_control(menu_images_);
+  ui_form.add_control(button_images_);
+  ui_form.add_control(edit_accels_);
+  ui_form.add_control(header_buttons_);
   interface->pack_start(ui_form.grid(), Gtk::PACK_SHRINK);
   auto* note = make_label(
       "Window scaling is the GTK integer factor. Per-display RandR scale is on the Display page.");
@@ -538,21 +538,31 @@ void AppearancePage::set_dark_style(bool on) {
     if (!chosen.empty()) {
       gtk_theme_.set_active_id(chosen);
     }
+    store_.commit_property("xsettings", "/Net/ThemeName");
     return;
   }
   std::string back = light_theme_;
-  if (back.empty() || name_is_dark(back)) {
+  if (back.empty() || back == "Clearlooks" || name_is_dark(back)) {
     back.clear();
     for (const auto& theme : gtk_themes_) {
-      if (!name_is_dark(theme.id) && !name_is_dark(theme.name)) {
+      if (theme.id == "Clearlooks-Phenix") {
         back = theme.id;
         break;
+      }
+    }
+    if (back.empty()) {
+      for (const auto& theme : gtk_themes_) {
+        if (!name_is_dark(theme.id) && !name_is_dark(theme.name)) {
+          back = theme.id;
+          break;
+        }
       }
     }
   }
   if (!back.empty()) {
     gtk_theme_.set_active_id(back);
   }
+  store_.commit_property("xsettings", "/Net/ThemeName");
 }
 
 void AppearancePage::schedule_cards() {
@@ -618,12 +628,12 @@ void AppearancePage::rebuild_cards() {
     auto* swatch = Gtk::manage(new StyleSwatch(name_is_dark(theme.id) || name_is_dark(theme.name),
                                                name_is_contrast(theme.id) || name_is_contrast(theme.name)));
     Glib::ustring meta;
-    if (selected) {
+    if (theme.id == "Clearlooks-Phenix") {
       meta = "Default";
-    } else if (theme.name != theme.id) {
-      meta = theme.id;
     }
     auto* card = make_card(*swatch, theme.name, meta, selected);
+    card->set_tooltip_text(theme.id == theme.name ? Glib::ustring(theme.name)
+                                                   : Glib::ustring(theme.name + " (" + theme.id + ")"));
     const std::string id = theme.id;
     card->signal_clicked().connect([this, id] {
       if (gtk_theme_.get_active_id() != id) {
@@ -657,7 +667,9 @@ void AppearancePage::rebuild_cards() {
       }
       row->pack_start(*image, Gtk::PACK_SHRINK);
     }
-    auto* card = make_card(*row, theme.name, selected ? "Default" : "", selected);
+    auto* card = make_card(*row, theme.name, "", selected);
+    card->set_tooltip_text(theme.id == theme.name ? Glib::ustring(theme.name)
+                                                   : Glib::ustring(theme.name + " (" + theme.id + ")"));
     const std::string id = theme.id;
     card->signal_clicked().connect([this, id] {
       if (icon_theme_.get_active_id() != id) {
@@ -721,6 +733,7 @@ void AppearancePage::rebuild_cards() {
     preview->set_margin_bottom(6);
     preview->set_margin_start(10);
     preview->set_margin_end(10);
+    preview->set_size_request(-1, 72);
     auto* sample = Gtk::manage(new Gtk::Label("Aa"));
     sample->set_halign(Gtk::ALIGN_START);
     sample->override_font(Pango::FontDescription(name + " 28"));
@@ -731,7 +744,7 @@ void AppearancePage::rebuild_cards() {
     line->get_style_context()->add_class("lcos-dim");
     preview->pack_start(*sample, Gtk::PACK_SHRINK);
     preview->pack_start(*line, Gtk::PACK_SHRINK);
-    auto* card = make_card(*preview, name, selected ? "Default" : "", selected);
+    auto* card = make_card(*preview, name, "", selected);
     card->signal_clicked().connect([this, name] { set_default_family(name); });
     font_cards_.insert(*card, -1);
   }

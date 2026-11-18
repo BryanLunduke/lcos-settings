@@ -75,18 +75,26 @@ HelperExit interpret_helper_exit(int wait_result, int status, const std::string&
     return out;
   }
   const int code = WEXITSTATUS(status);
+  // pkexec writes its own sentence and exits 126 (dialog closed) or 127
+  // (denied). Prefer that over the raw stderr, which is not a useful dialog.
+  if (code == 126) {
+    out.error = "Authentication was dismissed.";
+    return out;
+  }
+  if (code == 127) {
+    out.error = "Authentication was denied.";
+    return out;
+  }
   if (!err.empty()) {
     out.error = err;
     return out;
   }
-  if (code == 126) {
-    out.error = "Authentication was dismissed.";
-  } else if (code == 127) {
-    out.error = "Authentication was denied.";
-  } else {
-    out.error = "The change was not applied (exit " + std::to_string(code) + ").";
-  }
+  out.error = "The change was not applied (exit " + std::to_string(code) + ").";
   return out;
+}
+
+bool authentication_was_dismissed(const std::string& error) {
+  return error.find("dismissed") != std::string::npos;
 }
 
 int xft_dpi_to_spin(int stored) {

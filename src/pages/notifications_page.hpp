@@ -28,6 +28,7 @@ class NotificationsPage : public SettingsPage {
     return "Theme, position, timeout, and per-application notification settings.";
   }
   void on_page_shown() override;
+  void reload_from_store() override { on_page_shown(); }
   int screenshot_count() const override { return 4; }
   void prepare_screenshot(int index) override;
   std::string screenshot_suffix(int index) const override;

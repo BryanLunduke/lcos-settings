@@ -58,8 +58,14 @@ class MainWindow : public Gtk::ApplicationWindow {
   void keep_changes(bool close);
   void close_keep();
   void close_revert();
+  void revert_and_close();
   void infobar_revert();
   void infobar_apply();
+  void sync_dirty_from_store();
+  int pending_total() const;
+  enum class CloseChoice { Stay, Discard, Apply };
+  CloseChoice confirm_close();
+  bool on_key_press_event(GdkEventKey* event) override;
   bool page_marked(const NavItem& item) const;
   bool page_privileged(const NavItem& item) const;
   int nav_index(const std::string& id) const;
@@ -111,6 +117,9 @@ class MainWindow : public Gtk::ApplicationWindow {
   bool filtering_ = false;
   bool suppress_save_ = false;
   int current_index_ = -1;
+  int nav_depth_ = 0;
+  int queued_page_ = -1;
+  Gtk::Label* search_empty_ = nullptr;
 
   std::string dump_dir_;
   std::vector<Shot> shots_;

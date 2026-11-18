@@ -17,6 +17,9 @@ struct HelperExit {
 // the program cannot be started.
 HelperExit interpret_helper_exit(int wait_result, int status, const std::string& stderr_text);
 
+// True when the user closed the authentication dialog without deciding.
+bool authentication_was_dismissed(const std::string& error);
+
 // xfconf /Xft/DPI is plain DPI. xfsettingsd multiplies by 1024 only for the
 // XSETTINGS wire value. Values above 500 are read as the old scaled form.
 int xft_dpi_to_spin(int stored);

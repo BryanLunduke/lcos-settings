@@ -41,7 +41,7 @@ MousePage::MousePage(XfconfStore& store, PointerBackend& pointers)
   FormGrid device_form;
   device_form.add("Device", device_);
   enabled_.set_label("Device enabled");
-  device_form.add_full(enabled_);
+  device_form.add_control(enabled_);
   auto* hands = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
   hands->pack_start(right_handed_, Gtk::PACK_SHRINK);
   hands->pack_start(left_handed_, Gtk::PACK_SHRINK);
@@ -57,7 +57,7 @@ MousePage::MousePage(XfconfStore& store, PointerBackend& pointers)
   reverse_.set_label("Reverse scrolling");
   device_form.add("Speed", acceleration_);
   device_form.add("Sensitivity", threshold_);
-  device_form.add_full(reverse_);
+  device_form.add_control(reverse_);
   device_note_ = make_label("");
   device_note_->set_line_wrap(true);
   device_form.add_full(*device_note_);
@@ -81,13 +81,13 @@ MousePage::MousePage(XfconfStore& store, PointerBackend& pointers)
   click_method_.append("none", "Off");
   middle_.set_label("Middle click emulation");
   FormGrid touch_form;
-  touch_form.add_full(tap_);
-  touch_form.add_full(natural_);
-  touch_form.add_full(disable_typing_);
+  touch_form.add_control(tap_);
+  touch_form.add_control(natural_);
+  touch_form.add_control(disable_typing_);
   touch_form.add("Scrolling", scroll_method_);
   touch_form.add("Click method", click_method_);
-  touch_form.add_full(middle_);
-  touch_form.add_full(disable_typing_global_);
+  touch_form.add_control(middle_);
+  touch_form.add_control(disable_typing_global_);
   touch_form.add("Typing pause (seconds)", typing_duration_);
   touch->pack_start(touch_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Touchpad", *touch), Gtk::PACK_SHRINK);

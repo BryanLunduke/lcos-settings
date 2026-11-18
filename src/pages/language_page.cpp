@@ -2,6 +2,7 @@
 
 #include "pages/language_page.hpp"
 
+#include "logic/locales.hpp"
 #include "logic/system_model.hpp"
 #include "ui_util.hpp"
 
@@ -11,6 +12,7 @@
 #include <gdkmm/window.h>
 #include <gtkmm/box.h>
 #include <gtkmm/messagedialog.h>
+#include <gtkmm/searchentry.h>
 
 #include <algorithm>
 #include <fstream>
@@ -68,7 +70,28 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
   form.add("Dates and times", dates_);
   form.add("Numbers", numbers_);
   form.add("Currency", currency_);
-  page->pack_start(*make_frame("Locale", form.grid()), Gtk::PACK_SHRINK);
+  auto* find = Gtk::manage(new Gtk::SearchEntry());
+  find->set_placeholder_text("Search languages, for example German");
+  find->signal_search_changed().connect([this, find] {
+    const Glib::ustring query = find->get_text().lowercase();
+    if (query.empty()) {
+      return;
+    }
+    for (const auto& locale : locales_) {
+      const std::string pretty = locale_display_name(locale.name);
+      const Glib::ustring hay = Glib::ustring(pretty + " " + locale.name).lowercase();
+      if (hay.find(query) != Glib::ustring::npos) {
+        if (language_.get_active_id() != locale.name) {
+          language_.set_active_id(locale.name);
+        }
+        return;
+      }
+    }
+  });
+  auto* locale_box = make_vbox(8);
+  locale_box->pack_start(*find, Gtk::PACK_SHRINK);
+  locale_box->pack_start(form.grid(), Gtk::PACK_SHRINK);
+  page->pack_start(*make_frame("Locale", *locale_box), Gtk::PACK_SHRINK);
   auto* busy_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
   spinner_ = Gtk::manage(new Gtk::Spinner());
   spinner_->set_size_request(16, 16);
@@ -86,15 +109,27 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
       session_.cancel();
     }
   });
-  auto* apply_button = Gtk::manage(new Gtk::Button("_Apply language", true));
+  auto* preview = make_label("");
+  preview->set_line_wrap(true);
+  preview->get_style_context()->add_class("lcos-dim");
+  page->pack_start(*preview, Gtk::PACK_SHRINK);
+  auto* apply_button = Gtk::manage(new Gtk::Button("Set language"));
   apply_button->set_halign(Gtk::ALIGN_START);
   page->pack_start(*apply_button, Gtk::PACK_SHRINK);
-  auto* note = make_label(
-      "Every locale in the supported list is offered. Apply enables a locale that is not generated "
-      "yet in /etc/locale.gen and compiles it with localedef. Stop, or Cancel, restores locale.gen. "
-      "Keyboard layouts are set on the Keyboard page.");
-  note->set_line_wrap(true);
+  auto* note = make_note(
+      "Pick a language by its name. Set language turns on a locale that is not generated yet. "
+      "Keyboard layouts are on the Keyboard page.");
   page->pack_start(*note, Gtk::PACK_SHRINK);
+  auto refresh_preview = [this, preview] {
+    const std::string code = language_.get_active_id();
+    const std::string sample = locale_sample(code);
+    if (sample.empty()) {
+      preview->set_text(code.empty() ? "" : "Sample appears after this locale is generated.");
+    } else {
+      preview->set_text(sample);
+    }
+  };
+  language_.signal_changed().connect(refresh_preview);
   pack_start(*make_page_scroll(*page), Gtk::PACK_EXPAND_WIDGET);
 
   apply_button->signal_clicked().connect([this] { apply(); });
@@ -108,7 +143,11 @@ void LanguagePage::fill(Gtk::ComboBoxText& combo, bool same_as_language) {
     combo.append("", "Same as the system language");
   }
   for (const auto& locale : locales_) {
-    const std::string label = locale.generated ? locale.name : locale.name + " (not generated)";
+    const std::string pretty = locale_display_name(locale.name);
+    std::string label = pretty == locale.name ? locale.name : pretty + "  —  " + locale.name;
+    if (!locale.generated) {
+      label += " (not generated)";
+    }
     combo.append(locale.name, label);
   }
   if (!selected.empty()) {

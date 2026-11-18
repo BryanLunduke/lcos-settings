@@ -34,10 +34,13 @@ class UsersPage : public SettingsPage {
   bool commit_pending() override;
   bool discard_pending() override;
   void revert_page() override;
-  void on_page_shown() override;
+  void on_page_shown() override { reload(); }
+  void reload_from_store() override { reload(); }
 
   bool automatic_for_current() const;
   void set_automatic_for_current(bool on);
+  // Writes automatic login and drops its undo file so window Cancel leaves it.
+  void set_automatic_keep(bool on);
   // Local edit only, used while capturing the unsaved-changes screenshot.
   void stage_screenshot_edit();
 

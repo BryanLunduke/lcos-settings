@@ -35,7 +35,9 @@ class SettingsPage : public Gtk::Box {
   // Puts the local edit back and updates the controls. False if this page
   // has nothing local to undo.
   virtual bool discard_pending() { return false; }
-  // One horizontal size group so every form on the page shares a label column.
+  // Re-reads this page after its xfconf originals were restored or kept.
+  virtual void reload_from_store() {}
+  // One horizontal size group so every form shares a label column.
   void align_labels();
   // Extra frames for sections that contain their own tabs.
   virtual int screenshot_count() const { return 1; }
@@ -53,10 +55,16 @@ class SettingsPage : public Gtk::Box {
   Glib::RefPtr<Gtk::SizeGroup> label_group_;
 };
 
-inline void SettingsPage::align_labels() {
-  if (!label_group_) {
-    label_group_ = Gtk::SizeGroup::create(Gtk::SIZE_GROUP_HORIZONTAL);
+inline Glib::RefPtr<Gtk::SizeGroup> shared_label_group() {
+  static Glib::RefPtr<Gtk::SizeGroup> group;
+  if (!group) {
+    group = Gtk::SizeGroup::create(Gtk::SIZE_GROUP_HORIZONTAL);
   }
+  return group;
+}
+
+inline void SettingsPage::align_labels() {
+  label_group_ = shared_label_group();
   align_widget(*this);
 }
 
@@ -64,10 +72,18 @@ inline void SettingsPage::align_widget(Gtk::Widget& widget) {
   if (auto* grid = dynamic_cast<Gtk::Grid*>(&widget)) {
     grid->foreach ([&](Gtk::Widget& child) {
       int column = 0;
+      int span = 1;
       gtk_container_child_get(GTK_CONTAINER(grid->gobj()), child.gobj(), "left-attach", &column,
-                              nullptr);
-      if (column == 0) {
+                              "width", &span, nullptr);
+      // Notes added across both columns are not captions.
+      if (column == 0 && span == 1) {
         if (auto* label = dynamic_cast<Gtk::Label*>(&child)) {
+          if (label->get_text().find('\n') == Glib::ustring::npos) {
+            label->set_line_wrap(true);
+            label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+            label->set_max_width_chars(24);
+          }
+          label->set_xalign(0);
           label_group_->add_widget(*label);
         }
       }

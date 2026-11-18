@@ -322,12 +322,14 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
 
   FormGrid form;
   primary_.set_label("Primary display");
-  auto* use_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 18));
   enabled_.set_valign(Gtk::ALIGN_CENTER);
   enabled_.set_size_request(48, 22);
-  use_row->pack_start(enabled_, Gtk::PACK_SHRINK);
-  use_row->pack_start(primary_, Gtk::PACK_SHRINK);
-  form.add("Use this display", *use_row);
+  enabled_.set_halign(Gtk::ALIGN_START);
+  if (enabled_.get_accessible()) {
+    enabled_.get_accessible()->set_name("Use this display");
+  }
+  form.add("Use this display", enabled_);
+  form.add_control(primary_);
   form.add("Resolution", resolution_);
   refresh_label_ = form.add("Refresh rate", refresh_);
   scale_.set_range(0.1, 10.0);
@@ -633,17 +635,13 @@ void DisplayPage::show_selected() {
   primary_.set_active(output->primary);
   resolution_.remove_all();
   std::set<std::string> seen;
-  long long best_area = 0;
-  for (const auto& mode : output->modes) {
-    best_area = std::max(best_area, static_cast<long long>(mode.width) * mode.height);
-  }
   auto describe = [&](int width, int height) {
     std::string text = std::to_string(width) + " × " + std::to_string(height);
     const std::string aspect = aspect_ratio_text(width, height);
     if (!aspect.empty()) {
       text += "    " + aspect;
     }
-    if (best_area > 0 && static_cast<long long>(width) * height == best_area) {
+    if (resolution_is_preferred(output->modes, width, height)) {
       text += " · Recommended";
     }
     return text;
@@ -955,7 +953,7 @@ void DisplayPage::refresh_output_heading() {
   }
   std::string markup = Glib::Markup::escape_text(title.empty() ? output->name : title);
   if (!meta.empty()) {
-    markup += " <span weight='normal' color='#8d8982'>" + Glib::Markup::escape_text(meta) + "</span>";
+    markup += " <span weight='normal' alpha='60%'>" + Glib::Markup::escape_text(meta) + "</span>";
   }
   output_heading_->set_markup(markup);
 }

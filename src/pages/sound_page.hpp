@@ -25,7 +25,7 @@ class SoundPage : public SettingsPage {
   SoundPage(XfconfStore& store, PulseClient& pulse);
   Glib::ustring title() const override { return "Sound"; }
   Glib::ustring summary() const override {
-    return "Output, input, and application levels. They apply as you change them. Cancel restores only the levels changed here.";
+    return "Output, input, and application volume.";
   }
   bool has_pending() const override { return sound_dirty_; }
   bool commit_pending() override;
@@ -33,6 +33,7 @@ class SoundPage : public SettingsPage {
   bool discard_pending() override;
   std::string pending_detail() const override;
   void on_page_shown() override;
+  void reload_from_store() override { refresh(); }
   int output_volume_percent() const;
   void set_output_volume_percent(int percent);
   bool output_ready() const;
@@ -97,11 +98,15 @@ class SoundPage : public SettingsPage {
   DeviceSnap input_snapshot_;
   std::string profile_snapshot_;
   std::uint32_t profile_card_ = 0;
+  bool have_profile_card_ = false;
   std::vector<StreamSnap> stream_snapshot_;
   std::map<std::uint32_t, AppRow> app_rows_;
 
   Gtk::ComboBoxText output_;
   Gtk::ComboBoxText output_port_;
+  Gtk::Label* output_port_label_ = nullptr;
+  Gtk::Label* input_port_label_ = nullptr;
+  Gtk::Label* profile_label_ = nullptr;
   Gtk::Scale output_volume_;
   Gtk::CheckButton output_mute_;
   Gtk::ComboBoxText input_;

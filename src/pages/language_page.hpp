@@ -21,9 +21,10 @@ class LanguagePage : public SettingsPage {
 
   Glib::ustring title() const override { return "Language"; }
   Glib::ustring summary() const override {
-    return "System language and regional formats. Keyboard layouts stay on the Keyboard page.";
+    return "Language and the way dates, numbers, and currency are written.";
   }
   void on_page_shown() override;
+  void reload_from_store() override { load(); }
 
  private:
   void load();

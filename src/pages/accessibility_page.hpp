@@ -22,6 +22,7 @@ class AccessibilityPage : public SettingsPage {
     return "Assistive technologies, sticky keys, slow keys, bounce keys, and mouse keys.";
   }
   void on_page_shown() override;
+  void reload_from_store() override { load(); }
   int screenshot_count() const override { return 3; }
   void prepare_screenshot(int index) override;
   std::string screenshot_suffix(int index) const override;

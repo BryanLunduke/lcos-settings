@@ -2,17 +2,23 @@
 #ifndef LCOS_UI_UTIL_HPP
 #define LCOS_UI_UTIL_HPP
 
+#include <gtkmm/cellrenderertext.h>
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
+#include <gtkmm/colorbutton.h>
 #include <gtkmm/combobox.h>
 #include <gtkmm/container.h>
+#include <gtkmm/dialog.h>
+#include <gtkmm/entry.h>
 #include <gtkmm/frame.h>
 #include <gtkmm/grid.h>
 #include <gtkmm/label.h>
+#include <gtkmm/scale.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/separator.h>
 #include <gtkmm/spinbutton.h>
 #include <gtkmm/stack.h>
+#include <gtkmm/treeview.h>
 #include <gtkmm/widget.h>
 #include <gtkmm/window.h>
 
@@ -24,11 +30,67 @@
 
 namespace lcos {
 
+// One caption column for every page, so the controls start at the same x.
+constexpr int kFormLabelWidth = 188;
+constexpr int kDialogMargin = 12;
+constexpr int kDialogSpacing = 8;
+
 inline Gtk::Label* make_label(const Glib::ustring& text) {
   auto* label = Gtk::manage(new Gtk::Label(text));
   label->set_halign(Gtk::ALIGN_START);
   label->set_valign(Gtk::ALIGN_CENTER);
+  label->set_xalign(0);
   return label;
+}
+
+// Help text indented with the group body, not the page edge.
+inline Gtk::Label* make_note(const Glib::ustring& text) {
+  auto* label = make_label(text);
+  label->set_line_wrap(true);
+  label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+  label->set_max_width_chars(72);
+  label->set_margin_start(12);
+  label->get_style_context()->add_class("lcos-faint");
+  return label;
+}
+
+inline void prepare_dialog_box(Gtk::Box& box) {
+  box.set_margin_top(kDialogMargin);
+  box.set_margin_bottom(kDialogMargin);
+  box.set_margin_start(kDialogMargin);
+  box.set_margin_end(kDialogMargin);
+  box.set_spacing(kDialogSpacing);
+}
+
+inline void prepare_dialog(Gtk::Dialog& dialog) {
+  prepare_dialog_box(*dialog.get_content_area());
+  dialog.set_default_response(Gtk::RESPONSE_OK);
+}
+
+inline void configure_scale(Gtk::Scale& scale) {
+  scale.set_value_pos(Gtk::POS_RIGHT);
+  scale.set_hexpand(true);
+  scale.set_halign(Gtk::ALIGN_FILL);
+}
+
+inline void fit_tree_view(Gtk::TreeView& view) {
+  view.set_hexpand(true);
+  view.set_vexpand(true);
+  for (auto* column : view.get_columns()) {
+    if (column == nullptr) {
+      continue;
+    }
+    column->set_resizable(true);
+    column->set_expand(true);
+    column->set_sizing(Gtk::TREE_VIEW_COLUMN_FIXED);
+    column->set_min_width(48);
+    column->set_fixed_width(120);
+    for (auto* cell : column->get_cells()) {
+      if (auto* text = dynamic_cast<Gtk::CellRendererText*>(cell)) {
+        text->property_ellipsize() = Pango::ELLIPSIZE_END;
+      }
+    }
+  }
 }
 
 inline Gtk::Box* make_vbox(int spacing = 8) {
@@ -178,7 +240,8 @@ inline Gtk::Box* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
 
 class FormGrid {
  public:
-  explicit FormGrid(int label_width = 164) : label_width_(label_width) {
+  // The width argument is ignored so every page shares one caption column.
+  explicit FormGrid(int = kFormLabelWidth) : label_width_(kFormLabelWidth) {
     grid_ = Gtk::manage(new Gtk::Grid());
     grid_->set_row_spacing(6);
     grid_->set_column_spacing(12);
@@ -204,10 +267,41 @@ class FormGrid {
     } else {
       label->set_line_wrap(true);
       label->set_line_wrap_mode(Pango::WRAP_WORD);
-      label->set_max_width_chars(32);
+      label->set_max_width_chars(24);
     }
-    widget.set_hexpand(true);
-    widget.set_halign(Gtk::ALIGN_FILL);
+    // Combos and scales use the control column. A box is filled so a scale
+    // or field packed inside it can still grow. Spins, colour buttons, and
+    // short entries stay at their natural width.
+    if (dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr ||
+        dynamic_cast<Gtk::Scale*>(&widget) != nullptr ||
+        dynamic_cast<Gtk::Box*>(&widget) != nullptr) {
+      widget.set_hexpand(true);
+      widget.set_halign(Gtk::ALIGN_FILL);
+    } else {
+      widget.set_hexpand(false);
+      widget.set_halign(Gtk::ALIGN_START);
+    }
+    if (auto* scale = dynamic_cast<Gtk::Scale*>(&widget)) {
+      configure_scale(*scale);
+    }
+    if (auto* spin = dynamic_cast<Gtk::SpinButton*>(&widget)) {
+      if (spin->get_width_chars() < 6) {
+        spin->set_width_chars(6);
+      }
+    }
+    if (auto* color = dynamic_cast<Gtk::ColorButton*>(&widget)) {
+      color->set_halign(Gtk::ALIGN_START);
+    }
+    if (auto* value = dynamic_cast<Gtk::Label*>(&widget)) {
+      value->set_xalign(0);
+      value->set_halign(Gtk::ALIGN_START);
+    }
+    if (widget.get_accessible()) {
+      const Glib::ustring caption_text = label->get_text();
+      if (!caption_text.empty()) {
+        widget.get_accessible()->set_name(caption_text);
+      }
+    }
     guard_scroll_unless_focused(widget);
     grid_->attach(*label, 0, row_, 1, 1);
     grid_->attach(widget, 1, row_, 1, 1);

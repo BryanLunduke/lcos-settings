@@ -72,7 +72,7 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
 
   FormGrid where(180);
   where.add("Monitor", monitor_);
-  where.add("Workspace", workspace_);
+  workspace_caption_ = where.add("Workspace", workspace_);
   where.add_control(all_workspaces_);
   page->pack_start(*make_frame("Where", where.grid()), Gtk::PACK_SHRINK);
 
@@ -82,6 +82,7 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
   pictures->pack_start(folder_form.grid(), Gtk::PACK_SHRINK);
   images_.set_selection_mode(Gtk::SELECTION_SINGLE);
   images_.set_homogeneous(true);
+  images_.set_row_spacing(8);
   images_.set_min_children_per_line(4);
   images_.set_max_children_per_line(8);
   auto* image_scroll = Gtk::manage(new Gtk::ScrolledWindow());
@@ -285,6 +286,12 @@ void DesktopPage::on_page_shown() {
   load_menus();
   Freeze freeze(freeze_);
   const int count = std::max(1, store_.get_int("xfwm4", "/general/workspace_count", 1));
+  const bool several = count > 1;
+  workspace_.set_visible(several);
+  all_workspaces_.set_visible(several);
+  if (workspace_caption_ != nullptr) {
+    workspace_caption_->set_visible(several);
+  }
   const double current = workspace_.get_value();
   workspace_.set_range(1, count);
   if (current >= 1 && current <= count) {
@@ -410,7 +417,7 @@ void DesktopPage::scan_folder() {
   }
   for (const auto& path : image_paths_) {
     auto* tile = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
-    tile->set_size_request(108, 96);
+    tile->set_size_request(120, 118);
     Glib::RefPtr<Gdk::Pixbuf> pixbuf;
     try {
       pixbuf = Gdk::Pixbuf::create_from_file(path, 96, 72, true);

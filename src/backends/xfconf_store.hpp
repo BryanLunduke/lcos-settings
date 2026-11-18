@@ -86,15 +86,28 @@ class XfconfStore {
 
   void set_tracking(bool on) { tracking_ = on; }
   bool tracking() const { return tracking_; }
+  // Page id stamped on originals remembered while this is set.
+  void set_edit_page(const std::string& page_id) { edit_page_ = page_id; }
+  const std::string& edit_page() const { return edit_page_; }
+  const std::string& last_edit_page() const { return last_edit_page_; }
   void revert_session();
   // Puts back only the listed channels and leaves the rest of the visit.
   void revert_channels(const std::vector<std::string>& channels);
+  // Puts back only the properties first written by this page.
+  void revert_page(const std::string& page_id);
   // Apply and OK keep what has been written. Later Cancel only restores
   // changes made after the checkpoint.
   void drop_originals();
   void drop_channel(const std::string& channel);
+  void drop_page(const std::string& page_id);
+  // The current value of one property becomes the baseline, so Cancel will
+  // not restore whatever it was at the start of the visit.
+  void commit_property(const std::string& channel, const std::string& prop);
   bool session_dirty() const { return !originals_.empty(); }
   bool channel_touched(const std::string& channel) const;
+  bool page_dirty(const std::string& page_id) const;
+  std::vector<std::string> dirty_pages() const;
+  int pending_count() const { return static_cast<int>(originals_.size()); }
   sigc::signal<void> changed;
 
  private:
@@ -102,6 +115,7 @@ class XfconfStore {
     std::string channel;
     std::string prop;
     PropValue value;
+    std::string page;
   };
 
   void remember(const std::string& channel, const std::string& prop);
@@ -111,6 +125,8 @@ class XfconfStore {
 
   bool ready_ = false;
   bool tracking_ = true;
+  std::string edit_page_;
+  std::string last_edit_page_;
   mutable std::map<std::string, void*> channels_;
   std::map<std::string, Saved> originals_;
 };

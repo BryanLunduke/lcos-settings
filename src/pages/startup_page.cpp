@@ -149,9 +149,11 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   auto* app_scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*app_scroll);
   app_scroll->set_shadow_type(Gtk::SHADOW_IN);
-  app_scroll->set_size_request(-1, 240);
+  app_scroll->set_size_request(-1, 120);
+  app_scroll->set_vexpand(true);
+  app_scroll->set_min_content_height(80);
   app_scroll->add(apps_view_);
-  autostart->pack_start(*app_scroll, Gtk::PACK_SHRINK);
+  autostart->pack_start(*app_scroll, Gtk::PACK_EXPAND_WIDGET);
   auto* buttons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
   auto* add = Gtk::manage(new Gtk::Button("Add"));
   auto* edit = Gtk::manage(new Gtk::Button("Edit"));

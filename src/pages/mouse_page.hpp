@@ -21,10 +21,11 @@ class MousePage : public SettingsPage {
   MousePage(XfconfStore& store, PointerBackend& pointers);
   Glib::ustring title() const override { return "Mouse"; }
   Glib::ustring summary() const override {
-    return "Buttons, speed, touchpad, and the cursor theme. Changes apply immediately.";
+    return "Buttons, pointer speed, touchpad, and the cursor.";
   }
 
  private:
+  void reload_from_store() override { reload_devices(); }
   void reload_devices();
   void show_device();
   const PointerDevice* current() const;

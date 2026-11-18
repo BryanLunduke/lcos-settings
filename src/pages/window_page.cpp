@@ -2,6 +2,7 @@
 
 #include "pages/window_page.hpp"
 
+#include "logic/shortcuts.hpp"
 #include "logic/wm_shortcuts.hpp"
 #include "ui_util.hpp"
 
@@ -321,6 +322,37 @@ void WindowPage::edit_shortcut() {
   grab.set_title(label);
   if (grab.run() != Gtk::RESPONSE_OK || grab.accel.empty()) {
     return;
+  }
+  std::map<std::string, std::string> commands;
+  for (const auto& entry : store_.list(kShortcutsChannel, "/commands")) {
+    if (entry.second.type == PropType::String) {
+      commands[entry.first] = entry.second.s;
+    }
+  }
+  std::map<std::string, std::string> xfwm;
+  for (const auto& entry : store_.list(kWmChannel, "/")) {
+    if (entry.second.type == PropType::String) {
+      xfwm[entry.first] = entry.second.s;
+    }
+  }
+  const auto hits = conflicting_shortcuts(grab.accel, commands, shortcut_values(), xfwm, "", feature);
+  if (!hits.empty()) {
+    std::string body = grab.accel + " is already used.";
+    for (const auto& hit : hits) {
+      body += "\n";
+      body += hit.scope;
+      body += ": ";
+      body += hit.detail;
+    }
+    Gtk::MessageDialog dialog(parent_, "Replace the existing shortcut?", false,
+                              Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_NONE, true);
+    dialog.set_secondary_text(body);
+    dialog.add_button("Cancel", Gtk::RESPONSE_CANCEL);
+    dialog.add_button("Replace", Gtk::RESPONSE_OK);
+    dialog.set_default_response(Gtk::RESPONSE_CANCEL);
+    if (dialog.run() != Gtk::RESPONSE_OK) {
+      return;
+    }
   }
   apply_shortcut(feature, grab.accel);
 }

@@ -2,6 +2,8 @@
 
 #include "pages/overview_page.hpp"
 
+#include "logic/helper_status.hpp"
+
 #include "logic/host_info.hpp"
 #include "logic/system_model.hpp"
 #include "pages/appearance_page.hpp"
@@ -35,18 +37,18 @@ struct TileSpec {
 };
 
 const TileSpec kTiles[] = {
-    {"appearance", "Appearance", "preferences-desktop-theme", "Look & Feel"},
-    {"desktop", "Desktop", "preferences-desktop-wallpaper", "Look & Feel"},
-    {"window-manager", "Window Manager", "preferences-system-windows", "Look & Feel"},
-    {"window-tweaks", "WM Tweaks", "preferences-system", "Look & Feel"},
-    {"notifications", "Notifications", "preferences-system-notifications", "Look & Feel"},
+    {"appearance", "Appearance", "preferences-desktop-theme", "Look and Feel"},
+    {"desktop", "Desktop", "preferences-desktop-wallpaper", "Look and Feel"},
+    {"window-manager", "Window Manager", "preferences-system-windows", "Look and Feel"},
+    {"window-tweaks", "Window Manager Tweaks", "preferences-system", "Look and Feel"},
+    {"notifications", "Notifications", "preferences-system-notifications", "Look and Feel"},
     {"display", "Display", "preferences-desktop-display", "Hardware"},
     {"sound", "Sound", "audio-volume-high", "Hardware"},
     {"power", "Power", "battery", "Hardware"},
     {"keyboard", "Keyboard", "preferences-desktop-keyboard", "Hardware"},
     {"mouse", "Mouse", "input-mouse", "Hardware"},
-    {"removable-media", "Removable Media", "drive-removable-media", "Hardware"},
-    {"date-time", "Date & Time", "appointment-soon", "System"},
+    {"removable-media", "Removable Drives and Media", "drive-removable-media", "Hardware"},
+    {"date-time", "Date and Time", "appointment-soon", "System"},
     {"language", "Language", "preferences-desktop-locale", "System"},
     {"users", "Users", "system-users", "System"},
     {"startup", "Startup", "system-run", "System"},
@@ -109,7 +111,8 @@ void set_small_caps(Gtk::Label& label, const std::string& text) {
                    Glib::Markup::escape_text(text) + "</span>");
 }
 
-void paint_system_card(const Cairo::RefPtr<Cairo::Context>& context, double width, double height) {
+void paint_system_card(const Cairo::RefPtr<Cairo::Context>& context, Gtk::Widget& widget, double width,
+                       double height) {
   if (width < 2 || height < 2) {
     return;
   }
@@ -124,22 +127,33 @@ void paint_system_card(const Cairo::RefPtr<Cairo::Context>& context, double widt
     context->arc(x + radius, y + radius, radius, pi, 3 * half_pi);
     context->close_path();
   };
+  Gdk::RGBA base;
+  Gdk::RGBA bg;
+  base.set_rgba(0.97, 0.965, 0.96, 1);
+  bg.set_rgba(0.93, 0.925, 0.91, 1);
+  auto style = widget.get_style_context();
+  Gdk::RGBA theme_base;
+  Gdk::RGBA theme_bg;
+  Gdk::RGBA theme_fg;
+  if (style->lookup_color("theme_base_color", theme_base)) {
+    base = theme_base;
+  }
+  if (style->lookup_color("theme_bg_color", theme_bg)) {
+    bg = theme_bg;
+  }
+  theme_fg.set_rgba(0.2, 0.2, 0.2, 0.28);
+  style->lookup_color("theme_fg_color", theme_fg);
   context->save();
   context->set_source_rgba(0, 0, 0, 0.06);
   rounded(0, 1, width, height);
   context->fill();
   auto fill = Cairo::LinearGradient::create(0, 0, 0, height);
-  fill->add_color_stop_rgb(0, 252.0 / 255.0, 252.0 / 255.0, 251.0 / 255.0);
-  fill->add_color_stop_rgb(1, 244.0 / 255.0, 243.0 / 255.0, 241.0 / 255.0);
+  fill->add_color_stop_rgba(0, base.get_red(), base.get_green(), base.get_blue(), 1);
+  fill->add_color_stop_rgba(1, bg.get_red(), bg.get_green(), bg.get_blue(), 1);
   context->set_source(fill);
   rounded(0, 0, width, height);
   context->fill();
-  context->set_source_rgb(1, 1, 1);
-  context->set_line_width(1);
-  context->move_to(radius, 1);
-  context->line_to(width - radius, 1);
-  context->stroke();
-  context->set_source_rgb(205.0 / 255.0, 201.0 / 255.0, 195.0 / 255.0);
+  context->set_source_rgba(theme_fg.get_red(), theme_fg.get_green(), theme_fg.get_blue(), 0.22);
   context->set_line_width(1);
   rounded(0.5, 0.5, width - 1, height - 1);
   context->stroke();
@@ -176,7 +190,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   hero->get_style_context()->add_class("lcos-card");
   hero->signal_draw().connect(
       [hero](const Cairo::RefPtr<Cairo::Context>& context) {
-        paint_system_card(context, hero->get_allocated_width(), hero->get_allocated_height());
+        paint_system_card(context, *hero, hero->get_allocated_width(), hero->get_allocated_height());
         return false;
       },
       false);
@@ -191,6 +205,8 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   kicker_ = Gtk::manage(new Gtk::Label());
   kicker_->set_halign(Gtk::ALIGN_FILL);
   kicker_->set_hexpand(true);
+  kicker_->set_line_wrap(true);
+  kicker_->set_lines(2);
   kicker_->set_ellipsize(Pango::ELLIPSIZE_END);
   kicker_->set_xalign(0);
   kicker_->get_style_context()->add_class("lcos-kicker");
@@ -206,6 +222,8 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   host_row->pack_start(*icon_image("computer", 16), Gtk::PACK_SHRINK);
   hostname_ = Gtk::manage(new Gtk::Label());
   hostname_->set_halign(Gtk::ALIGN_START);
+  hostname_->set_line_wrap(true);
+  hostname_->set_lines(2);
   hostname_->set_ellipsize(Pango::ELLIPSIZE_END);
   hostname_->set_hexpand(false);
   hostname_->get_style_context()->add_class("lcos-host");
@@ -236,6 +254,8 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
     (*values[i])->set_halign(Gtk::ALIGN_FILL);
     (*values[i])->set_hexpand(true);
     (*values[i])->set_line_wrap(false);
+    (*values[i])->set_line_wrap(true);
+    (*values[i])->set_lines(2);
     (*values[i])->set_ellipsize(Pango::ELLIPSIZE_END);
     (*values[i])->set_xalign(0);
     (*values[i])->get_style_context()->add_class("lcos-fact");
@@ -285,7 +305,8 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   vol->get_style_context()->add_class("lcos-volume");
   vol->pack_start(*icon_image("audio-volume-high", 16), Gtk::PACK_SHRINK);
   volume_.set_range(0, 100);
-  volume_.set_draw_value(false);
+  volume_.set_draw_value(true);
+  volume_.set_value_pos(Gtk::POS_RIGHT);
   volume_.set_hexpand(true);
   volume_.set_valign(Gtk::ALIGN_CENTER);
   vol->pack_start(volume_, Gtk::PACK_EXPAND_WIDGET);
@@ -293,7 +314,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   hero->pack_start(*quick, Gtk::PACK_SHRINK);
   page->pack_start(*hero, Gtk::PACK_SHRINK);
 
-  const char* sections[] = {"Look & Feel", "Hardware", "System"};
+  const char* sections[] = {"Look and Feel", "Hardware", "System"};
   for (const char* section : sections) {
     auto* tiles = Gtk::manage(new Gtk::Grid());
     tiles->set_hexpand(true);
@@ -349,23 +370,23 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
 
   dark_.set_size_request(48, 22);
   autologin_.set_size_request(48, 22);
+  if (dark_.get_accessible()) {
+    dark_.get_accessible()->set_name("Dark style");
+  }
+  if (autologin_.get_accessible()) {
+    autologin_.get_accessible()->set_name("Automatic login");
+  }
   dark_.property_active().signal_changed().connect([this] {
     if (freeze_ > 0) {
       return;
     }
     appearance_.set_dark_style(dark_.get_active());
-    if (mark_page_) {
-      mark_page_("appearance");
-    }
   });
   autologin_.property_active().signal_changed().connect([this] {
     if (freeze_ > 0) {
       return;
     }
-    users_.set_automatic_for_current(autologin_.get_active());
-    if (mark_page_) {
-      mark_page_("users");
-    }
+    users_.set_automatic_keep(autologin_.get_active());
   });
   volume_.signal_button_press_event().connect([this](GdkEventButton*) {
     volume_dragging_ = true;
@@ -457,16 +478,30 @@ void OverviewPage::rename_host() {
   }
   const PrivResult result = session_.run({"set-hostname", name});
   if (!result.ok) {
+    if (authentication_was_dismissed(result.error)) {
+      return;
+    }
     const std::string message =
-        result.error.empty() ? "The hostname was not changed." : result.error;
-    Gtk::MessageDialog alert(message, false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+        result.error.empty() ? "The name was not changed." : result.error;
+    Gtk::MessageDialog alert("Could not rename this computer", false, Gtk::MESSAGE_ERROR,
+                             Gtk::BUTTONS_OK, true);
     if (parent != nullptr) {
       alert.set_transient_for(*parent);
     }
+    alert.set_title("Rename this computer");
+    alert.set_secondary_text(message);
     alert.run();
     return;
   }
   refresh_host();
+  Gtk::MessageDialog renamed("The name was changed", false, Gtk::MESSAGE_INFO, Gtk::BUTTONS_OK, true);
+  if (parent != nullptr) {
+    renamed.set_transient_for(*parent);
+  }
+  renamed.set_title("Rename this computer");
+  renamed.set_secondary_text(
+      "Some programs keep the previous name until you log out or restart the computer.");
+  renamed.run();
 }
 
 void OverviewPage::refresh_host() {

@@ -268,6 +268,54 @@ const ModeInfo* find_mode(const std::vector<ModeInfo>& modes, int width,
   return nullptr;
 }
 
+std::string edid_monitor_name(const unsigned char* data, std::size_t length) {
+  if (data == nullptr || length < 128) {
+    return {};
+  }
+  for (int descriptor = 0; descriptor < 4; ++descriptor) {
+    const unsigned char* block = data + 54 + descriptor * 18;
+    if (block + 18 > data + length) {
+      break;
+    }
+    if (block[0] != 0 || block[1] != 0 || block[2] != 0 || block[3] != 0xFC) {
+      continue;
+    }
+    std::string name;
+    for (int i = 5; i < 18; ++i) {
+      const unsigned char c = block[i];
+      if (c == 0x0A || c == 0x00) {
+        break;
+      }
+      if (c >= 32 && c < 127) {
+        name.push_back(static_cast<char>(c));
+      }
+    }
+    while (!name.empty() && name.back() == ' ') {
+      name.pop_back();
+    }
+    std::size_t start = 0;
+    while (start < name.size() && name[start] == ' ') {
+      ++start;
+    }
+    if (start > 0) {
+      name.erase(0, start);
+    }
+    if (!name.empty()) {
+      return name;
+    }
+  }
+  return {};
+}
+
+bool resolution_is_preferred(const std::vector<ModeInfo>& modes, int width, int height) {
+  for (const auto& mode : modes) {
+    if (mode.preferred && mode.width == width && mode.height == height) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::string friendly_output_name(const std::string& randr_name,
                                  const std::string& edid_name) {
   if (!edid_name.empty()) {
