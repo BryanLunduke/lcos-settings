@@ -15,6 +15,8 @@
 #include <gdkmm/pixbuf.h>
 #include <glibmm/markup.h>
 #include <gtkmm/button.h>
+#include <gtkmm/flowbox.h>
+#include <gtkmm/togglebutton.h>
 #include <gtkmm/dialog.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/icontheme.h>
@@ -186,7 +188,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   auto* page = make_vbox(0);
   page->set_border_width(0);
 
-  auto* hero = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 24));
+  auto* hero = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   hero->get_style_context()->add_class("lcos-card");
   hero->signal_draw().connect(
       [hero](const Cairo::RefPtr<Cairo::Context>& context) {
@@ -194,10 +196,22 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
         return false;
       },
       false);
+  auto* hero_row = Gtk::manage(new Gtk::FlowBox());
+  hero_row->set_selection_mode(Gtk::SELECTION_NONE);
+  hero_row->set_homogeneous(false);
+  hero_row->set_min_children_per_line(1);
+  hero_row->set_max_children_per_line(2);
+  hero_row->set_column_spacing(18);
+  hero_row->set_row_spacing(12);
+  hero_row->set_hexpand(true);
+  hero_row->set_halign(Gtk::ALIGN_FILL);
+
+  auto* identity = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 18));
+  identity->set_hexpand(true);
   logo_ = Gtk::manage(new Gtk::Image());
-  logo_->set_pixel_size(112);
+  logo_->set_pixel_size(96);
   logo_->set_valign(Gtk::ALIGN_CENTER);
-  hero->pack_start(*logo_, Gtk::PACK_SHRINK);
+  identity->pack_start(*logo_, Gtk::PACK_SHRINK);
 
   auto* info = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
   info->set_valign(Gtk::ALIGN_CENTER);
@@ -264,7 +278,8 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   }
   info->set_size_request(120, -1);
   info->pack_start(*facts, Gtk::PACK_SHRINK);
-  hero->pack_start(*info, Gtk::PACK_EXPAND_WIDGET);
+  identity->pack_start(*info, Gtk::PACK_EXPAND_WIDGET);
+  hero_row->insert(*identity, -1);
 
   auto* quick = Gtk::manage(new Gtk::Grid());
   quick->set_column_spacing(10);
@@ -272,7 +287,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   quick->set_valign(Gtk::ALIGN_CENTER);
   quick->set_halign(Gtk::ALIGN_END);
   quick->set_hexpand(false);
-  quick->set_size_request(210, -1);
+  quick->set_size_request(180, -1);
   quick->get_style_context()->add_class("lcos-quick");
   auto* qh = Gtk::manage(new Gtk::Label());
   set_small_caps(*qh, "Quick settings");
@@ -300,26 +315,41 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   autologin_.set_valign(Gtk::ALIGN_CENTER);
   quick->attach(*login_label, 0, 2, 1, 1);
   quick->attach(autologin_, 1, 2, 1, 1);
-  auto* vol = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+  auto* vol = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
   vol->set_hexpand(true);
   vol->get_style_context()->add_class("lcos-volume");
-  vol->pack_start(*icon_image("audio-volume-high", 16), Gtk::PACK_SHRINK);
+  volume_mute_ = Gtk::manage(new Gtk::ToggleButton());
+  volume_mute_->set_image(*icon_image("audio-volume-high", 16));
+  volume_mute_->set_relief(Gtk::RELIEF_NONE);
+  volume_mute_->set_tooltip_text("Mute");
+  volume_mute_->set_valign(Gtk::ALIGN_CENTER);
+  vol->pack_start(*volume_mute_, Gtk::PACK_SHRINK);
   volume_.set_range(0, 100);
-  volume_.set_draw_value(true);
-  volume_.set_value_pos(Gtk::POS_RIGHT);
+  volume_.set_digits(0);
+  volume_.set_draw_value(false);
   volume_.set_hexpand(true);
   volume_.set_valign(Gtk::ALIGN_CENTER);
+  volume_value_ = Gtk::manage(new Gtk::Label("0%"));
+  volume_value_->set_width_chars(4);
+  volume_value_->set_xalign(1);
+  volume_value_->get_style_context()->add_class("lcos-fact");
   vol->pack_start(volume_, Gtk::PACK_EXPAND_WIDGET);
+  vol->pack_start(*volume_value_, Gtk::PACK_SHRINK);
   quick->attach(*vol, 0, 3, 2, 1);
-  hero->pack_start(*quick, Gtk::PACK_SHRINK);
+  hero_row->insert(*quick, -1);
+  hero->pack_start(*hero_row, Gtk::PACK_SHRINK);
   page->pack_start(*hero, Gtk::PACK_SHRINK);
 
   const char* sections[] = {"Look and Feel", "Hardware", "System"};
   for (const char* section : sections) {
-    auto* tiles = Gtk::manage(new Gtk::Grid());
+    auto* tiles = Gtk::manage(new Gtk::FlowBox());
     tiles->set_hexpand(true);
-    tiles->set_column_homogeneous(true);
+    tiles->set_homogeneous(true);
+    tiles->set_selection_mode(Gtk::SELECTION_NONE);
+    tiles->set_min_children_per_line(2);
+    tiles->set_max_children_per_line(6);
     tiles->set_column_spacing(6);
+    tiles->set_row_spacing(6);
     tiles->set_margin_top(12);
     int column = 0;
     for (const auto& tile : kTiles) {
@@ -341,30 +371,27 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
       label->set_justify(Gtk::JUSTIFY_CENTER);
       label->set_line_wrap(true);
       label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
-      label->set_lines(2);
-      label->set_max_width_chars(12);
-      label->set_ellipsize(Pango::ELLIPSIZE_END);
+      label->set_justify(Gtk::JUSTIFY_CENTER);
+      label->set_width_chars(12);
+      label->set_max_width_chars(16);
+      label->set_ellipsize(Pango::ELLIPSIZE_NONE);
       label->get_style_context()->add_class("lcos-tile-label");
       box->pack_start(*image, Gtk::PACK_SHRINK);
       box->pack_start(*label, Gtk::PACK_SHRINK);
       button->add(*box);
       const std::string id = tile.id;
       button->signal_clicked().connect([this, id] { open(id); });
-      tiles->attach(*button, column, 0, 1, 1);
+      tiles->insert(*button, -1);
       ++column;
     }
-    if (column < 6) {
-      auto* spacer = Gtk::manage(new Gtk::Box());
-      spacer->set_hexpand(true);
-      tiles->attach(*spacer, column, 0, 6 - column, 1);
-    }
+    (void)column;
     auto* frame = make_frame(section, *tiles);
     frame->set_margin_top(14);
     page->pack_start(*frame, Gtk::PACK_SHRINK);
   }
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
-  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+  scroll->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
@@ -397,10 +424,19 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
     return false;
   });
   volume_.signal_value_changed().connect([this] {
+    if (volume_value_ != nullptr) {
+      volume_value_->set_text(std::to_string(static_cast<int>(volume_.get_value())) + "%");
+    }
     if (freeze_ > 0) {
       return;
     }
     sound_.set_output_volume_percent(static_cast<int>(volume_.get_value()));
+  });
+  volume_mute_->signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    sound_.set_output_muted(volume_mute_->get_active());
   });
   pulse_connection_ = pulse_.changed.connect([this] { refresh_quick(); });
   refresh_host();
@@ -558,8 +594,36 @@ void OverviewPage::refresh_quick() {
       volume_.set_range(0, 150);
     }
     volume_.set_value(percent);
+    if (volume_value_ != nullptr) {
+      volume_value_->set_text(std::to_string(percent) + "%");
+    }
+  }
+  if (volume_mute_ != nullptr) {
+    volume_mute_->set_active(sound_.output_muted());
+    volume_mute_->set_sensitive(sound_.output_ready());
+    volume_mute_->set_tooltip_text(volume_mute_->get_active() ? "Unmute" : "Mute");
   }
   volume_.set_sensitive(sound_.output_ready());
+}
+
+bool OverviewPage::discard_pending() {
+  if (!session_.action_open("set-hostname")) {
+    return false;
+  }
+  const PrivResult result = session_.revert_action("set-hostname");
+  if (!result.ok) {
+    auto* parent = dynamic_cast<Gtk::Window*>(get_toplevel());
+    Gtk::MessageDialog alert(result.error.empty() ? "The name could not be restored." : result.error,
+                             false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+    if (parent != nullptr) {
+      alert.set_transient_for(*parent);
+    }
+    alert.set_title("Rename this computer");
+    alert.run();
+    return false;
+  }
+  refresh_host();
+  return true;
 }
 
 }  // namespace lcos

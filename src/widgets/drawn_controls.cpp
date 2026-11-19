@@ -6,6 +6,7 @@
 
 #include <gdkmm/general.h>
 #include <glibmm/main.h>
+#include <atkmm/object.h>
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/window.h>
 #include <gtkmm/scrolledwindow.h>
@@ -132,7 +133,20 @@ bool draw_switch(Gtk::Switch& sw, const Cairo::RefPtr<Cairo::Context>& cr) {
   cr->set_line_width(1);
   cr->stroke();
   if (widget_focused(sw)) {
-    stroke_focus_ring(cr, 1.0, 1.0, width - 2.0, height - 2.0, track_r);
+    // The blue ring disappears on a switch that is on. Draw a light ring
+    // against the blue track, and the usual blue ring against the grey one.
+    if (t > 0.45) {
+      rounded_rect(cr, 1.0, 1.0, width - 2.0, height - 2.0, track_r);
+      cr->set_source_rgb(1, 1, 1);
+      cr->set_line_width(2.6);
+      cr->stroke();
+      rounded_rect(cr, 2.4, 2.4, width - 4.8, height - 4.8, std::max(1.0, track_r - 2.0));
+      cr->set_source_rgb(0.12, 0.16, 0.22);
+      cr->set_line_width(1.2);
+      cr->stroke();
+    } else {
+      stroke_focus_ring(cr, 1.0, 1.0, width - 2.0, height - 2.0, track_r);
+    }
   }
   if (!enabled) {
     cr->pop_group_to_source();
@@ -199,16 +213,32 @@ bool draw_combo(Gtk::ComboBox& combo, const Cairo::RefPtr<Cairo::Context>& cr) {
   const double height = std::max(1, combo.get_allocated_height());
   const bool enabled = combo.get_sensitive();
   const bool focused = widget_focused(combo);
+  Gdk::RGBA base;
+  Gdk::RGBA text_color;
+  Gdk::RGBA fg;
+  base.set_rgba(1, 1, 1, 1);
+  text_color.set_rgba(0.1, 0.1, 0.1, 1);
+  fg.set_rgba(0.45, 0.43, 0.4, 1);
+  auto style = combo.get_style_context();
+  style->lookup_color("theme_base_color", base);
+  style->lookup_color("theme_text_color", text_color);
+  style->lookup_color("theme_fg_color", fg);
+  if (!enabled) {
+    text_color.set_alpha(0.55);
+  }
   cr->save();
   rounded_rect(cr, 0.5, 0.5, width - 1, height - 1, 4);
   auto fill = Cairo::LinearGradient::create(0, 0, 0, height);
-  if (enabled) {
-    fill->add_color_stop_rgb(0, 1, 1, 1);
-    fill->add_color_stop_rgb(1, 244.0 / 255.0, 243.0 / 255.0, 242.0 / 255.0);
-  } else {
-    fill->add_color_stop_rgb(0, 246.0 / 255.0, 245.0 / 255.0, 244.0 / 255.0);
-    fill->add_color_stop_rgb(1, 236.0 / 255.0, 235.0 / 255.0, 233.0 / 255.0);
-  }
+  const double dim = enabled ? 0.0 : 0.18;
+  auto mix = [](double from, double toward, double amount) {
+    return from + (toward - from) * amount;
+  };
+  fill->add_color_stop_rgb(0, mix(base.get_red(), fg.get_red(), dim),
+                           mix(base.get_green(), fg.get_green(), dim),
+                           mix(base.get_blue(), fg.get_blue(), dim));
+  fill->add_color_stop_rgb(1, mix(base.get_red(), fg.get_red(), dim + 0.06),
+                           mix(base.get_green(), fg.get_green(), dim + 0.06),
+                           mix(base.get_blue(), fg.get_blue(), dim + 0.06));
   cr->set_source(fill);
   cr->fill_preserve();
   if (focused) {
@@ -231,7 +261,8 @@ bool draw_combo(Gtk::ComboBox& combo, const Cairo::RefPtr<Cairo::Context>& cr) {
   cr->move_to(chevron_x - 4, chevron_y - 2);
   cr->line_to(chevron_x, chevron_y + 2.5);
   cr->line_to(chevron_x + 4, chevron_y - 2);
-  cr->set_source_rgba(0.25, 0.23, 0.2, enabled ? 0.9 : 0.35);
+  cr->set_source_rgba(text_color.get_red(), text_color.get_green(), text_color.get_blue(),
+                      enabled ? 0.9 : 0.45);
   cr->stroke();
 
   Glib::ustring text;
@@ -247,11 +278,8 @@ bool draw_combo(Gtk::ComboBox& combo, const Cairo::RefPtr<Cairo::Context>& cr) {
     int text_height = 0;
     layout->get_pixel_size(unused, text_height);
     cr->move_to(10, std::max(0.0, (height - text_height) / 2.0));
-    if (enabled) {
-      cr->set_source_rgb(0.1, 0.1, 0.1);
-    } else {
-      cr->set_source_rgb(0.55, 0.53, 0.5);
-    }
+    cr->set_source_rgba(text_color.get_red(), text_color.get_green(), text_color.get_blue(),
+                        enabled ? 1.0 : 0.55);
     layout->show_in_cairo_context(cr);
   }
   cr->restore();
@@ -263,7 +291,17 @@ void install_combo(Gtk::ComboBox& combo) {
     return;
   }
   combo.set_data("lcos-combo-draw", combo.gobj());
+  combo.set_can_focus(true);
   combo.set_size_request(-1, 28);
+  for (auto* cell : combo.get_cells()) {
+    if (auto* text = dynamic_cast<Gtk::CellRendererText*>(cell)) {
+      text->property_ellipsize() = Pango::ELLIPSIZE_END;
+      text->property_width_chars() = 18;
+    }
+  }
+  if (auto accessible = combo.get_accessible()) {
+    accessible->set_role(Atk::ROLE_COMBO_BOX);
+  }
   combo.signal_state_flags_changed().connect([&combo](Gtk::StateFlags) { combo.queue_draw(); });
   combo.signal_changed().connect([&combo] { combo.queue_draw(); });
   combo.signal_draw().connect(

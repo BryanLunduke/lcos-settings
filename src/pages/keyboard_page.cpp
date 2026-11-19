@@ -18,6 +18,7 @@
 #include <gtkmm/messagedialog.h>
 #include <gtkmm/scrolledwindow.h>
 
+#include <cmath>
 #include <fstream>
 #include <map>
 
@@ -144,7 +145,8 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
     : store_(store),
       parent_(parent),
       delay_(Gtk::ORIENTATION_HORIZONTAL),
-      rate_(Gtk::ORIENTATION_HORIZONTAL) {
+      rate_(Gtk::ORIENTATION_HORIZONTAL),
+      blink_time_(Gtk::ORIENTATION_HORIZONTAL) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
   auto* page = make_vbox(4);
@@ -182,7 +184,9 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
 
   auto* layout = make_vbox(8);
   system_defaults_.set_label("Use system defaults");
-  layout->pack_start(system_defaults_, Gtk::PACK_SHRINK);
+  FormGrid defaults_form;
+  defaults_form.add_control(system_defaults_);
+  layout->pack_start(defaults_form.grid(), Gtk::PACK_SHRINK);
   FormGrid model_form;
   model_form.add("Model", model_);
   layout->pack_start(model_form.grid(), Gtk::PACK_SHRINK);
@@ -198,10 +202,12 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
   layout_scroll->add(layouts_view_);
   layout->pack_start(*layout_scroll, Gtk::PACK_SHRINK);
   auto* layout_buttons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
-  auto* add_layout = Gtk::manage(new Gtk::Button("Add"));
+  auto* add_layout = Gtk::manage(new Gtk::Button("Add…"));
   auto* remove_layout = Gtk::manage(new Gtk::Button("Remove"));
-  auto* up = Gtk::manage(new Gtk::Button("Up"));
-  auto* down = Gtk::manage(new Gtk::Button("Down"));
+  auto* up = Gtk::manage(new Gtk::Button("↑"));
+  auto* down = Gtk::manage(new Gtk::Button("↓"));
+  up->set_tooltip_text("Move up");
+  down->set_tooltip_text("Move down");
   layout_buttons->pack_start(*add_layout, Gtk::PACK_SHRINK);
   layout_buttons->pack_start(*remove_layout, Gtk::PACK_SHRINK);
   layout_buttons->pack_start(*up, Gtk::PACK_SHRINK);
@@ -266,7 +272,8 @@ KeyboardPage::KeyboardPage(XfconfStore& store, Gtk::Window& parent)
   });
   blink_time_.signal_value_changed().connect([this] {
     if (freeze_ == 0) {
-      store_.set_int("xsettings", "/Net/CursorBlinkTime", blink_time_.get_value_as_int());
+      store_.set_int("xsettings", "/Net/CursorBlinkTime",
+                     static_cast<int>(std::lround(blink_time_.get_value())));
     }
   });
   numlock_.signal_toggled().connect([this] {

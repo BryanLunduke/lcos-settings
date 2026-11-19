@@ -837,6 +837,14 @@ void test_review_fixes() {
   EXPECT(!lcos::priv_action_allowed(lcos::PrivDomain::System, "remove-user"));
   EXPECT(lcos::priv_action_allowed(lcos::PrivDomain::Accounts, "set-autologin"));
   EXPECT(lcos::priv_action_allowed(lcos::PrivDomain::System, "revert"));
+  EXPECT(lcos::priv_action_allowed(lcos::PrivDomain::System, "revert-action"));
+  const auto hostname_files = lcos::undo_files_for_action("set-hostname");
+  EXPECT(hostname_files.size() == 4);
+  EXPECT(hostname_files[0] == "hostname");
+  EXPECT(lcos::undo_files_for_action("set-timezone").size() == 3);
+  EXPECT(lcos::undo_files_for_action("set-ntp").size() == 1);
+  EXPECT(lcos::undo_files_for_action("set-time").size() == 2);
+  EXPECT(lcos::undo_files_for_action("set-locale").empty());
   EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::Accounts, "passwd.ada"));
   EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::Accounts, "shadow.ada"));
   EXPECT(lcos::undo_file_belongs_to(lcos::PrivDomain::Accounts, "group.ada"));

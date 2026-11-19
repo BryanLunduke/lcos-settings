@@ -322,13 +322,11 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
 
   FormGrid form;
   primary_.set_label("Primary display");
-  enabled_.set_valign(Gtk::ALIGN_CENTER);
-  enabled_.set_size_request(48, 22);
-  enabled_.set_halign(Gtk::ALIGN_START);
+  enabled_.set_label("Use this display");
   if (enabled_.get_accessible()) {
     enabled_.get_accessible()->set_name("Use this display");
   }
-  form.add("Use this display", enabled_);
+  form.add_control(enabled_);
   form.add_control(primary_);
   form.add("Resolution", resolution_);
   refresh_label_ = form.add("Refresh rate", refresh_);
@@ -396,7 +394,7 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
     show_selected();
     redraw();
   });
-  enabled_.property_active().signal_changed().connect([this] {
+  enabled_.signal_toggled().connect([this] {
     if (freeze_ > 0) {
       return;
     }
@@ -968,15 +966,29 @@ const OutputConfig* DisplayPage::selected() const {
 void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
   const int width = std::max(1, preview_width_);
   const int height = std::max(1, preview_height_);
+  Gdk::RGBA theme_bg;
+  Gdk::RGBA theme_fg;
+  theme_bg.set_rgba(0.93, 0.92, 0.90, 1);
+  theme_fg.set_rgba(0.25, 0.23, 0.2, 1);
+  auto style = arrange_.get_style_context();
+  style->lookup_color("theme_bg_color", theme_bg);
+  style->lookup_color("theme_fg_color", theme_fg);
+  auto mix = [](double from, double toward, double amount) {
+    return from + (toward - from) * amount;
+  };
   context->save();
   rounded_rect(context, 0.5, 0.5, width - 1.0, height - 1.0, 8);
   context->clip();
   auto backdrop = Cairo::LinearGradient::create(0, 0, 0, height);
-  backdrop->add_color_stop_rgb(0, 0.863, 0.847, 0.824);
-  backdrop->add_color_stop_rgb(1, 0.831, 0.812, 0.784);
+  backdrop->add_color_stop_rgb(0, mix(theme_bg.get_red(), theme_fg.get_red(), 0.04),
+                               mix(theme_bg.get_green(), theme_fg.get_green(), 0.04),
+                               mix(theme_bg.get_blue(), theme_fg.get_blue(), 0.04));
+  backdrop->add_color_stop_rgb(1, mix(theme_bg.get_red(), theme_fg.get_red(), 0.09),
+                               mix(theme_bg.get_green(), theme_fg.get_green(), 0.09),
+                               mix(theme_bg.get_blue(), theme_fg.get_blue(), 0.09));
   context->set_source(backdrop);
   context->paint();
-  context->set_source_rgba(0, 0, 0, 0.09);
+  context->set_source_rgba(theme_fg.get_red(), theme_fg.get_green(), theme_fg.get_blue(), 0.16);
   for (int y = 8; y < height; y += 16) {
     for (int x = 8; x < width; x += 16) {
       context->arc(x, y, 1.0, 0, 6.28318530718);
@@ -1075,12 +1087,12 @@ void DisplayPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& context) {
     }
   }
   if (outputs_.empty()) {
-    context->set_source_rgb(0.2, 0.2, 0.2);
+    context->set_source_rgba(theme_fg.get_red(), theme_fg.get_green(), theme_fg.get_blue(), 0.8);
     context->move_to(24, height / 2.0);
     context->show_text("No displays");
   }
   context->restore();
-  context->set_source_rgb(0.741, 0.722, 0.694);
+  context->set_source_rgba(theme_fg.get_red(), theme_fg.get_green(), theme_fg.get_blue(), 0.28);
   context->set_line_width(1);
   rounded_rect(context, 0.5, 0.5, width - 1.0, height - 1.0, 8);
   context->stroke();

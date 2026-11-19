@@ -1176,6 +1176,119 @@ void discard_domain_files(const std::string& token, lcos::PrivDomain domain) {
   drop_token_dir_if_empty(token);
 }
 
+void forget_undo_files(const std::string& token, const std::vector<std::string>& names) {
+  const std::string dir = undo_dir(token);
+  for (const auto& name : names) {
+    unlink((dir + "/" + name).c_str());
+  }
+  drop_token_dir_if_empty(token);
+}
+
+// Restores one applied action and drops only that action's undo files.
+bool revert_named_action(const std::string& token, const std::string& action) {
+  const std::vector<std::string> names = lcos::undo_files_for_action(action);
+  if (names.empty() || lcos::priv_domain_for_action(action) != lcos::PrivDomain::System) {
+    return false;
+  }
+  ensure_undo(token);
+  const std::string dir = undo_dir(token);
+  RevertReport report;
+  auto note_command = [&](bool ok, const std::string& message) { report.check(ok, message); };
+  if (action == "set-timezone") {
+    if (access((dir + "/localtime").c_str(), F_OK) == 0) {
+      const std::string target = first_line(slurp(dir + "/localtime"));
+      if (unlink("/etc/localtime") != 0 && errno != ENOENT) {
+        report.errors.push_back("could not restore the time zone link");
+      } else if (target.empty() || symlink(target.c_str(), "/etc/localtime") != 0) {
+        report.errors.push_back("could not restore the time zone link");
+      }
+    }
+    if (access((dir + "/timezone").c_str(), F_OK) == 0) {
+      std::string error;
+      bool ok = true;
+      if (access((dir + "/timezone.missing").c_str(), F_OK) == 0) {
+        if (unlink("/etc/timezone") != 0 && errno != ENOENT) {
+          ok = false;
+          error = "could not restore the time zone name";
+        }
+      } else {
+        ok = try_write_file("/etc/timezone", slurp(dir + "/timezone"), 0644, error);
+      }
+      report.check(ok, error.empty() ? "could not restore the time zone name" : error);
+    }
+  } else if (action == "set-ntp") {
+    if (access((dir + "/ntp").c_str(), F_OK) == 0) {
+      const std::string state = first_line(slurp(dir + "/ntp"));
+      if (state == "on") {
+        note_command(run_command({"update-rc.d", "chrony", "enable"}, ""),
+                     "could not restore automatic time");
+        note_command(run_command({"/etc/init.d/chrony", "start"}, ""),
+                     "could not restore automatic time");
+      } else if (state == "off") {
+        note_command(run_command({"/etc/init.d/chrony", "stop"}, ""),
+                     "could not restore automatic time");
+        note_command(run_command({"update-rc.d", "chrony", "disable"}, ""),
+                     "could not restore automatic time");
+      }
+    }
+  } else if (action == "set-time") {
+    if (access((dir + "/clock-wall").c_str(), F_OK) == 0 &&
+        access((dir + "/clock-mono").c_str(), F_OK) == 0) {
+      try {
+        const std::time_t saved_wall =
+            static_cast<std::time_t>(std::stoll(first_line(slurp(dir + "/clock-wall"))));
+        const std::time_t saved_mono =
+            static_cast<std::time_t>(std::stoll(first_line(slurp(dir + "/clock-mono"))));
+        struct timespec now {};
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+          report.errors.push_back("could not restore the clock");
+        } else {
+          const std::time_t target = lcos::restored_wall_clock(saved_wall, saved_mono, now.tv_sec);
+          note_command(run_command({"date", "-s", "@" + std::to_string(target)}, ""),
+                       "could not restore the clock");
+        }
+      } catch (const std::exception&) {
+        report.errors.push_back("could not restore the clock");
+      }
+    }
+  } else if (action == "set-hostname") {
+    if (access((dir + "/hostname").c_str(), F_OK) == 0 ||
+        access((dir + "/hosts").c_str(), F_OK) == 0) {
+      std::string error;
+      bool ok = true;
+      if (access((dir + "/hostname.missing").c_str(), F_OK) == 0) {
+        if (unlink("/etc/hostname") != 0 && errno != ENOENT) {
+          ok = false;
+          error = "could not restore the hostname";
+        }
+      } else if (access((dir + "/hostname").c_str(), F_OK) == 0) {
+        ok = try_write_file("/etc/hostname", slurp(dir + "/hostname"), 0644, error);
+      }
+      report.check(ok, error.empty() ? "could not restore the hostname" : error);
+      if (access((dir + "/hosts").c_str(), F_OK) == 0) {
+        error.clear();
+        ok = try_write_file("/etc/hosts", slurp(dir + "/hosts"), 0644, error);
+        report.check(ok, error.empty() ? "could not restore /etc/hosts" : error);
+      }
+      if (access((dir + "/hostname.live").c_str(), F_OK) == 0) {
+        const std::string live = first_line(slurp(dir + "/hostname.live"));
+        if (!live.empty() && live.size() <= 64 && sethostname(live.c_str(), live.size()) != 0) {
+          report.errors.push_back("could not apply the previous hostname");
+        }
+      }
+    }
+  }
+  if (!report.errors.empty()) {
+    std::cerr << "could not restore the change\n";
+    for (const auto& message : report.errors) {
+      std::cerr << message << "\n";
+    }
+    return false;
+  }
+  forget_undo_files(token, names);
+  return true;
+}
+
 bool revert_token(const std::string& token, lcos::PrivDomain domain) {
   ensure_undo(token);
   const std::string dir = undo_dir(token);
@@ -1504,6 +1617,10 @@ int main(int argc, char** argv) {
   try {
     if (action == "revert" && rest == 1) {
       if (!revert_token(token, domain)) {
+        return 1;
+      }
+    } else if (action == "revert-action" && rest == 2) {
+      if (lcos::priv_domain_for_action(argv[4]) != domain || !revert_named_action(token, argv[4])) {
         return 1;
       }
     } else if (action == "commit" && rest == 1) {

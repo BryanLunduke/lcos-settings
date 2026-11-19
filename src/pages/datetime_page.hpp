@@ -31,6 +31,7 @@ class DateTimePage : public SettingsPage {
   }
   void on_page_shown() override;
   void reload_from_store() override { on_page_shown(); }
+  bool discard_pending() override;
 
  private:
   class ZoneColumns : public Gtk::TreeModel::ColumnRecord {
@@ -64,6 +65,8 @@ class DateTimePage : public SettingsPage {
   Gtk::TreeView zones_view_;
   Gtk::CheckButton ntp_;
   Gtk::Calendar calendar_;
+  Gtk::Widget* manual_time_ = nullptr;
+  Gtk::Widget* set_time_ = nullptr;
   Gtk::SpinButton hour_;
   Gtk::SpinButton minute_;
   Gtk::SpinButton second_;

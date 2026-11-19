@@ -1310,10 +1310,26 @@ PrivDomain priv_domain_for_action(const std::string& action) {
 }
 
 bool priv_action_allowed(PrivDomain domain, const std::string& action) {
-  if (action == "commit" || action == "revert") {
+  if (action == "commit" || action == "revert" || action == "revert-action") {
     return true;
   }
   return priv_domain_for_action(action) == domain;
+}
+
+std::vector<std::string> undo_files_for_action(const std::string& action) {
+  if (action == "set-hostname") {
+    return {"hostname", "hostname.missing", "hostname.live", "hosts"};
+  }
+  if (action == "set-timezone") {
+    return {"localtime", "timezone", "timezone.missing"};
+  }
+  if (action == "set-ntp") {
+    return {"ntp"};
+  }
+  if (action == "set-time") {
+    return {"clock-wall", "clock-mono"};
+  }
+  return {};
 }
 
 bool undo_file_belongs_to(PrivDomain domain, const std::string& filename) {

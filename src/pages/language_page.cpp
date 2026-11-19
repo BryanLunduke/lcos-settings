@@ -73,20 +73,7 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
   auto* find = Gtk::manage(new Gtk::SearchEntry());
   find->set_placeholder_text("Search languages, for example German");
   find->signal_search_changed().connect([this, find] {
-    const Glib::ustring query = find->get_text().lowercase();
-    if (query.empty()) {
-      return;
-    }
-    for (const auto& locale : locales_) {
-      const std::string pretty = locale_display_name(locale.name);
-      const Glib::ustring hay = Glib::ustring(pretty + " " + locale.name).lowercase();
-      if (hay.find(query) != Glib::ustring::npos) {
-        if (language_.get_active_id() != locale.name) {
-          language_.set_active_id(locale.name);
-        }
-        return;
-      }
-    }
+    show_matching(find->get_text().lowercase());
   });
   auto* locale_box = make_vbox(8);
   locale_box->pack_start(*find, Gtk::PACK_SHRINK);
@@ -111,10 +98,12 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
   });
   auto* preview = make_label("");
   preview->set_line_wrap(true);
+  preview->set_margin_start(12);
   preview->get_style_context()->add_class("lcos-dim");
   page->pack_start(*preview, Gtk::PACK_SHRINK);
   auto* apply_button = Gtk::manage(new Gtk::Button("Set language"));
   apply_button->set_halign(Gtk::ALIGN_START);
+  apply_button->set_margin_start(12);
   page->pack_start(*apply_button, Gtk::PACK_SHRINK);
   auto* note = make_note(
       "Pick a language by its name. Set language turns on a locale that is not generated yet. "
@@ -129,11 +118,42 @@ LanguagePage::LanguagePage(PrivSession& session, Gtk::Window& parent)
       preview->set_text(sample);
     }
   };
-  language_.signal_changed().connect(refresh_preview);
+  language_.signal_changed().connect([this, refresh_preview] {
+    if (freeze_ == 0) {
+      pinned_language_ = language_.get_active_id();
+    }
+    refresh_preview();
+  });
   pack_start(*make_page_scroll(*page), Gtk::PACK_EXPAND_WIDGET);
 
   apply_button->signal_clicked().connect([this] { apply(); });
   load();
+}
+
+void LanguagePage::show_matching(const Glib::ustring& query) {
+  Freeze freeze(freeze_);
+  const std::string keep = pinned_language_.empty() ? std::string(language_.get_active_id())
+                                                     : pinned_language_;
+  language_.remove_all();
+  for (const auto& locale : locales_) {
+    const std::string pretty = locale_display_name(locale.name);
+    const Glib::ustring hay = Glib::ustring(pretty + " " + locale.name).lowercase();
+    if (!query.empty() && hay.find(query) == Glib::ustring::npos && locale.name != keep) {
+      continue;
+    }
+    std::string label = pretty == locale.name ? locale.name : pretty + "  —  " + locale.name;
+    if (!locale.generated) {
+      label += " (not generated)";
+    }
+    language_.append(locale.name, label);
+  }
+  if (!keep.empty()) {
+    language_.set_active_id(keep);
+  }
+  if (language_.get_active_row_number() < 0 && language_.get_model() &&
+      !language_.get_model()->children().empty()) {
+    language_.set_active(0);
+  }
 }
 
 void LanguagePage::fill(Gtk::ComboBoxText& combo, bool same_as_language) {
@@ -247,6 +267,7 @@ void LanguagePage::load() {
   if (language_.get_active_row_number() < 0) {
     language_.set_active(0);
   }
+  pinned_language_ = language_.get_active_id();
   auto regional = [&](Gtk::ComboBoxText& combo, const char* key) {
     const auto found = values.find(key);
     if (found == values.end() || found->second.empty() || found->second == lang) {

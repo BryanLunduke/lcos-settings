@@ -1,19 +1,17 @@
 #!/bin/sh
 # Gives the session test a private config directory, a session bus, and an X server.
+# Always isolates, even when the build is started from inside a desktop session.
 set -eu
 
-if [ -z "${XDG_CONFIG_HOME:-}" ]; then
+if [ -z "${LCOS_SESSION_ISOLATED:-}" ]; then
+  export LCOS_SESSION_ISOLATED=1
   LCOS_TEST_HOME=$(mktemp -d)
   export XDG_CONFIG_HOME="$LCOS_TEST_HOME/config"
   export XDG_CACHE_HOME="$LCOS_TEST_HOME/cache"
-  mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
-fi
-if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
-  XDG_RUNTIME_DIR=$(mktemp -d)
-  export XDG_RUNTIME_DIR
+  export XDG_RUNTIME_DIR="$LCOS_TEST_HOME/run"
+  mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_RUNTIME_DIR"
   chmod 700 "$XDG_RUNTIME_DIR"
-fi
-if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  unset DBUS_SESSION_BUS_ADDRESS
   exec dbus-run-session -- "$0" "$@"
 fi
 # Always use a private X server. The ambient DISPLAY may be a real session.

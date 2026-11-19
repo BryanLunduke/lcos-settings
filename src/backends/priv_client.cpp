@@ -510,4 +510,40 @@ PrivResult PrivSession::checkpoint() { return finish_domains("commit", false); }
 
 PrivResult PrivSession::revert() { return finish_domains("revert", true); }
 
+PrivResult PrivSession::revert_action(const std::string& action) {
+  if (open_actions_.count(action) == 0) {
+    return {true, {}};
+  }
+  if (undo_files_for_action(action).empty()) {
+    PrivResult result;
+    result.error = "This change cannot be reverted on its own.";
+    return result;
+  }
+  const PrivDomain domain = priv_domain_for_action(action);
+  const PrivResult result = run_domain(domain, {"revert-action", action}, {}, false, {});
+  if (!result.ok) {
+    return result;
+  }
+  open_actions_.erase(action);
+  bool domain_left = false;
+  for (const auto& open : open_actions_) {
+    if (priv_domain_for_action(open) == domain) {
+      domain_left = true;
+      break;
+    }
+  }
+  if (!domain_left) {
+    if (domain == PrivDomain::Accounts) {
+      touched_accounts_ = false;
+    } else if (domain == PrivDomain::Locale) {
+      touched_locale_ = false;
+    } else {
+      touched_system_ = false;
+    }
+  }
+  dirty_ = touched_accounts_ || touched_locale_ || touched_system_;
+  changed.emit();
+  return {true, {}};
+}
+
 }  // namespace lcos

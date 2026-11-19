@@ -36,6 +36,8 @@ class SoundPage : public SettingsPage {
   void reload_from_store() override { refresh(); }
   int output_volume_percent() const;
   void set_output_volume_percent(int percent);
+  bool output_muted() const;
+  void set_output_muted(bool muted);
   bool output_ready() const;
 
  private:

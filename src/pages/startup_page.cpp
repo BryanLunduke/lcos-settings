@@ -141,6 +141,36 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   apps_view_.get_column(0)->add_attribute(toggle->property_active(), columns_.enabled);
   apps_view_.append_column("Application", columns_.name);
   apps_view_.append_column("Command", columns_.command);
+  fit_tree_view(apps_view_);
+  apps_view_.set_has_tooltip(true);
+  apps_view_.signal_query_tooltip().connect(
+      [this](int x, int y, bool, const Glib::RefPtr<Gtk::Tooltip>& tooltip) {
+        Gtk::TreeModel::Path path;
+        Gtk::TreeViewColumn* column = nullptr;
+        int cell_x = 0;
+        int cell_y = 0;
+        if (!apps_view_.get_path_at_pos(x, y, path, column, cell_x, cell_y)) {
+          return false;
+        }
+        auto iter = apps_->get_iter(path);
+        if (!iter) {
+          return false;
+        }
+        const Glib::ustring command = (*iter)[columns_.command];
+        const bool removable = (*iter)[columns_.removable];
+        std::string text = command;
+        if (!removable) {
+          if (!text.empty()) {
+            text += "\n";
+          }
+          text += "System entry. Remove only hides it (Hidden=true).";
+        }
+        if (text.empty()) {
+          return false;
+        }
+        tooltip->set_text(text);
+        return true;
+      });
   apps_view_.get_column(1)->set_expand(true);
   toggle->signal_toggled().connect(sigc::mem_fun(*this, &StartupPage::toggle_selected));
 
@@ -155,8 +185,8 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   app_scroll->add(apps_view_);
   autostart->pack_start(*app_scroll, Gtk::PACK_EXPAND_WIDGET);
   auto* buttons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
-  auto* add = Gtk::manage(new Gtk::Button("Add"));
-  auto* edit = Gtk::manage(new Gtk::Button("Edit"));
+  auto* add = Gtk::manage(new Gtk::Button("Add…"));
+  auto* edit = Gtk::manage(new Gtk::Button("Edit…"));
   auto* remove = Gtk::manage(new Gtk::Button("Remove"));
   buttons->pack_start(*add, Gtk::PACK_SHRINK);
   buttons->pack_start(*edit, Gtk::PACK_SHRINK);
@@ -279,6 +309,9 @@ void StartupPage::reload_apps() {
     auto iter = apps_->append();
     (*iter)[columns_.enabled] = row.enabled;
     Glib::ustring name = row.name;
+    if (!row.removable) {
+      name += "  ·  System";
+    }
     if (row.run_hook != 0) {
       name += " (not at login)";
     }

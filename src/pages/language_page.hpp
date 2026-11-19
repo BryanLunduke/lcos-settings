@@ -28,6 +28,7 @@ class LanguagePage : public SettingsPage {
 
  private:
   void load();
+  void show_matching(const Glib::ustring& query);
   void apply();
   void tell(const std::string& message);
   struct LocaleChoice {
@@ -42,6 +43,7 @@ class LanguagePage : public SettingsPage {
   PrivSession& session_;
   Gtk::Window& parent_;
   int freeze_ = 0;
+  std::string pinned_language_;
   bool busy_ = false;
   std::vector<LocaleChoice> locales_;
   Gtk::Label* status_ = nullptr;

@@ -8,6 +8,7 @@
 #include <gdkmm/general.h>
 #include <gdkmm/pixbuf.h>
 #include <gtkmm/box.h>
+#include <gtkmm/flowbox.h>
 #include <gtkmm/filechooserdialog.h>
 #include <gtkmm/messagedialog.h>
 #include <gtkmm/scrolledwindow.h>
@@ -179,18 +180,28 @@ UsersPage::UsersPage(PrivSession& session, Gtk::Window& parent) : session_(sessi
 
   auto* page = make_vbox(0);
   page->set_border_width(0);
-  auto* columns = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 24));
+  auto* columns = Gtk::manage(new Gtk::FlowBox());
   columns->set_margin_top(18);
+  columns->set_selection_mode(Gtk::SELECTION_NONE);
+  columns->set_homogeneous(false);
+  columns->set_min_children_per_line(1);
+  columns->set_max_children_per_line(2);
+  columns->set_column_spacing(24);
+  columns->set_row_spacing(16);
+  columns->set_hexpand(true);
+  columns->set_halign(Gtk::ALIGN_FILL);
 
   auto* list_col = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-  list_col->set_size_request(236, -1);
+  list_col->set_size_request(200, -1);
+  list_col->set_hexpand(true);
   auto* list_scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*list_scroll);
   list_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   list_scroll->set_shadow_type(Gtk::SHADOW_IN);
   list_scroll->get_style_context()->add_class("lcos-users");
   list_.get_style_context()->add_class("lcos-users");
-  list_scroll->set_size_request(236, 262);
+  list_scroll->set_size_request(200, 220);
+  list_scroll->set_hexpand(true);
   list_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   list_.set_selection_mode(Gtk::SELECTION_BROWSE);
   list_scroll->add(list_);
@@ -210,7 +221,7 @@ UsersPage::UsersPage(PrivSession& session, Gtk::Window& parent) : session_(sessi
   list_hint->set_margin_top(8);
   list_hint->get_style_context()->add_class("lcos-faint");
   list_col->pack_start(*list_hint, Gtk::PACK_SHRINK);
-  columns->pack_start(*list_col, Gtk::PACK_SHRINK);
+  columns->insert(*list_col, -1);
 
   auto* detail = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   auto* hero = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 18));
@@ -276,7 +287,8 @@ UsersPage::UsersPage(PrivSession& session, Gtk::Window& parent) : session_(sessi
   login->pack_start(login_form.grid(), Gtk::PACK_SHRINK);
   detail->pack_start(*make_frame("Login", *login), Gtk::PACK_SHRINK);
 
-  columns->pack_start(*detail, Gtk::PACK_EXPAND_WIDGET);
+  detail->set_hexpand(true);
+  columns->insert(*detail, -1);
   page->pack_start(*columns, Gtk::PACK_SHRINK);
   auto* note = make_label(
       "Pictures are stored as ~/.face because LCOS does not ship AccountsService.");
