@@ -35,11 +35,18 @@ def draw(size: int) -> Image.Image:
     return image
 
 
+def draw_smooth(size: int) -> Image.Image:
+    """PIL's ImageDraw has no antialiasing; draw 8x larger and downscale with
+    Lanczos in premultiplied alpha so every edge gets a soft alpha ramp."""
+    big = draw(size * 8)
+    return big.convert("RGBa").resize((size, size), Image.LANCZOS).convert("RGBA")
+
+
 def main() -> None:
     root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     sizes = [16, 22, 24, 32, 48, 64, 96, 128, 256, 512, 1024]
     for size in sizes:
-        image = draw(size)
+        image = draw_smooth(size)
         if size == 1024:
             path = os.path.join(root, "data", "icons", "org.lunduke.LcosSettings-master.png")
         else:

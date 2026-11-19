@@ -12,6 +12,7 @@
 #include "ui_util.hpp"
 
 #include <cairomm/context.h>
+#include <gdkmm/general.h>
 #include <gdkmm/pixbuf.h>
 #include <glibmm/markup.h>
 #include <gtkmm/button.h>
@@ -26,6 +27,7 @@
 #include <gtkmm/image.h>
 #include <gtkmm/label.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace lcos {
@@ -57,6 +59,8 @@ const TileSpec kTiles[] = {
     {"default-software", "Default Software", "preferences-other", "System"},
     {"accessibility", "Accessibility", "preferences-desktop-accessibility", "System"},
 };
+
+constexpr int kLogoSize = 112;
 
 Glib::RefPtr<Gdk::Pixbuf> load_themed_icon(const char* name, int size) {
   const char* themes[] = {"", "AdwaitaLegacy", "Humanity", "Humanity-Dark", "hicolor"};
@@ -95,17 +99,37 @@ Glib::RefPtr<Gdk::Pixbuf> load_legacy_icon(const char* name, int size) {
   return load_themed_icon(name, size);
 }
 
-Glib::RefPtr<Gdk::Pixbuf> branding_logo(bool lcos, int size) {
+// Load the LCOS badge at the exact device-pixel size (logical size x window
+// scale factor) so GTK never upscales a smaller asset. The installed
+// lcos-branding package provides lcos-logo in hicolor 16..512 (+@2x); the
+// /usr/share/pixmaps fallback is only used on older systems.
+Glib::RefPtr<Gdk::Pixbuf> branding_logo(bool lcos, int size, int scale) {
   const char* lcos_names[] = {"lcos-logo", "start-here-lcos", "distributor-logo", "lcos"};
   const char* other_names[] = {"distributor-logo", "start-here"};
   const char** names = lcos ? lcos_names : other_names;
   const int count = lcos ? 4 : 2;
-  for (int i = 0; i < count; ++i) {
-    if (auto pixbuf = load_themed_icon(names[i], size)) {
-      return pixbuf;
+  auto theme = Gtk::IconTheme::get_default();
+  for (int i = 0; theme && i < count; ++i) {
+    try {
+      // Ask for the next installed size at or above the target (128 for the
+      // 112 px card) so GTK only ever downscales, then filter it down with
+      // HYPER ourselves instead of GTK's bilinear FORCE_SIZE path.
+      const int fetch = size <= 128 ? 128 : 256;
+      auto pixbuf = theme->load_icon(names[i], fetch, std::max(1, scale), Gtk::IconLookupFlags(0));
+      if (pixbuf) {
+        const int want = size * std::max(1, scale);
+        if (pixbuf->get_width() != want || pixbuf->get_height() != want) {
+          pixbuf = pixbuf->scale_simple(want, want, Gdk::INTERP_HYPER);
+        }
+        return pixbuf;
+      }
+    } catch (const Glib::Error&) {
     }
   }
-  return load_themed_icon("org.lunduke.LcosSettings", size);
+  if (auto pixbuf = load_themed_icon(names[0], size * std::max(1, scale))) {
+    return pixbuf;
+  }
+  return load_themed_icon("org.lunduke.LcosSettings", size * std::max(1, scale));
 }
 
 void set_small_caps(Gtk::Label& label, const std::string& text) {
@@ -209,8 +233,9 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   auto* identity = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 18));
   identity->set_hexpand(true);
   logo_ = Gtk::manage(new Gtk::Image());
-  logo_->set_pixel_size(96);
+  logo_->set_size_request(kLogoSize, kLogoSize);
   logo_->set_valign(Gtk::ALIGN_CENTER);
+  logo_->property_scale_factor().signal_changed().connect([this]() { refresh_host(); });
   identity->pack_start(*logo_, Gtk::PACK_SHRINK);
 
   auto* info = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
@@ -543,8 +568,11 @@ void OverviewPage::rename_host() {
 void OverviewPage::refresh_host() {
   const HostFacts facts = read_host_facts();
   if (logo_ != nullptr) {
-    if (auto pixbuf = branding_logo(facts.lcos, 112)) {
-      logo_->set(pixbuf);
+    const int scale = std::max(1, logo_->get_scale_factor());
+    if (auto pixbuf = branding_logo(facts.lcos, kLogoSize, scale)) {
+      // A scaled surface keeps the logical size at kLogoSize on HiDPI while
+      // drawing every device pixel from the full-resolution icon.
+      logo_->set(Gdk::Cairo::create_surface_from_pixbuf(pixbuf, scale));
     }
   }
   if (kicker_ != nullptr) {
