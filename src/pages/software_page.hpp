@@ -32,8 +32,10 @@ class SoftwarePage : public SettingsPage {
  private:
   struct MimeRow {
     std::string type;
+    std::string description;
     std::string desktop_id;
     std::string app_name;
+    bool system_default = false;
   };
 
   void load_helpers();

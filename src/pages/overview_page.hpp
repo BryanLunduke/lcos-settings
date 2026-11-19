@@ -7,8 +7,10 @@
 #include "backends/xfconf_store.hpp"
 #include "pages/settings_page.hpp"
 
+#include <gtkmm/label.h>
 #include <gtkmm/scale.h>
 #include <gtkmm/switch.h>
+#include <gtkmm/togglebutton.h>
 
 #include <functional>
 #include <string>
@@ -27,6 +29,7 @@ class OverviewPage : public SettingsPage {
   Glib::ustring title() const override { return "Overview"; }
   Glib::ustring summary() const override { return ""; }
   void on_page_shown() override;
+  bool discard_pending() override;
 
  private:
   void refresh_host();
@@ -56,6 +59,8 @@ class OverviewPage : public SettingsPage {
   Gtk::Switch dark_;
   Gtk::Switch autologin_;
   Gtk::Scale volume_;
+  Gtk::Label* volume_value_ = nullptr;
+  Gtk::ToggleButton* volume_mute_ = nullptr;
   sigc::connection pulse_connection_;
 };
 

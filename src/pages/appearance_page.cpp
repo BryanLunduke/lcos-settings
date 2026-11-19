@@ -168,7 +168,7 @@ AppearancePage::AppearancePage(XfconfStore& store)
   style_cards_.set_homogeneous(true);
   style_cards_.set_column_spacing(12);
   style_cards_.set_row_spacing(12);
-  style_cards_.set_min_children_per_line(2);
+  style_cards_.set_min_children_per_line(1);
   style_cards_.set_max_children_per_line(3);
   style->pack_start(style_cards_, Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Style", *style), Gtk::PACK_SHRINK);
@@ -178,7 +178,7 @@ AppearancePage::AppearancePage(XfconfStore& store)
   icon_cards_.set_homogeneous(true);
   icon_cards_.set_column_spacing(12);
   icon_cards_.set_row_spacing(12);
-  icon_cards_.set_min_children_per_line(2);
+  icon_cards_.set_min_children_per_line(1);
   icon_cards_.set_max_children_per_line(2);
   icons->pack_start(icon_cards_, Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Icons", *icons), Gtk::PACK_SHRINK);
@@ -188,7 +188,7 @@ AppearancePage::AppearancePage(XfconfStore& store)
   font_cards_.set_homogeneous(true);
   font_cards_.set_column_spacing(12);
   font_cards_.set_row_spacing(12);
-  font_cards_.set_min_children_per_line(2);
+  font_cards_.set_min_children_per_line(1);
   font_cards_.set_max_children_per_line(4);
   fonts->pack_start(font_cards_, Gtk::PACK_SHRINK);
   size_buttons_.get_style_context()->add_class("lcos-linked");

@@ -111,9 +111,11 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
   clock_form.add("Hour", hour_);
   clock_form.add("Minute", minute_);
   clock_form.add("Second", second_);
-  set_box->pack_start(clock_form.grid(), Gtk::PACK_SHRINK);
+  manual_time_ = &clock_form.grid();
+  set_box->pack_start(*manual_time_, Gtk::PACK_SHRINK);
   auto* set_button = Gtk::manage(new Gtk::Button("Set date and time"));
   set_button->set_halign(Gtk::ALIGN_START);
+  set_time_ = set_button;
   set_box->pack_start(*set_button, Gtk::PACK_SHRINK);
   auto* ntp_note = make_label(
       "Automatic time uses chrony, which LCOS starts from sysvinit. The clock can be set by hand only while that is off.");
@@ -148,8 +150,8 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
     const PrivResult result = session_.run({"set-ntp", ntp_.get_active() ? "on" : "off"});
     if (!result.ok) {
       tell(result.error);
-      load_clock();
     }
+    load_clock();
   });
   set_button->signal_clicked().connect([this] {
     if (ntp_.get_active()) {
@@ -233,6 +235,26 @@ std::string DateTimePage::current_zone() const {
   return read_text("/etc/timezone");
 }
 
+bool DateTimePage::discard_pending() {
+  bool any = false;
+  for (const char* action : {"set-timezone", "set-time", "set-ntp"}) {
+    if (!session_.action_open(action)) {
+      continue;
+    }
+    any = true;
+    const PrivResult result = session_.revert_action(action);
+    if (!result.ok) {
+      tell(result.error.empty() ? "The change could not be restored." : result.error);
+      return false;
+    }
+  }
+  if (!any) {
+    return false;
+  }
+  on_page_shown();
+  return true;
+}
+
 void DateTimePage::load_zones() {
   zones_.clear();
   collect_zones("/usr/share/zoneinfo", "", zones_);
@@ -282,10 +304,26 @@ void DateTimePage::load_clock() {
   }
   const bool automatic = chrony_is_enabled();
   ntp_.set_active(automatic);
-  calendar_.set_sensitive(!automatic);
-  hour_.set_sensitive(!automatic);
-  minute_.set_sensitive(!automatic);
-  second_.set_sensitive(!automatic);
+  // While chrony owns the clock the manual controls are not usable. Hiding
+  // them avoids an insensitive calendar that still looks active in Dark.
+  const bool manual = !automatic;
+  calendar_.set_sensitive(manual);
+  hour_.set_sensitive(manual);
+  minute_.set_sensitive(manual);
+  second_.set_sensitive(manual);
+  calendar_.set_no_show_all(automatic);
+  hour_.set_no_show_all(automatic);
+  minute_.set_no_show_all(automatic);
+  second_.set_no_show_all(automatic);
+  if (manual_time_ != nullptr) {
+    manual_time_->set_no_show_all(automatic);
+    manual_time_->set_visible(manual);
+  }
+  if (set_time_ != nullptr) {
+    set_time_->set_no_show_all(automatic);
+    set_time_->set_visible(manual);
+  }
+  calendar_.set_visible(manual);
   calendar_.select_month(static_cast<guint>(local.tm_mon), static_cast<guint>(local.tm_year + 1900));
   calendar_.select_day(static_cast<guint>(local.tm_mday));
   hour_.set_value(local.tm_hour);

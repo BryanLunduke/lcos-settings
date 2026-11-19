@@ -73,6 +73,19 @@ inline void configure_scale(Gtk::Scale& scale) {
   scale.set_halign(Gtk::ALIGN_FILL);
 }
 
+// The combo's natural width is its longest item. Cap that so a model name
+// or a locale cannot push the page past the window.
+inline void cap_combo_width(Gtk::ComboBox& combo) {
+  combo.set_can_focus(true);
+  combo.set_hexpand(true);
+  for (auto* cell : combo.get_cells()) {
+    if (auto* text = dynamic_cast<Gtk::CellRendererText*>(cell)) {
+      text->property_ellipsize() = Pango::ELLIPSIZE_END;
+      text->property_width_chars() = 18;
+    }
+  }
+}
+
 inline void fit_tree_view(Gtk::TreeView& view) {
   view.set_hexpand(true);
   view.set_vexpand(true);
@@ -267,19 +280,24 @@ class FormGrid {
     } else {
       label->set_line_wrap(true);
       label->set_line_wrap_mode(Pango::WRAP_WORD);
-      label->set_max_width_chars(24);
+      label->set_width_chars(22);
+      label->set_max_width_chars(22);
     }
-    // Combos and scales use the control column. A box is filled so a scale
-    // or field packed inside it can still grow. Spins, colour buttons, and
-    // short entries stay at their natural width.
+    // Combos, scales, and text entries use the control column. A box is
+    // filled so a scale or field packed inside it can still grow. Spins
+    // and colour buttons stay at their natural width.
     if (dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr ||
         dynamic_cast<Gtk::Scale*>(&widget) != nullptr ||
+        dynamic_cast<Gtk::Entry*>(&widget) != nullptr ||
         dynamic_cast<Gtk::Box*>(&widget) != nullptr) {
       widget.set_hexpand(true);
       widget.set_halign(Gtk::ALIGN_FILL);
     } else {
       widget.set_hexpand(false);
       widget.set_halign(Gtk::ALIGN_START);
+    }
+    if (auto* combo = dynamic_cast<Gtk::ComboBox*>(&widget)) {
+      cap_combo_width(*combo);
     }
     if (auto* scale = dynamic_cast<Gtk::Scale*>(&widget)) {
       configure_scale(*scale);
@@ -317,7 +335,14 @@ class FormGrid {
   }
 
   // Checkbox or button aligned with the control column, not the labels.
+  // The spacer keeps the caption column at 188 px even when this grid has
+  // no captions, so a checkbox-only group lines up with the other pages.
   void add_control(Gtk::Widget& widget) {
+    auto* spacer = Gtk::manage(new Gtk::Box());
+    spacer->set_size_request(label_width_, 1);
+    spacer->set_hexpand(false);
+    spacer->set_valign(Gtk::ALIGN_START);
+    grid_->attach(*spacer, 0, row_, 1, 1);
     widget.set_hexpand(true);
     widget.set_halign(Gtk::ALIGN_START);
     guard_scroll_unless_focused(widget);

@@ -10,7 +10,6 @@
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/liststore.h>
 #include <gtkmm/scale.h>
-#include <gtkmm/spinbutton.h>
 #include <gtkmm/treeview.h>
 
 namespace lcos {
@@ -81,7 +80,7 @@ class KeyboardPage : public SettingsPage {
   Gtk::Scale delay_;
   Gtk::Scale rate_;
   Gtk::CheckButton blink_;
-  Gtk::SpinButton blink_time_;
+  Gtk::Scale blink_time_;
   Gtk::CheckButton numlock_;
   Gtk::CheckButton system_defaults_;
   Gtk::ComboBoxText model_;

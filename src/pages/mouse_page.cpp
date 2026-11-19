@@ -52,7 +52,7 @@ MousePage::MousePage(XfconfStore& store, PointerBackend& pointers)
   acceleration_.set_value(5);
   threshold_.set_range(1, 30);
   threshold_.set_increments(1, 5);
-  threshold_.set_digits(0);
+  threshold_.set_digits(1);
   threshold_.set_value(4);
   reverse_.set_label("Reverse scrolling");
   device_form.add("Speed", acceleration_);
@@ -87,10 +87,14 @@ MousePage::MousePage(XfconfStore& store, PointerBackend& pointers)
   touch_form.add("Scrolling", scroll_method_);
   touch_form.add("Click method", click_method_);
   touch_form.add_control(middle_);
-  touch_form.add_control(disable_typing_global_);
-  touch_form.add("Typing pause (seconds)", typing_duration_);
   touch->pack_start(touch_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Touchpad", *touch), Gtk::PACK_SHRINK);
+  auto* typing = make_vbox(8);
+  FormGrid typing_form;
+  typing_form.add_control(disable_typing_global_);
+  typing_form.add("Typing pause (seconds)", typing_duration_);
+  typing->pack_start(typing_form.grid(), Gtk::PACK_SHRINK);
+  page->pack_start(*make_frame("While typing", *typing), Gtk::PACK_SHRINK);
 
   auto* behavior = make_vbox(8);
   double_time_.set_range(100, 2000);
@@ -299,12 +303,12 @@ void MousePage::show_device() {
   threshold_.set_sensitive(have);
   reverse_.set_sensitive(have);
   const bool touch = have && device->touchpad;
-  tap_.set_sensitive(touch || (have && device->has_atom(kTap)));
-  natural_.set_sensitive(touch || (have && device->has_atom(kNatural)));
-  disable_typing_.set_sensitive(touch || (have && device->has_atom(kDisableTyping)));
-  scroll_method_.set_sensitive(touch || (have && device->has_atom(kScrollMethod)));
-  click_method_.set_sensitive(touch || (have && device->has_atom(kClickMethod)));
-  middle_.set_sensitive(touch || (have && device->has_atom(kMiddle)));
+  tap_.set_sensitive(touch);
+  natural_.set_sensitive(touch);
+  disable_typing_.set_sensitive(touch);
+  scroll_method_.set_sensitive(touch);
+  click_method_.set_sensitive(touch);
+  middle_.set_sensitive(touch);
   if (!have) {
     device_note_->set_text("No pointer devices were found.");
     return;

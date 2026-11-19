@@ -49,8 +49,33 @@ namespace {
 // Narrow enough to match the mockup, wide enough for a wrapped
 // "Removable Drives and Media" plus the icon.
 constexpr int kSidebarWidth = 220;
+constexpr int kSidebarMinWidth = 64;
 constexpr int kWindowMinWidth = 760;
 constexpr int kWindowMinHeight = 480;
+
+// Minimum width is the icon rail. Natural width is the labelled sidebar.
+// A size request of 220 would stop the window from shrinking back to 760.
+class SideChrome : public Gtk::Box {
+ public:
+  SideChrome() : Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0) {}
+
+  void set_wide(bool wide) {
+    if (wide_ == wide) {
+      return;
+    }
+    wide_ = wide;
+    queue_resize();
+  }
+
+ protected:
+  void get_preferred_width_vfunc(int& minimum_width, int& natural_width) const override {
+    minimum_width = kSidebarMinWidth;
+    natural_width = wide_ ? kSidebarWidth : kSidebarMinWidth;
+  }
+
+ private:
+  bool wide_ = true;
+};
 
 std::string state_path() {
   return Glib::build_filename(Glib::get_user_config_dir(), "lcos-settings", "state.ini");
@@ -170,7 +195,7 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* side = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   search_.get_style_context()->add_class("lcos-search");
   search_.set_placeholder_text("Search settings");
-  auto* side_box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+  auto* side_box = Gtk::manage(new SideChrome());
   side_box->get_style_context()->add_class("lcos-sidebar");
   side_box->pack_start(search_, Gtk::PACK_SHRINK);
   build_sidebar();
@@ -180,7 +205,6 @@ MainWindow::MainWindow(XfconfStore& store)
   }
   side_scroll_.add(*side);
   side_box->pack_start(side_scroll_, Gtk::PACK_EXPAND_WIDGET);
-  side_box->set_size_request(kSidebarWidth, -1);
   side_box->set_halign(Gtk::ALIGN_START);
   side_box->set_valign(Gtk::ALIGN_FILL);
   side_box->set_hexpand(false);
@@ -319,6 +343,12 @@ MainWindow::MainWindow(XfconfStore& store)
     start = 0;
   }
   show_all();
+  // show_all reveals the labels hidden for a narrow screen. Apply that
+  // choice again so the icon rail stays collapsed on the first map.
+  if (compact_) {
+    compact_ = false;
+    set_compact(true);
+  }
   set_default(ok_);
   if (auto* row = rows_[static_cast<std::size_t>(start)]) {
     sidebar_.select_row(*row);
@@ -331,6 +361,16 @@ MainWindow::MainWindow(XfconfStore& store)
   Glib::signal_idle().connect([this]() {
     guard_scroll_tree(*this);
     queue_draw();
+    auto screen = get_screen();
+    if (screen) {
+      const Gdk::Rectangle work = screen->get_monitor_workarea(screen->get_primary_monitor());
+      const int max_w = std::max(320, work.get_width() - 8);
+      const int max_h = std::max(240, work.get_height() - 8);
+      if (get_allocated_width() > max_w || get_allocated_height() > max_h) {
+        resize(std::min(std::max(1, get_allocated_width()), max_w),
+               std::min(std::max(1, get_allocated_height()), max_h));
+      }
+    }
     return false;
   });
 }
@@ -613,8 +653,8 @@ void MainWindow::apply_filter() {
 void MainWindow::set_compact(bool compact) {
   compact_ = compact;
   side_scroll_.set_size_request(-1, -1);
-  if (side_chrome_ != nullptr) {
-    side_chrome_->set_size_request(compact ? 64 : kSidebarWidth, -1);
+  if (auto* chrome = dynamic_cast<SideChrome*>(side_chrome_)) {
+    chrome->set_wide(!compact);
   }
   for (auto* label : row_labels_) {
     label->set_visible(!compact);
@@ -638,14 +678,18 @@ void MainWindow::fit_to_screen() {
   const Gdk::Rectangle work = screen->get_monitor_workarea(monitor);
   const int max_w = std::max(320, work.get_width() - 8);
   const int max_h = std::max(240, work.get_height() - 8);
-  // The minimum is the width of the widest page (the overview card, with the
-  // quick settings fully visible) plus the fixed sidebar. A smaller screen
-  // still gets a window that fits, and the sidebar collapses to icons.
+  // One minimum on every page. A smaller screen still gets a window that
+  // fits, and the sidebar collapses to icons below 860 px.
   Gdk::Geometry hints;
   hints.min_width = std::min(kWindowMinWidth, max_w);
   hints.min_height = std::min(kWindowMinHeight, max_h);
   set_geometry_hints(*this, hints, Gdk::HINT_MIN_SIZE);
-  set_default_size(std::min(1100, max_w), std::min(720, max_h));
+  const int width = std::min(1100, max_w);
+  const int height = std::min(720, max_h);
+  set_default_size(width, height);
+  if (width < 860) {
+    set_compact(true);
+  }
 }
 
 std::string MainWindow::saved_page() const {

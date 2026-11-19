@@ -62,6 +62,9 @@ class PrivSession {
   // open, so a later Cancel only restores work done after this Apply.
   PrivResult checkpoint();
   PrivResult revert();
+  // Undoes one applied action (hostname, time zone, clock, or NTP) and
+  // leaves every other open action in place.
+  PrivResult revert_action(const std::string& action);
 
   sigc::signal<void> changed;
 

@@ -354,7 +354,17 @@ std::string SoundPage::pending_detail() const {
   if (!sound_dirty_) {
     return {};
   }
-  return "Sound levels have not been kept.";
+  const bool levels = edit_.output_volume || edit_.input_volume || edit_.output_mute ||
+                      edit_.input_mute || !edit_.streams.empty();
+  const bool route = edit_.output_device || edit_.input_device || edit_.output_port ||
+                     edit_.input_port || edit_.profile;
+  if (edit_.profile && !levels) {
+    return "The sound profile has not been kept.";
+  }
+  if (levels && !route) {
+    return "Sound levels have not been kept.";
+  }
+  return "Sound changes have not been kept.";
 }
 
 int SoundPage::output_volume_percent() const {
@@ -370,6 +380,15 @@ void SoundPage::set_output_volume_percent(int percent) {
   }
   const int clamped = std::max(0, std::min(150, percent));
   output_volume_.set_value(clamped);
+}
+
+bool SoundPage::output_muted() const { return output_mute_.get_active(); }
+
+void SoundPage::set_output_muted(bool muted) {
+  if (output_mute_.get_active() == muted) {
+    return;
+  }
+  output_mute_.set_active(muted);
 }
 
 bool SoundPage::output_ready() const {
@@ -511,8 +530,10 @@ void SoundPage::refresh() {
   if (!state.ready) {
     status_->set_text(state.error.empty() ? "Waiting for PulseAudio…"
                                            : "PulseAudio: " + state.error);
+    status_->show();
   } else {
-    status_->set_text("Levels apply as you move them. Cancel restores only the levels changed in this window.");
+    status_->set_text("");
+    status_->hide();
   }
 
   std::vector<std::pair<std::string, std::string>> sink_rows;
@@ -617,14 +638,24 @@ void SoundPage::refresh() {
   }
 
   const PaDevice* owner = sink != nullptr ? sink : source;
+  const PaCard* card = nullptr;
+  if (owner != nullptr) {
+    card = card_for(owner->card);
+  }
+  if (card == nullptr) {
+    for (const auto& item : state.cards) {
+      if (!item.profiles.empty()) {
+        card = &item;
+        break;
+      }
+    }
+  }
   std::vector<std::pair<std::string, std::string>> profile_rows;
   std::string active_profile;
-  if (owner != nullptr) {
-    if (const PaCard* card = card_for(owner->card)) {
-      active_profile = card->active_profile;
-      for (const auto& item : card->profiles) {
-        profile_rows.emplace_back(item.first, item.second);
-      }
+  if (card != nullptr) {
+    active_profile = card->active_profile;
+    for (const auto& item : card->profiles) {
+      profile_rows.emplace_back(item.first, item.second);
     }
   }
   const std::string profile_key = combo_key(profile_rows);
@@ -634,10 +665,10 @@ void SoundPage::refresh() {
     for (const auto& row : profile_rows) {
       profile_.append(row.first, row.second);
     }
-    if (!active_profile.empty()) {
-      profile_.set_active_id(active_profile);
-    }
     profile_.set_sensitive(!profile_rows.empty());
+  }
+  if (!active_profile.empty() && profile_.get_active_id() != active_profile) {
+    profile_.set_active_id(active_profile);
   }
   const bool show_profile = !profile_rows.empty();
   profile_.set_visible(show_profile);

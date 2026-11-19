@@ -81,7 +81,8 @@ inline void SettingsPage::align_widget(Gtk::Widget& widget) {
           if (label->get_text().find('\n') == Glib::ustring::npos) {
             label->set_line_wrap(true);
             label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
-            label->set_max_width_chars(24);
+            label->set_width_chars(22);
+            label->set_max_width_chars(22);
           }
           label->set_xalign(0);
           label_group_->add_widget(*label);

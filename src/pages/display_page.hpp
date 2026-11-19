@@ -16,7 +16,6 @@
 #include <gtkmm/popover.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/spinbutton.h>
-#include <gtkmm/switch.h>
 
 #include <vector>
 
@@ -113,7 +112,7 @@ class DisplayPage : public SettingsPage {
   int preview_width_ = 720;
   int preview_height_ = 170;
   Gtk::ComboBoxText output_combo_;
-  Gtk::Switch enabled_;
+  Gtk::CheckButton enabled_;
   Gtk::CheckButton primary_;
   Gtk::ComboBoxText resolution_;
   Gtk::ComboBoxText refresh_;

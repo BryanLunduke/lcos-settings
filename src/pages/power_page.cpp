@@ -150,13 +150,13 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   fill_power_choices(*power, PowerChoiceKind::Button, caps);
   fill_power_choices(*sleep, PowerChoiceKind::Button, caps);
   fill_power_choices(*hibernate, PowerChoiceKind::Button, caps);
-  button_form.add("When power button is pressed", *power);
-  button_form.add("When sleep button is pressed", *sleep);
-  button_form.add("When hibernate button is pressed", *hibernate);
+  button_form.add("Power button", *power);
+  button_form.add("Sleep button", *sleep);
+  button_form.add("Hibernate button", *hibernate);
   if (battery) {
     battery_button = Gtk::manage(new Gtk::ComboBoxText());
     fill_power_choices(*battery_button, PowerChoiceKind::Button, caps);
-    button_form.add("When battery button is pressed", *battery_button);
+    button_form.add("Battery button", *battery_button);
   }
   buttons->pack_start(button_form.grid(), Gtk::PACK_SHRINK);
   general->pack_start(*make_frame("Buttons", *buttons), Gtk::PACK_SHRINK);
@@ -187,10 +187,8 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   look_form.add_control(*tray);
   appearance->pack_start(look_form.grid(), Gtk::PACK_SHRINK);
   general->pack_start(*make_frame("Appearance", *appearance), Gtk::PACK_SHRINK);
-  auto* general_note = make_label(
+  auto* general_note = make_note(
       "Battery controls stay hidden on a machine with no battery. Existing defaults are left alone until you edit a control.");
-  general_note->set_line_wrap(true);
-  general_note->set_max_width_chars(70);
   general->pack_start(*general_note, Gtk::PACK_SHRINK);
   notebook_.append_page(*scrolled(*general), "General");
 
@@ -463,19 +461,27 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
 
 Gtk::Widget* PowerPage::scrolled(Gtk::Widget& child) { return make_page_scroll(child); }
 
+void PowerPage::reload_from_store() {
+  for (const auto& load : reloaders_) {
+    load();
+  }
+}
+
 std::string PowerPage::prop(const char* leaf) const {
   return std::string("/xfce4-power-manager/") + leaf;
 }
 
 void PowerPage::bind_uint(Gtk::ComboBoxText& combo, const char* leaf, unsigned fallback) {
-  {
+  auto load = [this, &combo, leaf, fallback] {
     Freeze freeze(freeze_);
     const unsigned value = store_.get_uint(kChannel, prop(leaf), fallback);
     combo.set_active_id(std::to_string(value));
     if (combo.get_active_id().empty()) {
       combo.set_active(0);
     }
-  }
+  };
+  load();
+  reloaders_.push_back(load);
   combo.signal_changed().connect([this, &combo, leaf] {
     if (freeze_ > 0 || combo.get_active_id().empty()) {
       return;
@@ -489,10 +495,12 @@ void PowerPage::bind_uint(Gtk::ComboBoxText& combo, const char* leaf, unsigned f
 }
 
 void PowerPage::bind_minutes(Gtk::SpinButton& spin, const char* leaf, unsigned fallback) {
-  {
+  auto load = [this, &spin, leaf, fallback] {
     Freeze freeze(freeze_);
     spin.set_value(store_.get_uint(kChannel, prop(leaf), fallback));
-  }
+  };
+  load();
+  reloaders_.push_back(load);
   spin.signal_value_changed().connect([this, &spin, leaf] {
     if (freeze_ > 0) {
       return;
@@ -502,10 +510,12 @@ void PowerPage::bind_minutes(Gtk::SpinButton& spin, const char* leaf, unsigned f
 }
 
 void PowerPage::bind_bool(Gtk::CheckButton& check, const char* leaf, bool fallback) {
-  {
+  auto load = [this, &check, leaf, fallback] {
     Freeze freeze(freeze_);
     check.set_active(store_.get_bool(kChannel, prop(leaf), fallback));
-  }
+  };
+  load();
+  reloaders_.push_back(load);
   check.signal_toggled().connect([this, &check, leaf] {
     if (freeze_ > 0) {
       return;
@@ -516,7 +526,7 @@ void PowerPage::bind_bool(Gtk::CheckButton& check, const char* leaf, bool fallba
 
 void PowerPage::bind_string(Gtk::ComboBoxText& combo, const char* leaf,
                             const std::string& fallback) {
-  {
+  auto load = [this, &combo, leaf, fallback] {
     Freeze freeze(freeze_);
     std::string value = store_.get_string(kChannel, prop(leaf), fallback);
     if (value.empty()) {
@@ -527,7 +537,9 @@ void PowerPage::bind_string(Gtk::ComboBoxText& combo, const char* leaf,
       combo.append(value, value);
       combo.set_active_id(value);
     }
-  }
+  };
+  load();
+  reloaders_.push_back(load);
   combo.signal_changed().connect([this, &combo, leaf] {
     if (freeze_ > 0 || combo.get_active_id().empty()) {
       return;
@@ -538,11 +550,13 @@ void PowerPage::bind_string(Gtk::ComboBoxText& combo, const char* leaf,
 
 void PowerPage::bind_brightness_delay(Gtk::SpinButton& spin, const char* leaf,
                                       unsigned fallback) {
-  {
+  auto load = [this, &spin, leaf, fallback] {
     Freeze freeze(freeze_);
     const unsigned stored = store_.get_uint(kChannel, prop(leaf), fallback);
     spin.set_value(brightness_slider_from_delay(stored));
-  }
+  };
+  load();
+  reloaders_.push_back(load);
   spin.signal_value_changed().connect([this, &spin, leaf] {
     if (freeze_ > 0) {
       return;

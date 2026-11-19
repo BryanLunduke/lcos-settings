@@ -216,6 +216,9 @@ enum class PrivDomain { System, Accounts, Locale };
 PrivDomain priv_domain_for_action(const std::string& action);
 bool priv_action_allowed(PrivDomain domain, const std::string& action);
 bool undo_file_belongs_to(PrivDomain domain, const std::string& filename);
+// Undo files a single Revert should restore. Empty when the action is not
+// one Command Center can undo on its own.
+std::vector<std::string> undo_files_for_action(const std::string& action);
 // A failed revert keeps the snapshot so the user can try again.
 bool revert_keeps_snapshot(bool any_failure);
 

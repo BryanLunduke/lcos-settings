@@ -4,9 +4,14 @@
 
 #include "ui_util.hpp"
 
+#include <giomm/appinfo.h>
+#include <giomm/contenttype.h>
+#include <gdkmm/pixbuf.h>
 #include <glibmm/fileutils.h>
 #include <glibmm/miscutils.h>
 #include <gtkmm/box.h>
+#include <gtkmm/icontheme.h>
+#include <gtkmm/cellrendererpixbuf.h>
 #include <gtkmm/button.h>
 #include <gtkmm/dialog.h>
 #include <gtkmm/label.h>
@@ -207,18 +212,33 @@ SoftwarePage::SoftwarePage() {
    public:
     Columns() {
       add(type);
+      add(description);
       add(application);
+      add(icon);
+      add(tip);
     }
     Gtk::TreeModelColumn<Glib::ustring> type;
+    Gtk::TreeModelColumn<Glib::ustring> description;
     Gtk::TreeModelColumn<Glib::ustring> application;
+    Gtk::TreeModelColumn<Glib::RefPtr<Gdk::Pixbuf>> icon;
+    Gtk::TreeModelColumn<Glib::ustring> tip;
   };
   // The column record must outlive the store. Keep it in a function-local
   // static so the model stays valid for the life of the process.
   static Columns columns;
   mime_store_ = Gtk::ListStore::create(columns);
   mime_view_.set_model(mime_store_);
-  mime_view_.append_column("File type", columns.type);
+  auto* icon_column = Gtk::manage(new Gtk::TreeViewColumn());
+  auto* icon_cell = Gtk::manage(new Gtk::CellRendererPixbuf());
+  icon_column->pack_start(*icon_cell, false);
+  icon_column->add_attribute(icon_cell->property_pixbuf(), columns.icon);
+  icon_column->set_sizing(Gtk::TREE_VIEW_COLUMN_FIXED);
+  icon_column->set_fixed_width(28);
+  mime_view_.append_column(*icon_column);
+  mime_view_.append_column("File type", columns.description);
   mime_view_.append_column("Default application", columns.application);
+  mime_view_.set_tooltip_column(4);
+  fit_tree_view(mime_view_);
   mime_view_.set_headers_visible(true);
   mime_view_.get_column(0)->set_expand(true);
   mime_view_.get_column(1)->set_expand(true);
@@ -420,6 +440,7 @@ std::string SoftwarePage::app_name(const std::string& desktop_id) const {
 void SoftwarePage::rebuild_mime_rows() {
   mime_rows_.clear();
   std::set<std::string> types;
+  std::set<std::string> handled;
   for (const char* group : {"Default Applications", "Added Associations"}) {
     for (const auto& entry : ini_entries(mime_text_, group)) {
       types.insert(entry.first);
@@ -428,15 +449,26 @@ void SoftwarePage::rebuild_mime_rows() {
   for (const auto& app : applications_) {
     for (const auto& type : app.mime_types) {
       types.insert(type);
+      handled.insert(type);
     }
   }
   mime_rows_.reserve(types.size());
   for (const auto& type : types) {
     MimeRow row;
     row.type = type;
+    try {
+      row.description = Gio::content_type_get_description(type);
+    } catch (const Glib::Error&) {
+      row.description.clear();
+    }
+    if (row.description.empty() || row.description == type) {
+      row.description = type;
+    }
+    bool explicit_default = false;
     std::string from_user;
     if (ini_key(mime_text_, "Default Applications", type, from_user)) {
       row.desktop_id = from_user;
+      explicit_default = true;
     } else {
       std::vector<std::string> paths;
       for (const auto& root : config_dirs()) {
@@ -448,12 +480,32 @@ void SoftwarePage::rebuild_mime_rows() {
         paths.push_back(Glib::build_filename(root, "applications/defaults.list"));
       }
       row.desktop_id = first_file_value(paths, "Default Applications", type);
+      explicit_default = !row.desktop_id.empty();
     }
     const auto semi = row.desktop_id.find(';');
     if (semi != std::string::npos) {
       row.desktop_id.resize(semi);
     }
-    row.app_name = app_name(row.desktop_id);
+    if (row.desktop_id.empty()) {
+      try {
+        if (auto info = Gio::AppInfo::get_default_for_type(type, false)) {
+          const std::string id = info->get_id();
+          if (!id.empty()) {
+            row.desktop_id = id;
+            row.system_default = true;
+            row.app_name = info->get_display_name() + " (system)";
+          }
+        }
+      } catch (const Glib::Error&) {
+      }
+    }
+    if (row.app_name.empty()) {
+      row.app_name = app_name(row.desktop_id);
+    }
+    const bool known = handled.count(type) != 0 || explicit_default || row.system_default;
+    if (!known) {
+      continue;
+    }
     mime_rows_.push_back(std::move(row));
   }
 }
@@ -464,14 +516,29 @@ void SoftwarePage::refill_mime_view() {
   }
   mime_store_->clear();
   const std::string needle = lower_copy(filter_.get_text());
+  auto theme = Gtk::IconTheme::get_default();
   for (const auto& row : mime_rows_) {
     if (!needle.empty() && lower_copy(row.type).find(needle) == std::string::npos &&
+        lower_copy(row.description).find(needle) == std::string::npos &&
         lower_copy(row.app_name).find(needle) == std::string::npos) {
       continue;
     }
+    Glib::RefPtr<Gdk::Pixbuf> icon;
+    try {
+      if (auto gicon = Gio::content_type_get_icon(row.type)) {
+        auto info = theme->lookup_icon(gicon, 16, Gtk::ICON_LOOKUP_FORCE_SIZE);
+        if (info) {
+          icon = info.load_icon();
+        }
+      }
+    } catch (const Glib::Error&) {
+    }
     auto iter = mime_store_->append();
     iter->set_value(0, Glib::ustring(row.type));
-    iter->set_value(1, Glib::ustring(row.app_name.empty() ? "—" : row.app_name));
+    iter->set_value(1, Glib::ustring(row.description.empty() ? row.type : row.description));
+    iter->set_value(2, Glib::ustring(row.app_name.empty() ? "—" : row.app_name));
+    iter->set_value(3, icon);
+    iter->set_value(4, Glib::ustring(row.type));
   }
 }
 
@@ -494,7 +561,9 @@ void SoftwarePage::choose_mime_default() {
     return;
   }
   Glib::ustring type;
+  Glib::ustring description;
   iter->get_value(0, type);
+  iter->get_value(1, description);
   std::string current;
   for (const auto& row : mime_rows_) {
     if (row.type == std::string(type)) {
@@ -530,7 +599,8 @@ void SoftwarePage::choose_mime_default() {
   }
   auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 8));
   row->set_border_width(12);
-  auto* label = make_label(std::string(type));
+  auto* label = make_label(description.empty() ? std::string(type)
+                                              : std::string(description) + "\n" + std::string(type));
   label->set_line_wrap(true);
   row->pack_start(*label, Gtk::PACK_SHRINK);
   row->pack_start(*combo, Gtk::PACK_SHRINK);

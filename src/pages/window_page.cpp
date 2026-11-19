@@ -99,14 +99,14 @@ WindowPage::WindowPage(XfconfStore& store, Gtk::Window& parent)
   FormGrid model(220);
   model.add_control(click_focus_);
   model.add_control(follow_focus_);
-  model.add("Delay before focus", focus_delay_);
+  model.add("Delay before focus (ms)", focus_delay_);
   focus->pack_start(*make_frame("Focus model", model.grid()), Gtk::PACK_SHRINK);
   FormGrid created(220);
   created.add_control(focus_new_);
   focus->pack_start(*make_frame("New window focus", created.grid()), Gtk::PACK_SHRINK);
   FormGrid raise(220);
   raise.add_control(raise_on_focus_);
-  raise.add("Delay before raising", raise_delay_);
+  raise.add("Delay before raising (ms)", raise_delay_);
   focus->pack_start(*make_frame("Raise on focus", raise.grid()), Gtk::PACK_SHRINK);
   FormGrid click(220);
   click.add_control(raise_on_click_);

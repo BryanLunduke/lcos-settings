@@ -16,7 +16,9 @@
 #include <gtkmm/spinbutton.h>
 #include <gtkmm/stack.h>
 
+#include <functional>
 #include <string>
+#include <vector>
 
 namespace lcos {
 
@@ -28,6 +30,7 @@ class PowerPage : public SettingsPage {
   Glib::ustring summary() const override {
     return "Power buttons, sleep, display blanking, and the lock screen.";
   }
+  void reload_from_store() override;
   int screenshot_count() const override { return 4; }
   void prepare_screenshot(int index) override;
   std::string screenshot_suffix(int index) const override;
@@ -52,6 +55,7 @@ class PowerPage : public SettingsPage {
   Gtk::Stack device_face_;
   std::string selected_device_;
   int freeze_ = 0;
+  std::vector<std::function<void()>> reloaders_;
 };
 
 }  // namespace lcos
