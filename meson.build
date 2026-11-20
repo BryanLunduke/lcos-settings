@@ -174,19 +174,21 @@ configure_file(
   install_mode: 'rwxr-xr-x',
 )
 
-fs = import('fs')
 app_icon_sizes = ['16', '22', '24', '32', '48', '64', '96', '128', '256', '512']
 install_subdir(
   'data/themes/LCOS Clearlooks Dark',
   install_dir: join_paths(get_option('datadir'), 'themes'),
 )
 
+# Rendered by data/icons/src/render-icons.py. A missing file fails the build.
 foreach size : app_icon_sizes
-  icon = 'data/icons/hicolor/' + size + 'x' + size + '/apps/org.lunduke.LcosSettings.png'
-  if fs.exists(icon)
-    install_data(
-      icon,
-      install_dir: join_paths(get_option('datadir'), 'icons/hicolor/' + size + 'x' + size + '/apps'),
-    )
-  endif
+  install_data(
+    'data/icons/hicolor/' + size + 'x' + size + '/apps/org.lunduke.LcosSettings.png',
+    install_dir: join_paths(get_option('datadir'), 'icons/hicolor/' + size + 'x' + size + '/apps'),
+  )
 endforeach
+
+install_data(
+  'data/icons/hicolor/scalable/apps/org.lunduke.LcosSettings.svg',
+  install_dir: join_paths(get_option('datadir'), 'icons/hicolor/scalable/apps'),
+)

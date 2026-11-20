@@ -42,6 +42,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <iostream>
+#include <vector>
 
 namespace lcos {
 namespace {
@@ -89,6 +90,25 @@ bool animations_enabled() {
   return enabled != FALSE;
 }
 
+// Source-tree hicolor icons, so a launch from the repo uses the shipped
+// Console Panel artwork even when an older theme icon is already installed.
+std::vector<Glib::RefPtr<Gdk::Pixbuf>> source_tree_app_icons() {
+  const char* sizes[] = {"16", "22", "24", "32", "48", "64", "96", "128", "256", "512"};
+  std::vector<Glib::RefPtr<Gdk::Pixbuf>> icons;
+  for (const char* size : sizes) {
+    const std::string path = std::string("data/icons/hicolor/") + size + "x" + size +
+                             "/apps/org.lunduke.LcosSettings.png";
+    if (!g_file_test(path.c_str(), G_FILE_TEST_EXISTS)) {
+      continue;
+    }
+    try {
+      icons.push_back(Gdk::Pixbuf::create_from_file(path));
+    } catch (const Glib::Error&) {
+    }
+  }
+  return icons;
+}
+
 Glib::RefPtr<Gdk::Pixbuf> load_named_icon(const std::string& name, int size, int scale) {
   auto legacy = Gtk::IconTheme::create();
   legacy->set_custom_theme("AdwaitaLegacy");
@@ -133,11 +153,8 @@ MainWindow::MainWindow(XfconfStore& store)
   set_resizable(true);
   get_style_context()->add_class("lcos-app");
   set_icon_name("org.lunduke.LcosSettings");
-  if (g_file_test("data/icons/hicolor/48x48/apps/org.lunduke.LcosSettings.png", G_FILE_TEST_EXISTS)) {
-    try {
-      set_icon_from_file("data/icons/hicolor/48x48/apps/org.lunduke.LcosSettings.png");
-    } catch (const Glib::Error&) {
-    }
+  if (const auto icons = source_tree_app_icons(); !icons.empty()) {
+    set_icon_list(icons);
   }
 
   auto* display = Gtk::manage(new DisplayPage(store_, randr_, *this));
