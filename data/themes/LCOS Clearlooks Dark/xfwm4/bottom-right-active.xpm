@@ -1,0 +1,13 @@
+/* XPM */
+static char * bottom_right_active_xpm[] = {
+"6 6 3 1",
+"f c #2c3a4d",
+"e c #1a2430",
+"  c None",
+"fffffe",
+"fffffe",
+"fffffe",
+"fffffe",
+"ffff  ",
+"eeeee "
+};

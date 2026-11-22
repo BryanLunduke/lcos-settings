@@ -150,6 +150,9 @@ MainWindow::MainWindow(XfconfStore& store)
       apply_("_Apply", true),
       cancel_("_Cancel", true) {
   set_title("LCOS Command Center");
+  // Height still changes. Width is locked in fit_to_screen so the section
+  // list cannot be dragged off the side. Page dumps opt out so they can
+  // still record more than one size.
   set_resizable(true);
   get_style_context()->add_class("lcos-app");
   set_icon_name("org.lunduke.LcosSettings");
@@ -180,22 +183,22 @@ MainWindow::MainWindow(XfconfStore& store)
       [this](const std::string& id) { mark_page(id); }));
 
   nav_ = {
-      {"overview", "Overview", "computer", "system version hostname memory processor graphics storage quick settings dark style volume", "", PrivKind::Off, overview},
+      {"overview", "Overview", "computer", "system version hostname memory processor graphics storage kernel uptime resolution xlibre quick settings dark style volume network bluetooth printer panel mixer settings editor", "", PrivKind::Off, overview},
       {"appearance", "Appearance", "preferences-desktop-theme", "style theme icons font dpi antialias hinting toolbar scaling", "Look and Feel", PrivKind::Off, appearance},
       {"desktop", "Desktop", "preferences-desktop-wallpaper", "wallpaper background icons menus", "Look and Feel", PrivKind::Off, desktop},
-      {"window-manager", "Window Manager", "preferences-system-windows", "focus shortcuts title bar theme placement", "Look and Feel", PrivKind::Off, windows},
+      {"window-manager", "Window Manager", "preferences-system-windows", "focus shortcuts title bar button layout theme placement", "Look and Feel", PrivKind::Off, windows},
       {"window-tweaks", "Window Manager Tweaks", "preferences-system", "compositor cycling focus accessibility zoom placement tweaks", "Look and Feel", PrivKind::Off, tweaks},
       {"notifications", "Notifications", "preferences-system-notifications", "notify theme position log applications", "Look and Feel", PrivKind::Off, notifications},
       {"display", "Display", "preferences-desktop-display", "resolution refresh scale rotation mirror extend monitor primary reflection", "Hardware", PrivKind::Off, display},
       {"sound", "Sound", "audio-volume-high", "volume mute output input microphone profile", "Hardware", PrivKind::Off, sound},
-      {"power", "Power", "battery", "battery sleep lid blank brightness lock", "Hardware", PrivKind::Off, power},
+      {"power", "Power", "battery", "battery sleep lid blank brightness lock screensaver", "Hardware", PrivKind::Off, power},
       {"keyboard", "Keyboard", "preferences-desktop-keyboard", "layout repeat shortcut model compose", "Hardware", PrivKind::Off, keyboard},
       {"mouse", "Mouse", "input-mouse", "pointer touchpad scrolling cursor speed", "Hardware", PrivKind::Off, mouse},
       {"removable-media", "Removable Drives and Media", "drive-removable-media", "usb camera mount cd dvd printer tablet", "Hardware", PrivKind::Off, media},
       {"date-time", "Date and Time", "appointment-soon", "clock timezone ntp calendar", "System", PrivKind::System, datetime},
       {"language", "Language", "preferences-desktop-locale", "locale region format language", "System", PrivKind::Locale, language},
       {"users", "Users", "system-users", "account password autologin real name picture administrator", "System", PrivKind::Accounts, users},
-      {"startup", "Startup", "system-run", "autostart session login", "System", PrivKind::Off, startup},
+      {"startup", "Startup", "system-run", "autostart session login logout suspend hibernate switch user", "System", PrivKind::Off, startup},
       {"default-software", "Default Software", "preferences-other", "browser mail terminal mime utilities", "System", PrivKind::Off, software},
       {"accessibility", "Accessibility", "preferences-desktop-accessibility", "keyboard mouse assistive sticky keys", "System", PrivKind::Off, accessibility},
   };
@@ -532,22 +535,33 @@ int MainWindow::nav_index(const std::string& id) const {
 }
 
 void MainWindow::show_page(const std::string& id) {
-  const int index = nav_index(id);
+  std::string page = id;
+  std::string section;
+  const auto slash = id.find('/');
+  if (slash != std::string::npos) {
+    page = id.substr(0, slash);
+    section = id.substr(slash + 1);
+  }
+  const int index = nav_index(page);
   if (index < 0) {
     return;
   }
   if (nav_depth_ > 0) {
     queued_page_ = index;
+    queued_section_ = section;
     return;
   }
   if (auto* row = rows_[static_cast<std::size_t>(index)]) {
     sidebar_.select_row(*row);
   }
   select_nav(index);
+  if (!section.empty()) {
+    select_section(*nav_[static_cast<std::size_t>(index)].page, section);
+  }
   // A page that is still inside on_page_shown (locale listing, a nested
   // polkit loop) can put the previous page back. Apply the request again
   // once that handler has returned.
-  Glib::signal_idle().connect([this, index] {
+  Glib::signal_idle().connect([this, index, section] {
     if (index < 0 || index >= static_cast<int>(nav_.size())) {
       return false;
     }
@@ -556,6 +570,9 @@ void MainWindow::show_page(const std::string& id) {
     const bool row_ok = rows_[static_cast<std::size_t>(index)] == nullptr ||
                         sidebar_.get_selected_row() == rows_[static_cast<std::size_t>(index)];
     if (showing && row_ok) {
+      if (!section.empty()) {
+        select_section(*nav_[static_cast<std::size_t>(index)].page, section);
+      }
       return false;
     }
     if (auto* row = rows_[static_cast<std::size_t>(index)]) {
@@ -566,6 +583,9 @@ void MainWindow::show_page(const std::string& id) {
     select_nav(index);
     if (current_index_ < 0) {
       current_index_ = saved;
+    }
+    if (!section.empty()) {
+      select_section(*nav_[static_cast<std::size_t>(index)].page, section);
     }
     return false;
   });
@@ -616,8 +636,12 @@ void MainWindow::select_nav(int index) {
   --nav_depth_;
   if (queued_page_ >= 0) {
     const int next = queued_page_;
+    const std::string section = queued_section_;
     queued_page_ = -1;
-    show_page(nav_[static_cast<std::size_t>(next)].id);
+    queued_section_.clear();
+    const std::string id =
+        nav_[static_cast<std::size_t>(next)].id + (section.empty() ? std::string() : "/" + section);
+    show_page(id);
   }
 }
 
@@ -687,22 +711,30 @@ void MainWindow::set_compact(bool compact) {
 
 void MainWindow::fit_to_screen() {
   auto screen = get_screen();
-  if (!screen) {
-    set_default_size(1100, 720);
-    return;
+  int max_w = 1100;
+  int max_h = 720;
+  if (screen) {
+    const int monitor = screen->get_primary_monitor();
+    const Gdk::Rectangle work = screen->get_monitor_workarea(monitor);
+    max_w = std::max(320, work.get_width() - 8);
+    max_h = std::max(240, work.get_height() - 8);
   }
-  const int monitor = screen->get_primary_monitor();
-  const Gdk::Rectangle work = screen->get_monitor_workarea(monitor);
-  const int max_w = std::max(320, work.get_width() - 8);
-  const int max_h = std::max(240, work.get_height() - 8);
-  // One minimum on every page. A smaller screen still gets a window that
-  // fits, and the sidebar collapses to icons below 860 px.
-  Gdk::Geometry hints;
-  hints.min_width = std::min(kWindowMinWidth, max_w);
-  hints.min_height = std::min(kWindowMinHeight, max_h);
-  set_geometry_hints(*this, hints, Gdk::HINT_MIN_SIZE);
-  const int width = std::min(1100, max_w);
+  // Preferred size on a normal display. A screen of 800x600 (work area
+  // 800 or narrower) uses the 760px width that already fits there, leaving
+  // room for the frame. Anything smaller shrinks to the work area. Height
+  // can still shrink to 480. The width itself is not user-resizable.
+  int width = std::min(1100, max_w);
+  if (max_w + 8 <= 800) {
+    width = std::min(kWindowMinWidth, max_w);
+  }
   const int height = std::min(720, max_h);
+  const bool dump = g_getenv("LCOS_SETTINGS_DUMP_PAGES") != nullptr;
+  Gdk::Geometry hints;
+  hints.min_width = dump ? std::min(kWindowMinWidth, max_w) : width;
+  hints.max_width = dump ? 8192 : width;
+  hints.min_height = std::min(kWindowMinHeight, max_h);
+  hints.max_height = std::max(max_h, height);
+  set_geometry_hints(*this, hints, Gdk::HINT_MIN_SIZE | Gdk::HINT_MAX_SIZE);
   set_default_size(width, height);
   if (width < 860) {
     set_compact(true);

@@ -37,6 +37,7 @@ class AppearancePage : public SettingsPage {
   void fill_themes(Gtk::ComboBoxText& combo, const std::vector<ThemeEntry>& themes,
                    const std::string& current);
   void sync_xfwm_if_needed();
+  void pair_clearlooks_border();
   void rebuild_cards();
   void schedule_cards();
   void show_font_dialog();
@@ -72,6 +73,7 @@ class AppearancePage : public SettingsPage {
   std::vector<ThemeEntry> gtk_themes_;
   std::vector<ThemeEntry> icon_themes_;
   std::string light_theme_;
+  std::string light_xfwm_;
   Gtk::Dialog* fonts_dialog_ = nullptr;
   sigc::connection cards_idle_;
   int shown_font_size_ = 10;

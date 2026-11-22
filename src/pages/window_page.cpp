@@ -2,6 +2,7 @@
 
 #include "pages/window_page.hpp"
 
+#include "logic/button_layout.hpp"
 #include "logic/shortcuts.hpp"
 #include "logic/wm_shortcuts.hpp"
 #include "ui_util.hpp"
@@ -14,6 +15,7 @@
 #include <gtkmm/scrolledwindow.h>
 
 #include <map>
+#include <vector>
 
 namespace lcos {
 namespace {
@@ -145,6 +147,74 @@ WindowPage::WindowPage(XfconfStore& store, Gtk::Window& parent)
 
   auto* advanced = make_vbox(8);
   advanced->set_border_width(0);
+  auto* title_buttons = make_vbox(8);
+  button_summary_ = make_label("");
+  button_summary_->set_line_wrap(true);
+  button_summary_->set_xalign(0);
+  title_buttons->pack_start(*button_summary_, Gtk::PACK_SHRINK);
+  auto* columns = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 16));
+  auto make_side = [this](const char* caption, Gtk::ListBox& list, const char* across,
+                          const char* across_label) {
+    auto* column = make_vbox(4);
+    auto* head = make_label(caption);
+    head->get_style_context()->add_class("lcos-faint");
+    list.set_selection_mode(Gtk::SELECTION_SINGLE);
+    auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
+    scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    scroll->set_shadow_type(Gtk::SHADOW_IN);
+    scroll->set_min_content_height(108);
+    scroll->set_min_content_width(148);
+    scroll->add(list);
+    auto* actions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    auto* up = Gtk::manage(new Gtk::Button("Up"));
+    auto* down = Gtk::manage(new Gtk::Button("Down"));
+    auto* move = Gtk::manage(new Gtk::Button(across_label));
+    auto* hide = Gtk::manage(new Gtk::Button("Remove"));
+    actions->pack_start(*up, Gtk::PACK_SHRINK);
+    actions->pack_start(*down, Gtk::PACK_SHRINK);
+    actions->pack_start(*move, Gtk::PACK_SHRINK);
+    actions->pack_start(*hide, Gtk::PACK_SHRINK);
+    column->pack_start(*head, Gtk::PACK_SHRINK);
+    column->pack_start(*scroll, Gtk::PACK_SHRINK);
+    column->pack_start(*actions, Gtk::PACK_SHRINK);
+    up->signal_clicked().connect([this, &list] { apply_button_action(selected_button(list), "up"); });
+    down->signal_clicked().connect([this, &list] { apply_button_action(selected_button(list), "down"); });
+    move->signal_clicked().connect(
+        [this, &list, across] { apply_button_action(selected_button(list), across); });
+    hide->signal_clicked().connect([this, &list] { apply_button_action(selected_button(list), "hide"); });
+    return column;
+  };
+  columns->pack_start(*make_side("Left of the title", left_buttons_, "right", "Move right"),
+                      Gtk::PACK_EXPAND_WIDGET);
+  columns->pack_start(*make_side("Right of the title", right_buttons_, "left", "Move left"),
+                      Gtk::PACK_EXPAND_WIDGET);
+  title_buttons->pack_start(*columns, Gtk::PACK_SHRINK);
+  auto* hidden_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  auto* hidden_label = make_label("Not shown");
+  hidden_label->set_valign(Gtk::ALIGN_CENTER);
+  auto* show_left = Gtk::manage(new Gtk::Button("Show on the left"));
+  auto* show_right = Gtk::manage(new Gtk::Button("Show on the right"));
+  hidden_row->pack_start(*hidden_label, Gtk::PACK_SHRINK);
+  hidden_row->pack_start(hidden_buttons_, Gtk::PACK_SHRINK);
+  hidden_row->pack_start(*show_left, Gtk::PACK_SHRINK);
+  hidden_row->pack_start(*show_right, Gtk::PACK_SHRINK);
+  title_buttons->pack_start(*hidden_row, Gtk::PACK_SHRINK);
+  auto* button_note = make_note(
+      "Menu, stick, shade, hide, maximize, and close. The title sits between the two sides.");
+  title_buttons->pack_start(*button_note, Gtk::PACK_SHRINK);
+  show_left->signal_clicked().connect([this] {
+    const std::string id = hidden_buttons_.get_active_id();
+    if (!id.empty()) {
+      apply_button_action(id[0], "left");
+    }
+  });
+  show_right->signal_clicked().connect([this] {
+    const std::string id = hidden_buttons_.get_active_id();
+    if (!id.empty()) {
+      apply_button_action(id[0], "right");
+    }
+  });
+  advanced->pack_start(*make_frame("Title bar buttons", *title_buttons), Gtk::PACK_SHRINK);
   FormGrid snap(180);
   snap.add_control(snap_border_);
   snap.add_control(snap_windows_);
@@ -276,6 +346,94 @@ void WindowPage::load() {
   if (double_click_.get_active_row_number() < 0) {
     double_click_.set_active_id("maximize");
   }
+  load_button_layout();
+}
+
+char WindowPage::selected_button(Gtk::ListBox& list) {
+  auto* row = list.get_selected_row();
+  if (row == nullptr) {
+    return '\0';
+  }
+  const std::string name = row->get_name();
+  return name.empty() ? '\0' : name[0];
+}
+
+void WindowPage::load_button_layout() {
+  button_layout_ =
+      parse_button_layout(store_.get_string(kChannel, "/general/button_layout", kDefaultButtonLayout));
+  refresh_button_lists('\0');
+}
+
+void WindowPage::refresh_button_lists(char keep) {
+  auto refill = [](Gtk::ListBox& list, const std::string& letters, char keep_code) {
+    const std::vector<Gtk::Widget*> children = list.get_children();
+    for (auto* child : children) {
+      list.remove(*child);
+      delete child;
+    }
+    Gtk::ListBoxRow* keep_row = nullptr;
+    for (char code : letters) {
+      auto* row = Gtk::manage(new Gtk::ListBoxRow());
+      row->set_name(std::string(1, code));
+      auto* label = Gtk::manage(new Gtk::Label(title_button_label(code)));
+      label->set_halign(Gtk::ALIGN_START);
+      label->set_margin_top(2);
+      label->set_margin_bottom(2);
+      label->set_margin_start(8);
+      label->set_margin_end(8);
+      row->add(*label);
+      list.append(*row);
+      if (code == keep_code) {
+        keep_row = row;
+      }
+    }
+    list.show_all();
+    if (keep_row != nullptr) {
+      list.select_row(*keep_row);
+    }
+  };
+  refill(left_buttons_, button_layout_.left, keep);
+  refill(right_buttons_, button_layout_.right, keep);
+  const std::string hidden = hidden_title_buttons(button_layout_);
+  const std::string previous = hidden_buttons_.get_active_id();
+  hidden_buttons_.remove_all();
+  for (char code : hidden) {
+    hidden_buttons_.append(std::string(1, code), title_button_label(code));
+  }
+  if (!previous.empty() && hidden.find(previous[0]) != std::string::npos) {
+    hidden_buttons_.set_active_id(previous);
+  } else if (!hidden.empty()) {
+    hidden_buttons_.set_active(0);
+  }
+  hidden_buttons_.set_sensitive(!hidden.empty());
+  if (button_summary_ != nullptr) {
+    auto names = [](const std::string& side) {
+      if (side.empty()) {
+        return std::string("none");
+      }
+      std::string text;
+      for (char code : side) {
+        if (!text.empty()) {
+          text += ", ";
+        }
+        text += title_button_label(code);
+      }
+      return text;
+    };
+    button_summary_->set_text("Left: " + names(button_layout_.left) + "    ·    Title    ·    Right: " +
+                              names(button_layout_.right));
+  }
+}
+
+void WindowPage::apply_button_action(char code, const char* action) {
+  if (freeze_ > 0 || code == '\0' || action == nullptr) {
+    return;
+  }
+  button_layout_ = adjust_button_layout(button_layout_, code, action);
+  store_.set_string(kChannel, "/general/button_layout", format_button_layout(button_layout_));
+  const std::string op = action;
+  const char keep = op == "hide" ? '\0' : code;
+  refresh_button_lists(keep);
 }
 
 std::map<std::string, std::string> WindowPage::shortcut_values() const {

@@ -73,6 +73,7 @@ int Application::on_command_line(const Glib::RefPtr<Gio::ApplicationCommandLine>
       command_line->print(
           "Usage: lcos-settings [--page PAGE] [--display-minimal]\n"
           "PAGE is a sidebar id such as display, sound, or power.\n"
+          "PAGE/SECTION opens that section, for example power/system or window-manager/advanced.\n"
           "--display-minimal opens the hot-plug layout chooser.\n");
       return 0;
     } else if (!arg.empty() && arg[0] != '-') {

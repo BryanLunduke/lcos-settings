@@ -2,6 +2,7 @@
 
 #include "logic/atomic_file.hpp"
 #include "logic/backdrop.hpp"
+#include "logic/button_layout.hpp"
 #include "logic/confirm.hpp"
 #include "logic/display_layout.hpp"
 #include "logic/helper_status.hpp"
@@ -9,6 +10,7 @@
 #include "logic/locales.hpp"
 #include "logic/mime_files.hpp"
 #include "logic/names.hpp"
+#include "logic/notify_log.hpp"
 #include "logic/power.hpp"
 #include "logic/shortcuts.hpp"
 #include "logic/sound_edit.hpp"
@@ -883,6 +885,91 @@ void test_redesign_helpers() {
   EXPECT(lcos::format_gigabytes(16LL * 1024 * 1024 * 1024) == "16 GB");
   const std::string pci = "8086  Intel Corporation\n\t9a49  Iris Xe Graphics\n1002  AMD\n";
   EXPECT(lcos::pci_device_name(pci, 0x8086, 0x9a49) == "Iris Xe Graphics");
+
+  const auto coded = lcos::parse_os_release(
+      "NAME=\"LCOS\"\nVERSION=\"1.1\"\nVERSION_CODENAME=clearlooks\nPRETTY_NAME=\"LCOS 1.1\"\n");
+  EXPECT(coded.version_line == "LCOS 1.1");
+  EXPECT(coded.version_detail == "LCOS 1.1 (clearlooks)");
+  const auto already = lcos::parse_os_release(
+      "NAME=\"LCOS\"\nPRETTY_NAME=\"LCOS 1.1 Clearlooks\"\nVERSION_CODENAME=Clearlooks\n");
+  EXPECT(already.version_detail == "LCOS 1.1 Clearlooks");
+
+  EXPECT(lcos::format_uptime_seconds(30) == "Less than a minute");
+  EXPECT(lcos::format_uptime_seconds(60) == "1 minute");
+  EXPECT(lcos::format_uptime_seconds(3600 + 120) == "1 hour 2 minutes");
+  EXPECT(lcos::format_uptime_seconds(86400 * 2 + 3600) == "2 days 1 hour");
+  EXPECT(lcos::format_pixels(1920, 1080) == "1920×1080");
+  EXPECT(lcos::format_pixels(0, 1080).empty());
+
+  const std::string xlibre = lcos::xlibre_version_label(
+      "XLibre X Server 25.0.0.8\nX Protocol Version 11, Revision 0\n");
+  EXPECT(xlibre == "XLibre 25.0.0.8");
+  const std::string relabelled = lcos::xlibre_version_label(
+      "X.Org X Server 1.21.1.11\nCurrent Operating System: Linux\n");
+  EXPECT(relabelled == "XLibre 1.21.1.11");
+  EXPECT(relabelled.find("Xorg") == std::string::npos);
+  EXPECT(relabelled.find("X.Org") == std::string::npos);
+  EXPECT(lcos::xlibre_version_label("no server here\n").empty());
+  EXPECT(lcos::xlibre_version_label("vendor string:    The X.Org Foundation\nX.Org version: 21.1.11\n") ==
+         "XLibre 21.1.11");
+
+  lcos::HostFacts report_facts;
+  report_facts.version_line = "LCOS 1.1";
+  report_facts.version_detail = "LCOS 1.1 (clearlooks)";
+  report_facts.hostname = "desk";
+  report_facts.kernel = "6.12.1";
+  report_facts.xserver = "XLibre 25.0.0.8";
+  report_facts.uptime = "2 hours 5 minutes";
+  report_facts.resolution = "1920×1080";
+  report_facts.processor = "Example CPU";
+  report_facts.memory = "8 GB";
+  report_facts.graphics = "Example GPU";
+  report_facts.storage = "64 GB · 40 GB free";
+  const std::string report = lcos::system_info_report(report_facts);
+  EXPECT(report.find("Version: LCOS 1.1 (clearlooks)\n") != std::string::npos);
+  EXPECT(report.find("XLibre: XLibre 25.0.0.8\n") != std::string::npos);
+  EXPECT(report.find("Kernel: 6.12.1\n") != std::string::npos);
+  EXPECT(report.find("Resolution: 1920×1080\n") != std::string::npos);
+  EXPECT(report.find("Xorg") == std::string::npos);
+
+  EXPECT(lcos::notify_log_entry_count("") == 0);
+  EXPECT(lcos::notify_log_entry_count("# comment\n\n") == 0);
+  const std::string log = "[2026-11-22T10:00:00.1]\nsummary=Hello\n\n[2026-11-22T10:05:00.2]\n"
+                          "summary=Again\n";
+  EXPECT(lcos::notify_log_entry_count(log) == 2);
+
+  const auto buttons = lcos::parse_button_layout("O|SHMC");
+  EXPECT(buttons.left == "O");
+  EXPECT(buttons.right == "SHMC");
+  EXPECT(lcos::format_button_layout(buttons) == "O|SHMC");
+  EXPECT(lcos::hidden_title_buttons(buttons) == "T");
+  const auto moved = lcos::adjust_button_layout(buttons, 'C', "left");
+  EXPECT(moved.left == "OC");
+  EXPECT(moved.right == "SHM");
+  const auto up = lcos::adjust_button_layout(buttons, 'H', "up");
+  EXPECT(up.right == "HSMC");
+  const auto hidden = lcos::adjust_button_layout(buttons, 'O', "hide");
+  EXPECT(hidden.left.empty());
+  EXPECT(lcos::hidden_title_buttons(hidden).find('O') != std::string::npos);
+  const auto shown = lcos::adjust_button_layout(hidden, 'T', "right");
+  EXPECT(shown.right == "SHMCT");
+  const auto messy = lcos::parse_button_layout("o|shmcxC");
+  EXPECT(lcos::format_button_layout(messy) == "O|SHMC");
+  const auto nobar = lcos::parse_button_layout("HMC");
+  EXPECT(nobar.left == "HMC");
+  EXPECT(nobar.right.empty());
+  EXPECT(std::string(lcos::title_button_label('C')) == "Close");
+
+  if (const char* source = std::getenv("LCOS_SOURCE_ROOT")) {
+    const auto shipped = lcos::scan_xfwm_themes({std::string(source) + "/data/themes"});
+    bool found_dark = false;
+    for (const auto& theme : shipped) {
+      if (theme.id == "LCOS Clearlooks Dark") {
+        found_dark = true;
+      }
+    }
+    EXPECT(found_dark);
+  }
 }
 
 void test_qa_helpers() {

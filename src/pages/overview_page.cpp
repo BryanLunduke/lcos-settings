@@ -15,7 +15,11 @@
 #include <gdkmm/general.h>
 #include <gdkmm/pixbuf.h>
 #include <glibmm/markup.h>
+#include <gdkmm/screen.h>
+#include <glibmm/main.h>
+#include <glibmm/spawn.h>
 #include <gtkmm/button.h>
+#include <gtkmm/clipboard.h>
 #include <gtkmm/flowbox.h>
 #include <gtkmm/togglebutton.h>
 #include <gtkmm/dialog.h>
@@ -195,6 +199,46 @@ Gtk::Image* icon_image(const char* name, int size) {
   return image;
 }
 
+bool program_on_path(const char* name) {
+  gchar* path = g_find_program_in_path(name);
+  if (path == nullptr) {
+    return false;
+  }
+  g_free(path);
+  return true;
+}
+
+void launch_tool(Gtk::Widget& owner, const std::string& command) {
+  try {
+    Glib::spawn_command_line_async(command);
+  } catch (const Glib::Error& error) {
+    auto* parent = dynamic_cast<Gtk::Window*>(owner.get_toplevel());
+    Gtk::MessageDialog alert("Could not open that settings program", false, Gtk::MESSAGE_ERROR,
+                             Gtk::BUTTONS_OK, true);
+    if (parent != nullptr) {
+      alert.set_transient_for(*parent);
+    }
+    alert.set_secondary_text(error.what());
+    alert.run();
+  }
+}
+
+struct ToolSpec {
+  const char* title;
+  const char* icon;
+  const char* program;
+  const char* command;
+};
+
+const ToolSpec kTools[] = {
+    {"Network", "network-wired", "nm-connection-editor", "nm-connection-editor"},
+    {"Bluetooth", "bluetooth", "blueman-manager", "blueman-manager"},
+    {"Printers", "printer", "system-config-printer", "system-config-printer"},
+    {"Panel Preferences", "preferences-system", "xfce4-panel", "xfce4-panel --preferences"},
+    {"Advanced sound", "audio-volume-high", "pavucontrol", "pavucontrol"},
+    {"Settings Editor", "gtk-preferences", "xfce4-settings-editor", "xfce4-settings-editor"},
+};
+
 }  // namespace
 
 OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPage& users,
@@ -282,9 +326,11 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   facts->set_column_spacing(12);
   facts->set_row_spacing(3);
   facts->set_margin_top(10);
-  const char* captions[] = {"Processor", "Memory", "Graphics", "Storage"};
-  Gtk::Label** values[] = {&processor_, &memory_, &graphics_, &storage_};
-  for (int i = 0; i < 4; ++i) {
+  const char* captions[] = {"Processor", "Memory", "Graphics", "Storage", "Kernel",
+                            "XLibre",    "Version", "Uptime",  "Resolution"};
+  Gtk::Label** values[] = {&processor_, &memory_,     &graphics_,   &storage_, &kernel_,
+                           &xserver_,   &os_version_, &uptime_,     &resolution_};
+  for (int i = 0; i < 9; ++i) {
     auto* cap = Gtk::manage(new Gtk::Label(captions[i]));
     cap->set_halign(Gtk::ALIGN_START);
     cap->get_style_context()->add_class("lcos-faint");
@@ -303,6 +349,12 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   }
   info->set_size_request(120, -1);
   info->pack_start(*facts, Gtk::PACK_SHRINK);
+  copy_info_ = Gtk::manage(new Gtk::Button("Copy system info"));
+  copy_info_->set_halign(Gtk::ALIGN_START);
+  copy_info_->set_margin_top(8);
+  copy_info_->set_tooltip_text("Copy these details for a bug report");
+  copy_info_->signal_clicked().connect(sigc::mem_fun(*this, &OverviewPage::copy_system_info));
+  info->pack_start(*copy_info_, Gtk::PACK_SHRINK);
   identity->pack_start(*info, Gtk::PACK_EXPAND_WIDGET);
   hero_row->insert(*identity, -1);
 
@@ -411,6 +463,51 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
     }
     (void)column;
     auto* frame = make_frame(section, *tiles);
+    frame->set_margin_top(14);
+    page->pack_start(*frame, Gtk::PACK_SHRINK);
+  }
+  auto* tools = Gtk::manage(new Gtk::FlowBox());
+  tools->set_hexpand(true);
+  tools->set_homogeneous(true);
+  tools->set_selection_mode(Gtk::SELECTION_NONE);
+  tools->set_min_children_per_line(2);
+  tools->set_max_children_per_line(6);
+  tools->set_column_spacing(6);
+  tools->set_row_spacing(6);
+  tools->set_margin_top(12);
+  int tool_count = 0;
+  for (const auto& tool : kTools) {
+    if (!program_on_path(tool.program)) {
+      continue;
+    }
+    auto* button = Gtk::manage(new Gtk::Button());
+    button->set_relief(Gtk::RELIEF_NONE);
+    button->set_hexpand(true);
+    button->set_halign(Gtk::ALIGN_FILL);
+    button->set_valign(Gtk::ALIGN_FILL);
+    button->get_style_context()->add_class("lcos-tile");
+    auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+    auto* image = icon_image(tool.icon, 32);
+    image->set_halign(Gtk::ALIGN_CENTER);
+    auto* label = Gtk::manage(new Gtk::Label(tool.title));
+    label->set_halign(Gtk::ALIGN_CENTER);
+    label->set_hexpand(true);
+    label->set_justify(Gtk::JUSTIFY_CENTER);
+    label->set_line_wrap(true);
+    label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+    label->set_width_chars(12);
+    label->set_max_width_chars(16);
+    label->get_style_context()->add_class("lcos-tile-label");
+    box->pack_start(*image, Gtk::PACK_SHRINK);
+    box->pack_start(*label, Gtk::PACK_SHRINK);
+    button->add(*box);
+    const std::string command = tool.command;
+    button->signal_clicked().connect([this, command] { launch_tool(*this, command); });
+    tools->insert(*button, -1);
+    ++tool_count;
+  }
+  if (tool_count > 0) {
+    auto* frame = make_frame("Other settings", *tools);
     frame->set_margin_top(14);
     page->pack_start(*frame, Gtk::PACK_SHRINK);
   }
@@ -565,8 +662,55 @@ void OverviewPage::rename_host() {
   renamed.run();
 }
 
+void OverviewPage::copy_system_info() {
+  refresh_host();
+  const std::string text = system_info_report(facts_);
+  auto clipboard = Gtk::Clipboard::get();
+  if (clipboard) {
+    clipboard->set_text(text);
+    clipboard->store();
+  }
+  if (copy_info_ != nullptr) {
+    copy_info_->set_label("Copied");
+    Glib::signal_timeout().connect_seconds(
+        [this] {
+          if (copy_info_ != nullptr) {
+            copy_info_->set_label("Copy system info");
+          }
+          return false;
+        },
+        2);
+  }
+}
+
 void OverviewPage::refresh_host() {
-  const HostFacts facts = read_host_facts();
+  facts_ = read_host_facts();
+  auto screen = get_screen();
+  if (!screen) {
+    screen = Gdk::Screen::get_default();
+  }
+  if (screen) {
+    const int count = screen->get_n_monitors();
+    const int primary = screen->get_primary_monitor();
+    std::string text;
+    for (int i = 0; i < count; ++i) {
+      Gdk::Rectangle geo;
+      screen->get_monitor_geometry(i, geo);
+      const std::string pixels = format_pixels(geo.get_width(), geo.get_height());
+      if (pixels.empty()) {
+        continue;
+      }
+      if (!text.empty()) {
+        text += ", ";
+      }
+      text += pixels;
+      if (count > 1 && i == primary) {
+        text += " primary";
+      }
+    }
+    facts_.resolution = text;
+  }
+  const HostFacts& facts = facts_;
   if (logo_ != nullptr) {
     const int scale = std::max(1, logo_->get_scale_factor());
     if (auto pixbuf = branding_logo(facts.lcos, kLogoSize, scale)) {
@@ -604,6 +748,16 @@ void OverviewPage::refresh_host() {
   if (storage_ != nullptr) {
     storage_->set_text(facts.storage);
   }
+  auto show_fact = [](Gtk::Label* label, const std::string& value) {
+    if (label != nullptr) {
+      label->set_text(value.empty() ? "Unavailable" : value);
+    }
+  };
+  show_fact(kernel_, facts.kernel);
+  show_fact(xserver_, facts.xserver);
+  show_fact(os_version_, facts.version_detail.empty() ? facts.version_line : facts.version_detail);
+  show_fact(uptime_, facts.uptime);
+  show_fact(resolution_, facts.resolution);
 }
 
 void OverviewPage::refresh_quick() {

@@ -83,6 +83,8 @@ OsIdentity parse_os_release(const std::string& text) {
       id.version = value;
     } else if (key == "PRETTY_NAME") {
       id.pretty_name = value;
+    } else if (key == "VERSION_CODENAME" || (key == "UBUNTU_CODENAME" && id.codename.empty())) {
+      id.codename = value;
     }
   }
   if (!id.pretty_name.empty()) {
@@ -93,6 +95,20 @@ OsIdentity parse_os_release(const std::string& text) {
     id.version_line = id.name;
   }
   id.kicker = id.name;
+  id.version_detail = id.version_line;
+  if (!id.codename.empty() && !id.version_detail.empty()) {
+    std::string hay = id.version_detail;
+    std::string needle = id.codename;
+    for (char& c : hay) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    for (char& c : needle) {
+      c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    }
+    if (hay.find(needle) == std::string::npos) {
+      id.version_detail += " (" + id.codename + ")";
+    }
+  }
   return id;
 }
 
@@ -199,12 +215,145 @@ std::string pci_device_name(const std::string& pci_ids_text, unsigned vendor, un
   return vendor_name;
 }
 
+std::string xlibre_version_label(const std::string& version_text) {
+  std::istringstream in(version_text);
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    const std::string trimmed = trim_copy(line);
+    const std::string markers[] = {"XLibre X Server ", "X.Org X Server ", "X.Org X server ",
+                                   "XLibre version: ", "X.Org version: "};
+    for (const std::string& marker : markers) {
+      const auto pos = trimmed.find(marker);
+      if (pos == std::string::npos) {
+        continue;
+      }
+      std::string version = trim_copy(trimmed.substr(pos + marker.size()));
+      const auto stop = version.find_first_of(" \t(");
+      if (stop != std::string::npos) {
+        version = version.substr(0, stop);
+      }
+      if (!version.empty()) {
+        return "XLibre " + version;
+      }
+    }
+  }
+  return {};
+}
+
+std::string format_uptime_seconds(long long seconds) {
+  if (seconds < 0) {
+    return {};
+  }
+  const long long days = seconds / 86400;
+  seconds %= 86400;
+  const long long hours = seconds / 3600;
+  seconds %= 3600;
+  const long long minutes = seconds / 60;
+  auto piece = [](long long count, const char* one, const char* many) {
+    return std::to_string(count) + " " + (count == 1 ? one : many);
+  };
+  if (days > 0 && hours > 0) {
+    return piece(days, "day", "days") + " " + piece(hours, "hour", "hours");
+  }
+  if (days > 0) {
+    return piece(days, "day", "days");
+  }
+  if (hours > 0 && minutes > 0) {
+    return piece(hours, "hour", "hours") + " " + piece(minutes, "minute", "minutes");
+  }
+  if (hours > 0) {
+    return piece(hours, "hour", "hours");
+  }
+  if (minutes > 0) {
+    return piece(minutes, "minute", "minutes");
+  }
+  return "Less than a minute";
+}
+
+std::string format_pixels(int width, int height) {
+  if (width <= 0 || height <= 0) {
+    return {};
+  }
+  return std::to_string(width) + "×" + std::to_string(height);
+}
+
+namespace {
+
+std::string report_value(const std::string& value) {
+  return value.empty() ? "Unavailable" : value;
+}
+
+std::string command_output(const char* command) {
+  FILE* pipe = popen(command, "r");
+  if (pipe == nullptr) {
+    return {};
+  }
+  std::string out;
+  char buffer[256];
+  while (std::fgets(buffer, sizeof buffer, pipe) != nullptr) {
+    out.append(buffer);
+    if (out.size() > 8192) {
+      break;
+    }
+  }
+  pclose(pipe);
+  return out;
+}
+
+std::string read_uptime_label() {
+  const std::string text = read_file("/proc/uptime");
+  if (text.empty()) {
+    return {};
+  }
+  try {
+    const double seconds = std::stod(text);
+    if (seconds < 0) {
+      return {};
+    }
+    return format_uptime_seconds(static_cast<long long>(seconds));
+  } catch (const std::exception&) {
+    return {};
+  }
+}
+
+}  // namespace
+
+std::string system_info_report(const HostFacts& facts) {
+  std::ostringstream out;
+  out << "Version: " << report_value(facts.version_detail.empty() ? facts.version_line : facts.version_detail)
+      << "\n";
+  out << "Hostname: " << report_value(facts.hostname) << "\n";
+  out << "Kernel: " << report_value(facts.kernel) << "\n";
+  out << "XLibre: " << report_value(facts.xserver) << "\n";
+  out << "Uptime: " << report_value(facts.uptime) << "\n";
+  out << "Resolution: " << report_value(facts.resolution) << "\n";
+  out << "Processor: " << report_value(facts.processor) << "\n";
+  out << "Memory: " << report_value(facts.memory) << "\n";
+  out << "Graphics: " << report_value(facts.graphics) << "\n";
+  out << "Storage: " << report_value(facts.storage) << "\n";
+  return out.str();
+}
+
 HostFacts read_host_facts() {
   HostFacts facts;
   const OsIdentity os = parse_os_release(read_file("/etc/os-release"));
   facts.lcos = os_identity_is_lcos(os);
   facts.kicker = os.kicker;
   facts.version_line = os.version_line.empty() ? "Unknown system" : os.version_line;
+  facts.version_detail = os.version_detail.empty() ? facts.version_line : os.version_detail;
+  facts.kernel = trim_copy(read_file("/proc/sys/kernel/osrelease"));
+  const char* version_commands[] = {"Xorg -version 2>&1", "/usr/lib/xorg/Xorg -version 2>&1",
+                                    "/usr/bin/Xorg -version 2>&1", "xdpyinfo 2>&1"};
+  for (const char* command : version_commands) {
+    facts.xserver = xlibre_version_label(command_output(command));
+    if (!facts.xserver.empty()) {
+      break;
+    }
+  }
+  facts.uptime = read_uptime_label();
 
   char host[256] = {};
   if (gethostname(host, sizeof(host) - 1) == 0 && host[0] != '\0') {

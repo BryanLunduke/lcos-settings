@@ -38,6 +38,8 @@ logic_lib = static_library(
     'src/logic/wm_shortcuts.cpp',
     'src/logic/system_model.cpp',
     'src/logic/host_info.cpp',
+    'src/logic/button_layout.cpp',
+    'src/logic/notify_log.cpp',
     'src/logic/locales.cpp',
     'src/logic/atomic_file.cpp',
     'src/logic/helper_status.cpp',

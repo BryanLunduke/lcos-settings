@@ -278,6 +278,7 @@ AppearancePage::AppearancePage(XfconfStore& store)
     }
     store_.set_string("xsettings", "/Net/ThemeName", gtk_theme_.get_active_id());
     sync_xfwm_if_needed();
+    pair_clearlooks_border();
     schedule_cards();
   });
   icon_theme_.signal_changed().connect([this] {
@@ -426,6 +427,42 @@ void AppearancePage::fill_themes(Gtk::ComboBoxText& combo,
   }
 }
 
+void AppearancePage::pair_clearlooks_border() {
+  const std::string gtk = gtk_theme_.get_active_id();
+  const std::string xfwm = xfwm_theme_.get_active_id();
+  const bool dark = gtk == "LCOS Clearlooks Dark";
+  if (dark) {
+    if (!xfwm.empty() && xfwm != "LCOS Clearlooks Dark") {
+      light_xfwm_ = xfwm;
+    }
+    if (xfwm == "LCOS Clearlooks Dark") {
+      return;
+    }
+    xfwm_theme_.set_active_id("LCOS Clearlooks Dark");
+    if (xfwm_theme_.get_active_id() == "LCOS Clearlooks Dark") {
+      store_.set_string("xfwm4", "/general/theme", "LCOS Clearlooks Dark");
+    }
+    return;
+  }
+  if (xfwm != "LCOS Clearlooks Dark") {
+    if (!xfwm.empty()) {
+      light_xfwm_ = xfwm;
+    }
+    return;
+  }
+  std::string back = light_xfwm_;
+  if (back.empty() || back == "LCOS Clearlooks Dark") {
+    back = "Default";
+  }
+  xfwm_theme_.set_active_id(back);
+  if (xfwm_theme_.get_active_id() != back) {
+    xfwm_theme_.set_active(0);
+  }
+  if (!xfwm_theme_.get_active_id().empty() && xfwm_theme_.get_active_id() != "LCOS Clearlooks Dark") {
+    store_.set_string("xfwm4", "/general/theme", std::string(xfwm_theme_.get_active_id()));
+  }
+}
+
 void AppearancePage::sync_xfwm_if_needed() {
   if (!sync_themes_.get_active() || gtk_theme_.get_active_id().empty()) {
     return;
@@ -478,6 +515,10 @@ void AppearancePage::load() {
   window_scale_.set_active_id(scale >= 2 ? "2" : "1");
   std::string family;
   split_font(font_.get_font_name(), family, shown_font_size_);
+  if (gtk != "LCOS Clearlooks Dark" && !xfwm.empty() && xfwm != "LCOS Clearlooks Dark") {
+    light_xfwm_ = xfwm;
+  }
+  pair_clearlooks_border();
   rebuild_cards();
 }
 

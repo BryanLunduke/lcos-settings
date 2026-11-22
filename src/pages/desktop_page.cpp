@@ -9,6 +9,7 @@
 #include <glibmm/fileutils.h>
 #include <glibmm/miscutils.h>
 #include <gtkmm/box.h>
+#include <gtkmm/filechooserdialog.h>
 #include <gtkmm/image.h>
 #include <gtkmm/scrolledwindow.h>
 
@@ -54,9 +55,7 @@ Gdk::RGBA color_from(const std::vector<double>& values, double red, double green
 }  // namespace
 
 DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
-    : store_(store),
-      randr_(randr),
-      folder_("Background folder", Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER) {
+    : store_(store), randr_(randr) {
   pack_start(notebook_, Gtk::PACK_EXPAND_WIDGET);
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
@@ -78,7 +77,7 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
 
   auto* pictures = make_vbox(8);
   FormGrid folder_form(180);
-  folder_form.add("Folder", folder_);
+  folder_form.add("Folder", folder_combo_);
   pictures->pack_start(folder_form.grid(), Gtk::PACK_SHRINK);
   images_.set_selection_mode(Gtk::SELECTION_SINGLE);
   images_.set_homogeneous(true);
@@ -89,6 +88,7 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
   prepare_page_scroll(*image_scroll);
   image_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   image_scroll->set_shadow_type(Gtk::SHADOW_IN);
+  image_scroll->set_min_content_height(156);
   image_scroll->add(images_);
   pictures->pack_start(*image_scroll, Gtk::PACK_SHRINK);
   image_caption_ = make_label("No image selected.");
@@ -161,10 +161,20 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
       store_.set_int(kChannel, "/backdrop/single-workspace-number", workspace_index());
     }
   });
-  folder_.signal_file_set().connect([this] {
+  folder_combo_.signal_changed().connect([this] {
     if (freeze_ > 0) {
       return;
     }
+    const std::string id = folder_combo_.get_active_id();
+    if (id.empty()) {
+      return;
+    }
+    if (id == "__lcos_other__") {
+      choose_other_folder();
+      return;
+    }
+    folder_path_ = id;
+    folder_combo_.set_tooltip_text(folder_path_);
     scan_folder();
   });
   images_.signal_selected_children_changed().connect([this] {
@@ -256,8 +266,9 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
         start = saved.substr(0, slash);
       }
     }
-    folder_.set_filename(start);
+    folder_path_ = start;
   }
+  rebuild_folders();
   scan_folder();
   reload_fields();
 }
@@ -386,9 +397,108 @@ void DesktopPage::choose_image(const std::string& path) {
   image_caption_->set_text(path);
 }
 
+void DesktopPage::rebuild_folders() {
+  std::vector<std::string> folders;
+  auto add_dir = [&](const std::string& path, bool require_image) {
+    if (path.empty() || !Glib::file_test(path, Glib::FILE_TEST_IS_DIR)) {
+      return;
+    }
+    if (std::find(folders.begin(), folders.end(), path) != folders.end()) {
+      return;
+    }
+    if (require_image) {
+      bool found = false;
+      std::error_code error;
+      for (const auto& entry : std::filesystem::directory_iterator(path, error)) {
+        error.clear();
+        if (entry.is_regular_file(error) && is_backdrop_image(entry.path().filename().string())) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        return;
+      }
+    }
+    folders.push_back(path);
+  };
+  add_dir(folder_path_, false);
+  add_dir("/usr/share/backgrounds", true);
+  add_dir("/usr/share/xfce4/backdrops", true);
+  add_dir("/usr/share/pixmaps", true);
+  const std::string pictures = Glib::build_filename(Glib::get_home_dir(), "Pictures");
+  add_dir(pictures, true);
+  add_dir(Glib::build_filename(pictures, "Wallpapers"), true);
+  add_dir(Glib::build_filename(pictures, "Backgrounds"), true);
+  std::error_code error;
+  if (Glib::file_test("/usr/share/backgrounds", Glib::FILE_TEST_IS_DIR)) {
+    for (const auto& entry : std::filesystem::directory_iterator("/usr/share/backgrounds", error)) {
+      error.clear();
+      if (entry.is_directory(error)) {
+        add_dir(entry.path().string(), true);
+      }
+    }
+  }
+  if (folders.empty()) {
+    add_dir(Glib::get_home_dir(), false);
+  }
+  Freeze freeze(freeze_);
+  folder_combo_.remove_all();
+  for (const auto& path : folders) {
+    const auto slash = path.find_last_of('/');
+    std::string label = slash == std::string::npos ? path : path.substr(slash + 1);
+    if (label.empty()) {
+      label = path;
+    }
+    int same = 0;
+    for (const auto& other : folders) {
+      if (other != path && other.size() > label.size() &&
+          other.compare(other.size() - label.size(), label.size(), label) == 0) {
+        ++same;
+      }
+    }
+    if (same > 0) {
+      label = path;
+    }
+    folder_combo_.append(path, label);
+  }
+  folder_combo_.append("__lcos_other__", "Other folder…");
+  if (!folder_path_.empty()) {
+    folder_combo_.set_active_id(folder_path_);
+  }
+  if (folder_combo_.get_active_row_number() < 0 && !folders.empty()) {
+    folder_path_ = folders.front();
+    folder_combo_.set_active_id(folder_path_);
+  }
+  folder_combo_.set_tooltip_text(folder_path_);
+}
+
+void DesktopPage::choose_other_folder() {
+  auto* parent = dynamic_cast<Gtk::Window*>(get_toplevel());
+  Gtk::FileChooserDialog dialog("Background folder", Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
+  if (parent != nullptr) {
+    dialog.set_transient_for(*parent);
+  }
+  dialog.add_button("Cancel", Gtk::RESPONSE_CANCEL);
+  dialog.add_button("Select", Gtk::RESPONSE_OK);
+  if (!folder_path_.empty()) {
+    dialog.set_current_folder(folder_path_);
+  }
+  const int response = dialog.run();
+  dialog.hide();
+  if (response == Gtk::RESPONSE_OK) {
+    const std::string chosen = dialog.get_filename();
+    if (!chosen.empty()) {
+      folder_path_ = chosen;
+    }
+  }
+  rebuild_folders();
+  scan_folder();
+}
+
 void DesktopPage::scan_folder() {
   Freeze freeze(freeze_);
-  const std::string folder = folder_.get_filename();
+  const std::string folder = folder_path_;
   std::vector<std::string> paths;
   if (!folder.empty() && Glib::file_test(folder, Glib::FILE_TEST_IS_DIR)) {
     std::error_code error;
@@ -416,25 +526,39 @@ void DesktopPage::scan_folder() {
     images_.remove(*child);
   }
   for (const auto& path : image_paths_) {
-    auto* tile = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
-    tile->set_size_request(120, 118);
+    auto* tile = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    tile->set_margin_top(6);
+    tile->set_margin_bottom(6);
+    tile->set_margin_start(4);
+    tile->set_margin_end(4);
     Glib::RefPtr<Gdk::Pixbuf> pixbuf;
     try {
       pixbuf = Gdk::Pixbuf::create_from_file(path, 96, 72, true);
     } catch (const Glib::Error&) {
     }
     if (pixbuf) {
-      tile->pack_start(*Gtk::manage(new Gtk::Image(pixbuf)), Gtk::PACK_SHRINK);
+      auto* image = Gtk::manage(new Gtk::Image(pixbuf));
+      image->set_size_request(96, 72);
+      image->set_halign(Gtk::ALIGN_CENTER);
+      tile->pack_start(*image, Gtk::PACK_SHRINK);
     } else {
       auto* missing = make_label("No preview");
       missing->set_size_request(96, 72);
+      missing->set_halign(Gtk::ALIGN_CENTER);
       tile->pack_start(*missing, Gtk::PACK_SHRINK);
     }
     const auto slash = path.find_last_of('/');
-    auto* name = make_label(slash == std::string::npos ? path : path.substr(slash + 1));
+    const std::string filename = slash == std::string::npos ? path : path.substr(slash + 1);
+    auto* name = make_label(filename);
     name->set_ellipsize(Pango::ELLIPSIZE_END);
-    name->set_max_width_chars(14);
+    name->set_line_wrap(true);
+    name->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+    name->set_lines(2);
+    name->set_justify(Gtk::JUSTIFY_CENTER);
+    name->set_width_chars(14);
+    name->set_max_width_chars(16);
     name->set_halign(Gtk::ALIGN_CENTER);
+    name->set_tooltip_text(filename);
     tile->pack_start(*name, Gtk::PACK_SHRINK);
     images_.add(*tile);
   }
