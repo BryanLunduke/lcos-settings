@@ -10,7 +10,6 @@
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/colorbutton.h>
 #include <gtkmm/comboboxtext.h>
-#include <gtkmm/filechooserbutton.h>
 #include <gtkmm/flowbox.h>
 #include <gtkmm/label.h>
 #include "ui_util.hpp"
@@ -38,6 +37,8 @@ class DesktopPage : public SettingsPage {
   void reload_monitors();
   void reload_fields();
   void scan_folder();
+  void rebuild_folders();
+  void choose_other_folder();
   void choose_image(const std::string& path);
   std::string property(const std::string& leaf) const;
   int workspace_index() const;
@@ -60,7 +61,8 @@ class DesktopPage : public SettingsPage {
   Gtk::SpinButton workspace_;
   Gtk::Label* workspace_caption_ = nullptr;
   Gtk::CheckButton all_workspaces_;
-  Gtk::FileChooserButton folder_;
+  Gtk::ComboBoxText folder_combo_;
+  std::string folder_path_;
   Gtk::FlowBox images_;
   Gtk::Label* image_caption_ = nullptr;
   Gtk::ComboBoxText style_;

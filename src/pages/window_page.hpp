@@ -5,8 +5,12 @@
 #include "backends/xfconf_store.hpp"
 #include "pages/settings_page.hpp"
 
+#include "logic/button_layout.hpp"
+
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/comboboxtext.h>
+#include <gtkmm/label.h>
+#include <gtkmm/listbox.h>
 #include <gtkmm/liststore.h>
 #include "ui_util.hpp"
 #include <gtkmm/radiobutton.h>
@@ -50,6 +54,10 @@ class WindowPage : public SettingsPage {
 
   void load();
   void load_shortcuts();
+  void load_button_layout();
+  void refresh_button_lists(char keep);
+  void apply_button_action(char code, const char* action);
+  static char selected_button(Gtk::ListBox& list);
   void edit_shortcut();
   void clear_shortcut();
   void reset_shortcuts();
@@ -75,6 +83,12 @@ class WindowPage : public SettingsPage {
   Gtk::CheckButton box_move_;
   Gtk::CheckButton box_resize_;
   Gtk::ComboBoxText double_click_;
+
+  TitleBarButtons button_layout_;
+  Gtk::ListBox left_buttons_;
+  Gtk::ListBox right_buttons_;
+  Gtk::ComboBoxText hidden_buttons_;
+  Gtk::Label* button_summary_ = nullptr;
 
   ShortcutColumns shortcut_columns_;
   Glib::RefPtr<Gtk::ListStore> shortcuts_;

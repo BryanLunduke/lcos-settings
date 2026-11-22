@@ -5,8 +5,10 @@
 #include "backends/priv_client.hpp"
 #include "backends/pulse_client.hpp"
 #include "backends/xfconf_store.hpp"
+#include "logic/host_info.hpp"
 #include "pages/settings_page.hpp"
 
+#include <gtkmm/button.h>
 #include <gtkmm/label.h>
 #include <gtkmm/scale.h>
 #include <gtkmm/switch.h>
@@ -36,6 +38,7 @@ class OverviewPage : public SettingsPage {
   void refresh_quick();
   void open(const std::string& id);
   void rename_host();
+  void copy_system_info();
 
   AppearancePage& appearance_;
   SoundPage& sound_;
@@ -55,6 +58,13 @@ class OverviewPage : public SettingsPage {
   Gtk::Label* memory_ = nullptr;
   Gtk::Label* graphics_ = nullptr;
   Gtk::Label* storage_ = nullptr;
+  Gtk::Label* kernel_ = nullptr;
+  Gtk::Label* xserver_ = nullptr;
+  Gtk::Label* os_version_ = nullptr;
+  Gtk::Label* uptime_ = nullptr;
+  Gtk::Label* resolution_ = nullptr;
+  Gtk::Button* copy_info_ = nullptr;
+  HostFacts facts_;
   Gtk::Box* dark_row_ = nullptr;
   Gtk::Switch dark_;
   Gtk::Switch autologin_;

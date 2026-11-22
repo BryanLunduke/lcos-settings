@@ -11,10 +11,14 @@ struct OsIdentity {
   std::string id;
   std::string version;
   std::string pretty_name;
+  std::string codename;
   // Small-caps line above the version. Comes from NAME, not a hard-coded brand.
   std::string kicker;
   // Large line. PRETTY_NAME when the file has one, otherwise NAME plus VERSION.
   std::string version_line;
+  // version_line, plus the codename in parentheses when the line does not
+  // already contain it.
+  std::string version_detail;
 };
 
 // True when NAME, ID, or PRETTY_NAME identifies LCOS.
@@ -38,12 +42,29 @@ struct HostFacts {
   bool lcos = false;
   std::string kicker;
   std::string version_line;
+  std::string version_detail;
   std::string hostname;
   std::string processor;
   std::string memory;
   std::string graphics;
   std::string storage;
+  std::string kernel;
+  // "XLibre <version>" when the server identifies itself, otherwise empty.
+  // The binary is still named Xorg. The label never says Xorg.
+  std::string xserver;
+  std::string uptime;
+  std::string resolution;
 };
+
+// "XLibre 25.0.0.8" from an `Xorg -version` dump. XLibre builds that still
+// print "X.Org X Server" are labelled XLibre as well. Empty when no version
+// line is present.
+std::string xlibre_version_label(const std::string& version_text);
+std::string format_uptime_seconds(long long seconds);
+std::string format_pixels(int width, int height);
+
+// Plain text for a bug report. Empty fields are written as "Unavailable".
+std::string system_info_report(const HostFacts& facts);
 
 // Reads /etc/os-release, /proc, sysfs, and pci.ids. Missing pieces stay empty
 // or say they are unavailable. Nothing here is a placeholder model name.

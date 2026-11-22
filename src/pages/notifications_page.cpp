@@ -2,9 +2,13 @@
 
 #include "pages/notifications_page.hpp"
 
+#include "logic/notify_log.hpp"
 #include "ui_util.hpp"
 
 #include <gio/gio.h>
+
+#include <unistd.h>
+#include <glibmm/fileutils.h>
 #include <glibmm/miscutils.h>
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
@@ -97,34 +101,55 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
 
   auto* general = make_vbox(8);
   general->set_border_width(0);
-  FormGrid general_form(240);
-  general_form.add("When displaying notifications, show", display_fields_);
-  general_form.add_control(do_not_disturb_);
-  general_form.add_control(gauge_ignores_);
-  general_form.add("Show notifications on", show_on_);
-  general_form.add_control(mute_sounds_);
-  general->pack_start(general_form.grid(), Gtk::PACK_SHRINK);
+  auto* shown = make_vbox(8);
+  FormGrid shown_form(220);
+  shown_form.add("When displaying notifications, show", display_fields_);
+  shown_form.add("Show notifications on", show_on_);
+  shown->pack_start(shown_form.grid(), Gtk::PACK_SHRINK);
+  general->pack_start(*make_frame("What is shown", *shown), Gtk::PACK_SHRINK);
+  auto* quiet = make_vbox(8);
+  FormGrid quiet_form(220);
+  quiet_form.add_control(do_not_disturb_);
+  quiet_form.add_control(gauge_ignores_);
+  quiet_form.add_control(mute_sounds_);
+  quiet->pack_start(quiet_form.grid(), Gtk::PACK_SHRINK);
+  general->pack_start(*make_frame("Quiet", *quiet), Gtk::PACK_SHRINK);
   notebook_.append_page(*make_page_scroll(*general), "General");
 
   auto* appearance = make_vbox(8);
   appearance->set_border_width(0);
+  auto* look_box = make_vbox(8);
   FormGrid look(220);
   look.add("Theme", theme_);
   look.add("Position", location_);
   look.add("Opacity", opacity_);
-  look.add_control(min_width_enabled_);
-  look.add("Width", min_width_);
-  look.add_control(expire_enabled_);
-  look.add("Seconds", expire_timeout_);
-  look.add_control(expire_override_);
-  look.add_control(fadeout_);
-  look.add_control(slideout_);
-  look.add_control(text_with_gauge_);
-  look.add("Date format", datetime_);
-  look.add("Custom format", datetime_custom_);
-  appearance->pack_start(look.grid(), Gtk::PACK_SHRINK);
+  look_box->pack_start(look.grid(), Gtk::PACK_SHRINK);
+  appearance->pack_start(*make_frame("Look", *look_box), Gtk::PACK_SHRINK);
+  auto* timing = make_vbox(8);
+  FormGrid timing_form(220);
+  timing_form.add_control(min_width_enabled_);
+  timing_form.add("Width", min_width_);
+  timing_form.add_control(expire_enabled_);
+  timing_form.add("Seconds", expire_timeout_);
+  timing_form.add_control(expire_override_);
+  timing->pack_start(timing_form.grid(), Gtk::PACK_SHRINK);
+  appearance->pack_start(*make_frame("Size and timing", *timing), Gtk::PACK_SHRINK);
+  auto* motion = make_vbox(8);
+  FormGrid motion_form(220);
+  motion_form.add_control(fadeout_);
+  motion_form.add_control(slideout_);
+  motion->pack_start(motion_form.grid(), Gtk::PACK_SHRINK);
+  appearance->pack_start(*make_frame("Motion", *motion), Gtk::PACK_SHRINK);
+  auto* text = make_vbox(8);
+  FormGrid text_form(220);
+  text_form.add_control(text_with_gauge_);
+  text_form.add("Date format", datetime_);
+  text_form.add("Custom format", datetime_custom_);
+  text->pack_start(text_form.grid(), Gtk::PACK_SHRINK);
+  appearance->pack_start(*make_frame("Text", *text), Gtk::PACK_SHRINK);
   auto* preview = Gtk::manage(new Gtk::Button("Show preview"));
   preview->set_halign(Gtk::ALIGN_START);
+  preview->set_margin_start(12);
   appearance->pack_start(*preview, Gtk::PACK_SHRINK);
   notebook_.append_page(*make_page_scroll(*appearance), "Appearance");
 
@@ -181,13 +206,26 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
 
   auto* log = make_vbox(8);
   log->set_border_width(0);
+  auto* log_box = make_vbox(8);
   FormGrid log_form(180);
   log_form.add_control(log_enabled_);
   log_form.add("Log notifications", log_level_);
   log_form.add("Log applications", log_apps_);
   log_form.add_control(log_limit_);
   log_form.add("Maximum entries", log_size_);
-  log->pack_start(log_form.grid(), Gtk::PACK_SHRINK);
+  log_box->pack_start(log_form.grid(), Gtk::PACK_SHRINK);
+  auto* log_actions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
+  log_count_ = make_label("No entries");
+  log_count_->set_valign(Gtk::ALIGN_CENTER);
+  clear_log_ = Gtk::manage(new Gtk::Button("Clear log"));
+  clear_log_->set_halign(Gtk::ALIGN_START);
+  log_actions->pack_start(*clear_log_, Gtk::PACK_SHRINK);
+  log_actions->pack_start(*log_count_, Gtk::PACK_SHRINK);
+  log_box->pack_start(*log_actions, Gtk::PACK_SHRINK);
+  auto* log_note = make_note(
+      "The notification plugin in the panel shows the log. Clear log removes the saved entries.");
+  log_box->pack_start(*log_note, Gtk::PACK_SHRINK);
+  log->pack_start(*make_frame("Log", *log_box), Gtk::PACK_SHRINK);
   notebook_.append_page(*make_page_scroll(*log), "Log");
 
   auto bind_string = [this](Gtk::ComboBoxText& combo, const char* prop) {
@@ -285,6 +323,7 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
   });
   preview->signal_clicked().connect(sigc::mem_fun(*this, &NotificationsPage::preview));
   remove->signal_clicked().connect(sigc::mem_fun(*this, &NotificationsPage::remove_selected));
+  clear_log_->signal_clicked().connect(sigc::mem_fun(*this, &NotificationsPage::clear_log));
 
   load_themes();
   load();
@@ -373,6 +412,65 @@ void NotificationsPage::load() {
   log_limit_.set_active(store_.get_bool(kChannel, "/log-max-size-enabled", false));
   log_size_.set_value(store_.get_uint(kChannel, "/log-max-size", 1000));
   log_size_.set_sensitive(log_limit_.get_active());
+  refresh_log_count();
+}
+
+namespace {
+
+std::string notify_log_path() {
+  return Glib::build_filename(Glib::get_user_cache_dir(), "xfce4", "notifyd", "log");
+}
+
+}  // namespace
+
+void NotificationsPage::refresh_log_count() {
+  int count = 0;
+  const std::string path = notify_log_path();
+  if (Glib::file_test(path, Glib::FILE_TEST_IS_REGULAR)) {
+    try {
+      count = notify_log_entry_count(Glib::file_get_contents(path));
+    } catch (const Glib::FileError&) {
+      count = 0;
+    }
+  }
+  if (log_count_ != nullptr) {
+    if (count == 1) {
+      log_count_->set_text("1 entry");
+    } else if (count == 0) {
+      log_count_->set_text("No entries");
+    } else {
+      log_count_->set_text(std::to_string(count) + " entries");
+    }
+  }
+  if (clear_log_ != nullptr) {
+    clear_log_->set_sensitive(count > 0);
+  }
+}
+
+void NotificationsPage::clear_log() {
+  GError* error = nullptr;
+  GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
+  if (bus != nullptr) {
+    GError* call_error = nullptr;
+    GVariant* result = g_dbus_connection_call_sync(
+        bus, "org.xfce.Notifyd", "/org/xfce/Notifyd", "org.xfce.Notifyd.Log", "Clear", nullptr,
+        nullptr, G_DBUS_CALL_FLAGS_NONE, 3000, nullptr, &call_error);
+    if (result != nullptr) {
+      g_variant_unref(result);
+    }
+    if (call_error != nullptr) {
+      g_error_free(call_error);
+    }
+    g_object_unref(bus);
+  }
+  if (error != nullptr) {
+    g_error_free(error);
+  }
+  const std::string path = notify_log_path();
+  if (Glib::file_test(path, Glib::FILE_TEST_EXISTS)) {
+    unlink(path.c_str());
+  }
+  refresh_log_count();
 }
 
 void NotificationsPage::load_apps() {
@@ -471,6 +569,7 @@ void NotificationsPage::on_page_shown() {
   load_themes();
   load();
   load_apps();
+  refresh_log_count();
 }
 
 void NotificationsPage::prepare_screenshot(int index) {

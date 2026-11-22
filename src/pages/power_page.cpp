@@ -8,10 +8,14 @@
 #include <gio/gio.h>
 
 #include <gtkmm/box.h>
+#include <gtkmm/button.h>
 #include <gtkmm/image.h>
 #include <gtkmm/label.h>
+#include <gtkmm/messagedialog.h>
 #include <gtkmm/scrolledwindow.h>
 #include <gtkmm/stackswitcher.h>
+
+#include <glibmm/spawn.h>
 
 #include <glib.h>
 
@@ -266,6 +270,82 @@ PowerPage::PowerPage(XfconfStore& store, XrandrBackend& randr) : store_(store) {
   lock_box->pack_start(*lock, Gtk::PACK_SHRINK);
   lock_box->pack_start(*lock_note, Gtk::PACK_SHRINK);
   system->pack_start(*make_frame("Lock", *lock_box), Gtk::PACK_SHRINK);
+  auto* saver_box = make_vbox(8);
+  auto* saver_on = Gtk::manage(new Gtk::CheckButton("Turn the screen saver on"));
+  auto* saver_delay = Gtk::manage(new Gtk::SpinButton());
+  saver_delay->set_range(1, 240);
+  saver_delay->set_increments(1, 5);
+  saver_delay->set_digits(0);
+  auto* saver_lock = Gtk::manage(new Gtk::CheckButton("Lock the screen with the saver"));
+  FormGrid saver_form(220);
+  saver_form.add_control(*saver_on);
+  saver_form.add("Wait before blanking (minutes)", *saver_delay);
+  saver_form.add_control(*saver_lock);
+  saver_box->pack_start(saver_form.grid(), Gtk::PACK_SHRINK);
+  auto* more = Gtk::manage(new Gtk::Button("More options…"));
+  more->set_halign(Gtk::ALIGN_START);
+  bool saver_app = false;
+  if (gchar* found = g_find_program_in_path("xfce4-screensaver-preferences")) {
+    saver_app = true;
+    g_free(found);
+  }
+  more->set_sensitive(saver_app);
+  if (!saver_app) {
+    more->set_tooltip_text("xfce4-screensaver-preferences is not installed");
+  }
+  saver_box->pack_start(*more, Gtk::PACK_SHRINK);
+  saver_box->pack_start(
+      *make_note("The screen saver and the lock stay off until you turn them on. Opening Command "
+                 "Center does not turn them on."),
+      Gtk::PACK_SHRINK);
+  system->pack_start(*make_frame("Screen saver and lock", *saver_box), Gtk::PACK_SHRINK);
+  constexpr const char* kSaver = "xfce4-screensaver";
+  auto load_saver = [this, saver_on, saver_delay, saver_lock, kSaver] {
+    Freeze freeze(freeze_);
+    saver_on->set_active(store_.get_bool(kSaver, "/saver/enabled", false));
+    const int delay = store_.get_int(kSaver, "/saver/idle-activation/delay", 5);
+    saver_delay->set_value(delay < 1 ? 5 : delay);
+    saver_lock->set_active(store_.get_bool(kSaver, "/lock/enabled", false));
+  };
+  load_saver();
+  reloaders_.push_back(load_saver);
+  saver_on->signal_toggled().connect([this, saver_on, kSaver] {
+    if (freeze_ > 0) {
+      return;
+    }
+    const bool on = saver_on->get_active();
+    store_.set_bool(kSaver, "/saver/enabled", on);
+    store_.set_bool(kSaver, "/saver/idle-activation/enabled", on);
+  });
+  saver_delay->signal_value_changed().connect([this, saver_delay, kSaver] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_int(kSaver, "/saver/idle-activation/delay",
+                   std::max(1, saver_delay->get_value_as_int()));
+  });
+  saver_lock->signal_toggled().connect([this, saver_lock, kSaver] {
+    if (freeze_ > 0) {
+      return;
+    }
+    const bool on = saver_lock->get_active();
+    store_.set_bool(kSaver, "/lock/enabled", on);
+    store_.set_bool(kSaver, "/lock/saver-activation/enabled", on);
+  });
+  more->signal_clicked().connect([this] {
+    try {
+      Glib::spawn_command_line_async("xfce4-screensaver-preferences");
+    } catch (const Glib::Error& error) {
+      auto* parent = dynamic_cast<Gtk::Window*>(get_toplevel());
+      Gtk::MessageDialog alert("Could not open the screen saver settings", false, Gtk::MESSAGE_ERROR,
+                               Gtk::BUTTONS_OK, true);
+      if (parent != nullptr) {
+        alert.set_transient_for(*parent);
+      }
+      alert.set_secondary_text(error.what());
+      alert.run();
+    }
+  });
   auto* logind = make_vbox(6);
   auto* handle_power = Gtk::manage(new Gtk::CheckButton("Let elogind handle the _power key", true));
   auto* handle_suspend = Gtk::manage(new Gtk::CheckButton("Let elogind handle the _suspend key", true));

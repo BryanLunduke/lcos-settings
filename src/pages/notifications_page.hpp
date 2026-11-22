@@ -5,6 +5,7 @@
 #include "backends/xfconf_store.hpp"
 #include "pages/settings_page.hpp"
 
+#include <gtkmm/button.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/entry.h>
@@ -54,6 +55,8 @@ class NotificationsPage : public SettingsPage {
   void set_membership(const char* prop, const std::string& app, bool member);
   void preview();
   void remove_selected();
+  void refresh_log_count();
+  void clear_log();
 
   XfconfStore& store_;
   Gtk::Window& parent_;
@@ -89,6 +92,8 @@ class NotificationsPage : public SettingsPage {
   Gtk::ComboBoxText log_apps_;
   Gtk::CheckButton log_limit_;
   Gtk::SpinButton log_size_;
+  Gtk::Label* log_count_ = nullptr;
+  Gtk::Button* clear_log_ = nullptr;
 };
 
 }  // namespace lcos

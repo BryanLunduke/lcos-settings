@@ -6,6 +6,7 @@
 #include "logic/themes.hpp"
 #include "ui_util.hpp"
 
+#include <gtkmm/button.h>
 #include <gtkmm/label.h>
 #include <gtkmm/scrolledwindow.h>
 
@@ -61,6 +62,18 @@ MousePage::MousePage(XfconfStore& store, PointerBackend& pointers)
   device_note_ = make_label("");
   device_note_->set_line_wrap(true);
   device_form.add_full(*device_note_);
+  auto* reset = Gtk::manage(new Gtk::Button("Reset to defaults"));
+  reset->set_halign(Gtk::ALIGN_START);
+  reset->set_tooltip_text("Put this device's pointer settings back to the defaults");
+  device_form.add_full(*reset);
+  reset->signal_clicked().connect([this] {
+    const PointerDevice* device = current();
+    if (device == nullptr || device->xfconf_name.empty()) {
+      return;
+    }
+    store_.reset("pointers", "/" + device->xfconf_name, true);
+    show_device();
+  });
   device_box->pack_start(device_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Device", *device_box), Gtk::PACK_SHRINK);
 

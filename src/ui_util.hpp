@@ -177,6 +177,21 @@ class SectionNotebook : public Gtk::Box {
     }
   }
 
+  // Case-insensitive match on the section title, so --page=power/system works.
+  bool select_title(const Glib::ustring& name) {
+    const Glib::ustring want = name.lowercase();
+    if (want.empty()) {
+      return false;
+    }
+    for (int i = 0; i < get_n_pages(); ++i) {
+      if (buttons_[static_cast<std::size_t>(i)]->get_label().lowercase() == want) {
+        set_current_page(i);
+        return true;
+      }
+    }
+    return false;
+  }
+
  private:
   Gtk::Box bar_{Gtk::ORIENTATION_HORIZONTAL, 0};
   Gtk::Stack stack_;
@@ -184,6 +199,27 @@ class SectionNotebook : public Gtk::Box {
   std::vector<Gtk::Button*> buttons_;
   int current_ = 0;
 };
+
+// Opens the named section on the first segmented control under widget.
+// `--page=window-manager/advanced` uses this.
+inline bool select_section(Gtk::Widget& widget, const std::string& name) {
+  if (name.empty()) {
+    return false;
+  }
+  if (auto* book = dynamic_cast<SectionNotebook*>(&widget)) {
+    return book->select_title(name);
+  }
+  if (auto* container = dynamic_cast<Gtk::Container*>(&widget)) {
+    bool found = false;
+    container->foreach ([&](Gtk::Widget& child) {
+      if (!found) {
+        found = select_section(child, name);
+      }
+    });
+    return found;
+  }
+  return false;
+}
 
 inline Gtk::ScrolledWindow* make_page_scroll(Gtk::Widget& child) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());

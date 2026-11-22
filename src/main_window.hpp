@@ -119,6 +119,7 @@ class MainWindow : public Gtk::ApplicationWindow {
   int current_index_ = -1;
   int nav_depth_ = 0;
   int queued_page_ = -1;
+  std::string queued_section_;
   Gtk::Label* search_empty_ = nullptr;
 
   std::string dump_dir_;
