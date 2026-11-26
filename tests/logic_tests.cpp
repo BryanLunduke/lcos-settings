@@ -69,6 +69,12 @@ std::string fixture(const char* name) {
 void test_backdrop_power_mime() {
   EXPECT(lcos::backdrop_property(0, "HDMI 1", 2, "image-style") ==
          "/backdrop/screen0/monitorHDMI1/workspace2/image-style");
+  EXPECT(std::fabs(lcos::preview_monitor_aspect(1920, 1080) - 16.0 / 9.0) < 1e-9);
+  EXPECT(std::fabs(lcos::preview_monitor_aspect(1600, 1200) - 4.0 / 3.0) < 1e-9);
+  EXPECT(std::fabs(lcos::preview_monitor_aspect(1920, 1200) - 16.0 / 10.0) < 1e-9);
+  EXPECT(std::fabs(lcos::preview_monitor_aspect(2560, 1080) - 16.0 / 10.0) < 1e-9);
+  EXPECT(std::fabs(lcos::preview_monitor_aspect(1280, 1024) - 16.0 / 10.0) < 1e-9);
+  EXPECT(std::fabs(lcos::preview_monitor_aspect(0, 0) - 16.0 / 10.0) < 1e-9);
   EXPECT(lcos::is_backdrop_image("Beach.JPG"));
   EXPECT(!lcos::is_backdrop_image("notes.txt"));
   EXPECT(lcos::power_supply_type_is_battery("Battery\n"));

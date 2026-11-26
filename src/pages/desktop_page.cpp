@@ -217,19 +217,18 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
   left->set_margin_end(2);
   left_scroll->add(*left);
 
-  preview_.set_hexpand(true);
-  preview_.set_size_request(-1, 168);
+  preview_.set_hexpand(false);
+  preview_.set_halign(Gtk::ALIGN_START);
+  preview_.set_size_request(276, 186);
   preview_.signal_draw().connect([this](const Cairo::RefPtr<Cairo::Context>& context) {
     paint_preview(context);
     return true;
   });
   left->pack_start(preview_, Gtk::PACK_SHRINK);
   image_caption_ = make_label("No image selected.");
-  image_caption_->set_line_wrap(true);
-  image_caption_->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+  image_caption_->set_line_wrap(false);
   image_caption_->set_ellipsize(Pango::ELLIPSIZE_END);
-  image_caption_->set_lines(2);
-  image_caption_->set_max_width_chars(32);
+  image_caption_->set_max_width_chars(28);
   image_caption_->set_xalign(0);
   image_caption_->get_style_context()->add_class("lcos-dim");
   left->pack_start(*image_caption_, Gtk::PACK_SHRINK);
@@ -542,6 +541,7 @@ void DesktopPage::reload_monitors() {
     count = 0;
   }
   sync_monitor_row(count);
+  sync_preview_size();
 }
 
 int DesktopPage::workspace_index() const {
@@ -784,9 +784,11 @@ void DesktopPage::scan_folder() {
     auto* name = make_label(filename);
     name->set_ellipsize(Pango::ELLIPSIZE_END);
     name->set_justify(Gtk::JUSTIFY_CENTER);
-    name->set_max_width_chars(18);
-    name->set_halign(Gtk::ALIGN_CENTER);
+    name->set_hexpand(true);
+    name->set_halign(Gtk::ALIGN_FILL);
+    name->set_max_width_chars(14);
     name->set_tooltip_text(filename);
+    name->get_style_context()->add_class("lcos-thumb-name");
     tile->pack_start(*name, Gtk::PACK_SHRINK);
     images_.add(*tile);
     if (auto* parent = tile->get_parent()) {
@@ -946,6 +948,28 @@ void DesktopPage::apply_decoded() {
   }
 }
 
+namespace {
+
+void keep_thumb_text_readable(Gtk::Widget& widget) {
+  if (auto* label = dynamic_cast<Gtk::Label*>(&widget)) {
+    if (label->get_style_context()->has_class("lcos-thumb-name")) {
+      Gdk::RGBA ink;
+      ink.set_rgba(0.12, 0.12, 0.13, 1);
+      const Gtk::StateFlags states[] = {Gtk::STATE_FLAG_NORMAL, Gtk::STATE_FLAG_SELECTED,
+                                        Gtk::STATE_FLAG_PRELIGHT, Gtk::STATE_FLAG_ACTIVE,
+                                        Gtk::STATE_FLAG_FOCUSED};
+      for (const auto state : states) {
+        label->override_color(ink, state);
+      }
+    }
+  }
+  if (auto* container = dynamic_cast<Gtk::Container*>(&widget)) {
+    container->foreach ([&](Gtk::Widget& child) { keep_thumb_text_readable(child); });
+  }
+}
+
+}  // namespace
+
 void DesktopPage::mark_selection() {
   const auto selected = images_.get_selected_children();
   for (auto* child : images_.get_children()) {
@@ -958,6 +982,7 @@ void DesktopPage::mark_selection() {
     } else {
       child->get_style_context()->remove_class("lcos-picked");
     }
+    keep_thumb_text_readable(*child);
   }
 }
 
@@ -994,16 +1019,99 @@ void DesktopPage::add_picture() {
   scan_folder();
 }
 
+namespace {
+
+struct PreviewBox {
+  double aspect = 16.0 / 10.0;
+  int widget_w = 276;
+  int widget_h = 186;
+  int layout_w = 1600;
+  int layout_h = 1000;
+};
+
+PreviewBox preview_box_for(int width, int height) {
+  PreviewBox box;
+  box.aspect = preview_monitor_aspect(width, height);
+  constexpr double kMaxScreenW = 248;
+  constexpr double kMaxScreenH = 148;
+  double screen_w = kMaxScreenW;
+  double screen_h = screen_w / box.aspect;
+  if (screen_h > kMaxScreenH) {
+    screen_h = kMaxScreenH;
+    screen_w = screen_h * box.aspect;
+  }
+  box.widget_w = static_cast<int>(std::ceil(screen_w + 24));
+  box.widget_h = static_cast<int>(std::ceil(screen_h + 36));
+  if (width > 0 && height > 0 &&
+      std::fabs(static_cast<double>(width) / static_cast<double>(height) - box.aspect) < 0.02) {
+    box.layout_w = width;
+    box.layout_h = height;
+  } else {
+    box.layout_w = 1600;
+    box.layout_h = std::max(1, static_cast<int>(std::lround(1600.0 / box.aspect)));
+  }
+  return box;
+}
+
+}  // namespace
+
+void DesktopPage::sync_preview_size() {
+  int mon_w = 0;
+  int mon_h = 0;
+  const std::string id = monitor_.get_active_id();
+  for (const auto& output : randr_.read()) {
+    if (!id.empty() && output.name != std::string(id)) {
+      continue;
+    }
+    if (output.width > 0 && output.height > 0) {
+      mon_w = output.width;
+      mon_h = output.height;
+    }
+    if (!id.empty()) {
+      break;
+    }
+  }
+  const PreviewBox box = preview_box_for(mon_w, mon_h);
+  preview_.set_size_request(box.widget_w, box.widget_h);
+}
+
 void DesktopPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& cr) {
+  int real_w = 0;
+  int real_h = 0;
+  int mon_x = 0;
+  int mon_y = 0;
+  const auto outputs = randr_.read();
+  const std::string id = monitor_.get_active_id();
+  for (const auto& output : outputs) {
+    if (!id.empty() && output.name != std::string(id)) {
+      continue;
+    }
+    if (output.width > 0 && output.height > 0) {
+      real_w = output.width;
+      real_h = output.height;
+      mon_x = output.x;
+      mon_y = output.y;
+    }
+    if (!id.empty()) {
+      break;
+    }
+  }
+  const PreviewBox box = preview_box_for(real_w, real_h);
   const double width = std::max(1, preview_.get_allocated_width());
   const double height = std::max(1, preview_.get_allocated_height());
-  cr->set_source_rgb(0.20, 0.22, 0.25);
-  rounded_rect(cr, 1, 1, width - 2, height - 14, 8);
-  cr->fill();
-  const double screen_x = 12;
+  const double avail_w = std::max(40.0, width - 24);
+  const double avail_h = std::max(30.0, height - 36);
+  double screen_w = avail_w;
+  double screen_h = screen_w / box.aspect;
+  if (screen_h > avail_h) {
+    screen_h = avail_h;
+    screen_w = screen_h * box.aspect;
+  }
+  const double screen_x = std::max(12.0, (width - screen_w) / 2.0);
   const double screen_y = 12;
-  const double screen_w = std::max(1.0, width - 24);
-  const double screen_h = std::max(1.0, height - 32);
+  cr->set_source_rgb(0.20, 0.22, 0.25);
+  rounded_rect(cr, screen_x - 10, screen_y - 10, screen_w + 20, screen_h + 20, 8);
+  cr->fill();
   const int colors = std::max(0, color_style_.get_active_row_number());
   const auto first = color1_.get_rgba();
   const auto second = color2_.get_rgba();
@@ -1036,26 +1144,8 @@ void DesktopPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& cr) {
   }
   const int fit = std::max(0, style_.get_active_row_number());
   if (fit != 0 && preview_pixbuf_) {
-    int mon_w = 1920;
-    int mon_h = 1080;
-    int mon_x = 0;
-    int mon_y = 0;
-    const auto outputs = randr_.read();
-    const std::string id = monitor_.get_active_id();
-    for (const auto& output : outputs) {
-      if (!id.empty() && output.name != std::string(id)) {
-        continue;
-      }
-      if (output.width > 0 && output.height > 0) {
-        mon_w = output.width;
-        mon_h = output.height;
-        mon_x = output.x;
-        mon_y = output.y;
-      }
-      if (!id.empty()) {
-        break;
-      }
-    }
+    const int mon_w = box.layout_w;
+    const int mon_h = box.layout_h;
     const int image_w = preview_orig_w_ > 0 ? preview_orig_w_ : preview_pixbuf_->get_width();
     const int image_h = preview_orig_h_ > 0 ? preview_orig_h_ : preview_pixbuf_->get_height();
     cr->save();
@@ -1097,7 +1187,8 @@ void DesktopPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& cr) {
   cr->rectangle(screen_x + 0.5, screen_y + 0.5, screen_w - 1, screen_h - 1);
   cr->stroke();
   cr->set_source_rgb(0.28, 0.30, 0.33);
-  rounded_rect(cr, width * 0.38, height - 12, width * 0.24, 7, 2);
+  const double stand_w = std::min(screen_w * 0.28, 72.0);
+  rounded_rect(cr, screen_x + (screen_w - stand_w) / 2.0, screen_y + screen_h + 8, stand_w, 7, 2);
   cr->fill();
 }
 

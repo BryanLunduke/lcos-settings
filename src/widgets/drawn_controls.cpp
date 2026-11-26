@@ -293,10 +293,14 @@ void install_combo(Gtk::ComboBox& combo) {
   combo.set_data("lcos-combo-draw", combo.gobj());
   combo.set_can_focus(true);
   combo.set_size_request(-1, 28);
+  gtk_combo_box_set_popup_fixed_width(combo.gobj(), TRUE);
   for (auto* cell : combo.get_cells()) {
     if (auto* text = dynamic_cast<Gtk::CellRendererText*>(cell)) {
       text->property_ellipsize() = Pango::ELLIPSIZE_END;
-      text->property_width_chars() = 18;
+      if (text->property_max_width_chars() < 0) {
+        text->property_width_chars() = 12;
+        text->property_max_width_chars() = 24;
+      }
     }
   }
   if (auto accessible = combo.get_accessible()) {

@@ -75,15 +75,19 @@ inline void configure_scale(Gtk::Scale& scale) {
   scale.set_halign(Gtk::ALIGN_FILL);
 }
 
-// The combo's natural width is its longest item. Cap that so a model name
-// or a locale cannot push the page past the window.
+// Size a combo to its text, capped so a long item cannot stretch the control
+// to the window edge. The popup matches the button.
 inline void cap_combo_width(Gtk::ComboBox& combo) {
   combo.set_can_focus(true);
-  combo.set_hexpand(true);
+  combo.set_hexpand(false);
+  combo.set_halign(Gtk::ALIGN_START);
+  combo.set_valign(Gtk::ALIGN_CENTER);
+  gtk_combo_box_set_popup_fixed_width(combo.gobj(), TRUE);
   for (auto* cell : combo.get_cells()) {
     if (auto* text = dynamic_cast<Gtk::CellRendererText*>(cell)) {
       text->property_ellipsize() = Pango::ELLIPSIZE_END;
-      text->property_width_chars() = 18;
+      text->property_width_chars() = 12;
+      text->property_max_width_chars() = 24;
     }
   }
 }
@@ -336,10 +340,12 @@ class FormGrid {
     // SpinButton is an Entry. Checking Entry first stretches the number and
     // the +/- buttons to opposite ends of the column.
     const bool spin = dynamic_cast<Gtk::SpinButton*>(&widget) != nullptr;
-    const bool expand = !spin && (dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr ||
-                                  dynamic_cast<Gtk::Scale*>(&widget) != nullptr ||
-                                  dynamic_cast<Gtk::Entry*>(&widget) != nullptr ||
-                                  dynamic_cast<Gtk::Box*>(&widget) != nullptr);
+    const bool combo = dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr;
+    // Combos stay at their text width. Filling the column pushed the
+    // arrangement list off the right edge of a 1100 px window.
+    const bool expand = !spin && !combo && (dynamic_cast<Gtk::Scale*>(&widget) != nullptr ||
+                                            dynamic_cast<Gtk::Entry*>(&widget) != nullptr ||
+                                            dynamic_cast<Gtk::Box*>(&widget) != nullptr);
     if (expand) {
       widget.set_hexpand(true);
       widget.set_halign(Gtk::ALIGN_FILL);

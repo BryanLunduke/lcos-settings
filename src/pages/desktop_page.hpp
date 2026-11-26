@@ -47,6 +47,7 @@ class DesktopPage : public SettingsPage {
   void scan_folder();
   void sync_cycle();
   void sync_monitor_row(int count);
+  void sync_preview_size();
   void watch_monitors();
   void paint_preview(const Cairo::RefPtr<Cairo::Context>& context);
   void queue_image(const std::string& path, int width, int height, bool preview);

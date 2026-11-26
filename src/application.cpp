@@ -36,8 +36,12 @@ void install_css() {
       "flowboxchild.lcos-wallpaper, flowboxchild.lcos-wallpaper:selected, flowboxchild.lcos-wallpaper:selected:focus {"
       "  background-color: transparent; background-image: none; box-shadow: none; outline: none; border-radius: 5px; }"
       "flowboxchild.lcos-wallpaper.lcos-picked {"
-      "  background-color: transparent; background-image: none;"
+      "  background-color: alpha(@theme_selected_bg_color, 0.22); background-image: none;"
       "  box-shadow: inset 0 0 0 2px @theme_selected_bg_color; }"
+      "flowboxchild.lcos-wallpaper label.lcos-thumb-name,"
+      "flowboxchild.lcos-wallpaper:selected label.lcos-thumb-name,"
+      "flowboxchild.lcos-wallpaper.lcos-picked label.lcos-thumb-name {"
+      "  color: @theme_text_color; }"
       "scale.lcos-scale trough { margin-top: 4px; margin-bottom: 4px; margin-right: 12px; }"
       "scale.lcos-scale label { min-width: 2.6em; }");
   Gtk::StyleContext::add_provider_for_screen(screen, extra,
