@@ -17,7 +17,9 @@
 #include <gtkmm/box.h>
 #include <gtkmm/button.h>
 #include <gtkmm/dialog.h>
+#include <gdkmm/display.h>
 #include <gdkmm/pixbuf.h>
+#include <gdkmm/screen.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/scrollbar.h>
 #include <gtkmm/label.h>
@@ -528,6 +530,16 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
     root_window_ = root->gobj();
     gdk_window_add_filter(root_window_, &DisplayPage::screen_filter, this);
     screen_watch_ = true;
+    if (!monitor_added_.connected()) {
+      monitor_added_ = display->signal_monitor_added().connect(
+          [this](const Glib::RefPtr<Gdk::Monitor>&) { on_monitors_changed(); });
+      monitor_removed_ = display->signal_monitor_removed().connect(
+          [this](const Glib::RefPtr<Gdk::Monitor>&) { on_monitors_changed(); });
+      if (auto screen = display->get_default_screen()) {
+        monitors_changed_ = screen->signal_monitors_changed().connect(
+            [this] { on_monitors_changed(); });
+      }
+    }
   });
 }
 
@@ -545,6 +557,17 @@ DisplayPage::~DisplayPage() {
   }
   screen_watch_ = false;
   root_window_ = nullptr;
+  monitor_added_.disconnect();
+  monitor_removed_.disconnect();
+  monitors_changed_.disconnect();
+}
+
+void DisplayPage::on_monitors_changed() {
+  if (!alive_ || applying_ || confirming_ || dirty_ || hardware_changed_) {
+    return;
+  }
+  load_hardware();
+  dirty_ = false;
 }
 
 GdkFilterReturn DisplayPage::screen_filter(GdkXEvent* xevent, GdkEvent*, gpointer data) {

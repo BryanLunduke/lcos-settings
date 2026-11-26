@@ -50,6 +50,7 @@ class NotificationsPage : public SettingsPage {
   };
 
   void load();
+  void sync_log_options();
   void load_apps();
   void load_themes();
   void set_membership(const char* prop, const std::string& app, bool member);

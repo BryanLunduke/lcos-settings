@@ -27,12 +27,16 @@ class Application : public Gtk::Application {
  private:
   void present_requested();
   void open_full();
+  void rollback_live();
+  void rollback_and_quit();
+  static gboolean on_unix_signal(void* data);
 
   XfconfStore store_;
   XrandrBackend* randr_ = nullptr;
   MainWindow* window_ = nullptr;
   DisplayMinimal* minimal_ = nullptr;
   bool display_minimal_ = false;
+  bool rolling_back_ = false;
   std::string page_id_;
 };
 

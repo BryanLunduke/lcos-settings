@@ -305,7 +305,13 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
     }
     store_.set_string(kChannel, "/date-time-custom-format", datetime_custom_.get_text());
   });
-  bind_bool(log_enabled_, "/notification-log");
+  log_enabled_.signal_toggled().connect([this] {
+    if (freeze_ > 0) {
+      return;
+    }
+    store_.set_bool(kChannel, "/notification-log", log_enabled_.get_active());
+    sync_log_options();
+  });
   bind_string(log_level_, "/log-level");
   bind_string(log_apps_, "/log-level-apps");
   log_limit_.signal_toggled().connect([this] {
@@ -313,7 +319,7 @@ NotificationsPage::NotificationsPage(XfconfStore& store, Gtk::Window& parent)
       return;
     }
     store_.set_bool(kChannel, "/log-max-size-enabled", log_limit_.get_active());
-    log_size_.set_sensitive(log_limit_.get_active());
+    sync_log_options();
   });
   log_size_.signal_value_changed().connect([this] {
     if (freeze_ > 0) {
@@ -411,8 +417,16 @@ void NotificationsPage::load() {
   choose(log_apps_, store_.get_string(kChannel, "/log-level-apps", "all"), "all");
   log_limit_.set_active(store_.get_bool(kChannel, "/log-max-size-enabled", false));
   log_size_.set_value(store_.get_uint(kChannel, "/log-max-size", 1000));
-  log_size_.set_sensitive(log_limit_.get_active());
+  sync_log_options();
   refresh_log_count();
+}
+
+void NotificationsPage::sync_log_options() {
+  const bool on = log_enabled_.get_active();
+  log_level_.set_sensitive(on);
+  log_apps_.set_sensitive(on);
+  log_limit_.set_sensitive(on);
+  log_size_.set_sensitive(on && log_limit_.get_active());
 }
 
 namespace {

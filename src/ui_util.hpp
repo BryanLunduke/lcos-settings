@@ -28,6 +28,8 @@
 
 #include <gtk/gtk.h>
 
+#include "logic/scroll_guard.hpp"
+
 namespace lcos {
 
 // One caption column for every page, so the controls start at the same x.
@@ -228,33 +230,42 @@ inline Gtk::ScrolledWindow* make_page_scroll(Gtk::Widget& child) {
   return scroll;
 }
 
-// A wheel over an unfocused spin button or combo used to change its value
-// while the page scrolled. Eat the control's handler so the scroll reaches
-// the page instead. A focused control still changes.
+// A wheel over an unfocused spin, combo, or slider used to change its value
+// while the page scrolled. gtkmm connects signals after the default handler,
+// which has already applied the wheel by then. Connect first and stop that
+// handler so the scroll reaches the page. A focused control still changes.
+inline bool widget_or_child_focused(Gtk::Widget& widget) {
+  if (widget.has_focus() || widget.is_focus()) {
+    return true;
+  }
+  Gtk::Widget* focus = nullptr;
+  if (auto* window = dynamic_cast<Gtk::Window*>(widget.get_toplevel())) {
+    focus = window->get_focus();
+  }
+  return focus != nullptr && (focus == &widget || focus->is_ancestor(widget));
+}
+
 inline void guard_scroll_unless_focused(Gtk::Widget& widget) {
   if (widget.get_data("lcos-scroll-guard") != nullptr) {
     return;
   }
   widget.set_data("lcos-scroll-guard", widget.gobj());
   widget.add_events(Gdk::SCROLL_MASK | Gdk::SMOOTH_SCROLL_MASK);
-  widget.signal_scroll_event().connect([&widget](GdkEventScroll*) {
-    Gtk::Widget* focus = nullptr;
-    if (auto* window = dynamic_cast<Gtk::Window*>(widget.get_toplevel())) {
-      focus = window->get_focus();
-    }
-    const bool focused =
-        widget.has_focus() || widget.is_focus() ||
-        (focus != nullptr && (focus == &widget || focus->is_ancestor(widget)));
-    if (!focused) {
-      g_signal_stop_emission_by_name(widget.gobj(), "scroll-event");
-    }
-    return false;
-  });
+  // false: g_signal_connect, before GTK's RUN_LAST scroll handler.
+  widget.signal_scroll_event().connect(
+      [&widget](GdkEventScroll*) {
+        if (scroll_event_should_block_change(widget_or_child_focused(widget))) {
+          g_signal_stop_emission_by_name(widget.gobj(), "scroll-event");
+        }
+        return false;
+      },
+      false);
 }
 
 inline void guard_scroll_tree(Gtk::Widget& widget) {
   if (dynamic_cast<Gtk::SpinButton*>(&widget) != nullptr ||
-      dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr) {
+      dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr ||
+      dynamic_cast<Gtk::Scale*>(&widget) != nullptr) {
     guard_scroll_unless_focused(widget);
   }
   if (auto* container = dynamic_cast<Gtk::Container*>(&widget)) {
@@ -322,10 +333,14 @@ class FormGrid {
     // Combos, scales, and text entries use the control column. A box is
     // filled so a scale or field packed inside it can still grow. Spins
     // and colour buttons stay at their natural width.
-    if (dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr ||
-        dynamic_cast<Gtk::Scale*>(&widget) != nullptr ||
-        dynamic_cast<Gtk::Entry*>(&widget) != nullptr ||
-        dynamic_cast<Gtk::Box*>(&widget) != nullptr) {
+    // SpinButton is an Entry. Checking Entry first stretches the number and
+    // the +/- buttons to opposite ends of the column.
+    const bool spin = dynamic_cast<Gtk::SpinButton*>(&widget) != nullptr;
+    const bool expand = !spin && (dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr ||
+                                  dynamic_cast<Gtk::Scale*>(&widget) != nullptr ||
+                                  dynamic_cast<Gtk::Entry*>(&widget) != nullptr ||
+                                  dynamic_cast<Gtk::Box*>(&widget) != nullptr);
+    if (expand) {
       widget.set_hexpand(true);
       widget.set_halign(Gtk::ALIGN_FILL);
     } else {

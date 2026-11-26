@@ -7,14 +7,20 @@
 #include "pages/settings_page.hpp"
 
 #include <gtkmm/box.h>
+#include <gtkmm/button.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/colorbutton.h>
 #include <gtkmm/comboboxtext.h>
+#include <gtkmm/drawingarea.h>
 #include <gtkmm/flowbox.h>
 #include <gtkmm/label.h>
 #include "ui_util.hpp"
 #include <gtkmm/spinbutton.h>
 
+#include <gdkmm/pixbuf.h>
+
+#include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -23,6 +29,7 @@ namespace lcos {
 class DesktopPage : public SettingsPage {
  public:
   DesktopPage(XfconfStore& store, XrandrBackend& randr);
+  ~DesktopPage() override;
 
   Glib::ustring title() const override { return "Desktop"; }
   Glib::ustring summary() const override {
@@ -34,9 +41,20 @@ class DesktopPage : public SettingsPage {
   std::string screenshot_suffix(int index) const override;
 
  private:
+  struct WallpaperThumbs;
   void reload_monitors();
   void reload_fields();
   void scan_folder();
+  void sync_cycle();
+  void sync_monitor_row(int count);
+  void watch_monitors();
+  void paint_preview(const Cairo::RefPtr<Cairo::Context>& context);
+  void queue_image(const std::string& path, int width, int height, bool preview);
+  void apply_decoded();
+  static void thumb_loop(const std::shared_ptr<WallpaperThumbs>& box);
+  void add_picture();
+  void mark_selection();
+  static std::string picture_caption(const std::string& path);
   void rebuild_folders();
   void choose_other_folder();
   void choose_image(const std::string& path);
@@ -54,12 +72,28 @@ class DesktopPage : public SettingsPage {
   XfconfStore& store_;
   XrandrBackend& randr_;
   int freeze_ = 0;
+  bool alive_ = true;
+  bool monitors_watched_ = false;
+  std::shared_ptr<WallpaperThumbs> thumbs_;
+  std::uint64_t thumb_generation_ = 1;
+  int thumb_w_ = 124;
+  int thumb_h_ = 70;
+  int preview_orig_w_ = 0;
+  int preview_orig_h_ = 0;
+  std::string preview_path_;
+  Glib::RefPtr<Gdk::Pixbuf> preview_pixbuf_;
+  std::vector<Gtk::Image*> thumb_images_;
+  sigc::connection monitor_added_;
+  sigc::connection monitor_removed_;
+  sigc::connection monitors_changed_;
   SectionNotebook notebook_;
   std::vector<std::string> image_paths_;
 
+  Gtk::DrawingArea preview_;
+  Gtk::Button add_picture_;
   Gtk::ComboBoxText monitor_;
+  Gtk::Label* monitor_caption_ = nullptr;
   Gtk::SpinButton workspace_;
-  Gtk::Label* workspace_caption_ = nullptr;
   Gtk::CheckButton all_workspaces_;
   Gtk::ComboBoxText folder_combo_;
   std::string folder_path_;

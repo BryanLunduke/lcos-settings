@@ -2,10 +2,15 @@
 
 #include "pages/sound_page.hpp"
 
+#include "logic/atomic_file.hpp"
 #include "logic/themes.hpp"
 #include "ui_util.hpp"
 
+#include <glib.h>
+#include <unistd.h>
+
 #include <algorithm>
+#include <fstream>
 
 #include <gtkmm/label.h>
 #include <gtkmm/scrolledwindow.h>
@@ -55,13 +60,24 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   in_form.add("Volume", input_volume_);
   in_form.add_control(input_mute_);
   in->pack_start(in_form.grid(), Gtk::PACK_SHRINK);
+  input_note_ = make_note("PulseAudio is not available.");
+  input_note_->set_no_show_all(true);
+  input_note_->hide();
+  in->pack_start(*input_note_, Gtk::PACK_SHRINK);
+  input_.set_sensitive(false);
+  input_port_.set_sensitive(false);
+  input_volume_.set_sensitive(false);
+  input_mute_.set_sensitive(false);
   page->pack_start(*make_frame("Input", *in), Gtk::PACK_SHRINK);
 
   auto* card = make_vbox(8);
   FormGrid card_form;
   profile_label_ = card_form.add("Profile", profile_);
   card->pack_start(card_form.grid(), Gtk::PACK_SHRINK);
-  page->pack_start(*make_frame("Sound card", *card), Gtk::PACK_SHRINK);
+  card_group_ = make_frame("Sound card", *card);
+  card_group_->set_no_show_all(true);
+  card_group_->hide();
+  page->pack_start(*card_group_, Gtk::PACK_SHRINK);
 
   apps_ = make_vbox(6);
   page->pack_start(*make_frame("Applications", *apps_), Gtk::PACK_SHRINK);
@@ -272,6 +288,7 @@ void SoundPage::touch(SoundField field, std::uint32_t stream) {
     sound_dirty_ = true;
     pending_changed.emit();
   }
+  save_sound_journal();
 }
 
 std::string SoundPage::combo_key(const std::vector<std::pair<std::string, std::string>>& rows) {
@@ -325,6 +342,7 @@ void SoundPage::take_snapshot() {
   if (owner != nullptr) {
     if (const PaCard* card = card_for(owner->card)) {
       profile_card_ = card->index;
+      profile_card_name_ = card->name;
       have_profile_card_ = true;
       profile_snapshot_ = card->active_profile;
     }
@@ -400,6 +418,7 @@ bool SoundPage::commit_pending() {
   // made by volume keys after this Apply.
   edit_ = {};
   have_snapshot_ = false;
+  clear_sound_journal();
   if (sound_dirty_) {
     sound_dirty_ = false;
     pending_changed.emit();
@@ -492,6 +511,7 @@ void SoundPage::revert_page() {
   edit_ = {};
   have_snapshot_ = false;
   sound_dirty_ = false;
+  clear_sound_journal();
   pending_changed.emit();
 }
 
@@ -524,7 +544,149 @@ const PaCard* SoundPage::card_for(std::uint32_t index) const {
   return nullptr;
 }
 
+SoundPage::~SoundPage() {
+  if (sound_dirty_) {
+    revert_page();
+  }
+}
+
+std::string SoundPage::sound_journal_path() {
+  const char* dir = g_get_user_config_dir();
+  const std::string root = dir != nullptr && dir[0] != '\0' ? dir : "/tmp";
+  return root + "/lcos-settings/sound.rollback";
+}
+
+void SoundPage::clear_sound_journal() { ::unlink(sound_journal_path().c_str()); }
+
+void SoundPage::save_sound_journal() const {
+  if (!have_snapshot_ || !edit_.any()) {
+    clear_sound_journal();
+    return;
+  }
+  SoundRollback rollback;
+  rollback.output_device = edit_.output_device;
+  rollback.output_name = output_snapshot_.name;
+  rollback.output_volume = edit_.output_volume;
+  rollback.output_volumes = output_snapshot_.volumes;
+  rollback.output_mute_set = edit_.output_mute;
+  rollback.output_mute = output_snapshot_.mute;
+  rollback.output_port = edit_.output_port;
+  rollback.output_port_name = output_snapshot_.port;
+  rollback.input_device = edit_.input_device;
+  rollback.input_name = input_snapshot_.name;
+  rollback.input_volume = edit_.input_volume;
+  rollback.input_volumes = input_snapshot_.volumes;
+  rollback.input_mute_set = edit_.input_mute;
+  rollback.input_mute = input_snapshot_.mute;
+  rollback.input_port = edit_.input_port;
+  rollback.input_port_name = input_snapshot_.port;
+  rollback.profile = edit_.profile && have_profile_card_;
+  rollback.profile_card = profile_card_name_;
+  rollback.profile_name = profile_snapshot_;
+  for (const auto& snap : stream_snapshot_) {
+    if (edit_.streams.count(snap.index) == 0) {
+      continue;
+    }
+    SoundRollbackStream stream;
+    stream.application = snap.application;
+    stream.media = snap.media_name;
+    stream.mute = snap.mute;
+    stream.volumes = snap.volumes;
+    rollback.streams.push_back(std::move(stream));
+  }
+  const std::string path = sound_journal_path();
+  const auto slash = path.find_last_of('/');
+  if (slash != std::string::npos) {
+    g_mkdir_with_parents(path.substr(0, slash).c_str(), 0700);
+  }
+  ReplaceRequest request;
+  request.mode_if_new = 0600;
+  std::string error;
+  replace_regular_file(path, format_sound_rollback(rollback), request, &error);
+}
+
+void SoundPage::restore_sound_journal() {
+  if (journal_checked_ || !pulse_.state().ready) {
+    return;
+  }
+  journal_checked_ = true;
+  const std::string path = sound_journal_path();
+  std::ifstream in(path);
+  if (!in) {
+    return;
+  }
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  in.close();
+  SoundRollback rollback;
+  std::string error;
+  if (!parse_sound_rollback(text, rollback, &error) || !rollback.any()) {
+    clear_sound_journal();
+    return;
+  }
+  if (rollback.output_device && !rollback.output_name.empty()) {
+    pulse_.set_default_sink(rollback.output_name);
+  }
+  if (rollback.input_device && !rollback.input_name.empty()) {
+    pulse_.set_default_source(rollback.input_name);
+  }
+  for (const auto& device : pulse_.state().sinks) {
+    if (device.name != rollback.output_name) {
+      continue;
+    }
+    if (rollback.output_volume && !rollback.output_volumes.empty()) {
+      pulse_.set_sink_volumes(device.index, rollback.output_volumes);
+    }
+    if (rollback.output_mute_set) {
+      pulse_.set_sink_mute(device.index, rollback.output_mute);
+    }
+    if (rollback.output_port && !rollback.output_port_name.empty()) {
+      pulse_.set_sink_port(device.index, rollback.output_port_name);
+    }
+    break;
+  }
+  for (const auto& device : pulse_.state().sources) {
+    if (device.name != rollback.input_name) {
+      continue;
+    }
+    if (rollback.input_volume && !rollback.input_volumes.empty()) {
+      pulse_.set_source_volumes(device.index, rollback.input_volumes);
+    }
+    if (rollback.input_mute_set) {
+      pulse_.set_source_mute(device.index, rollback.input_mute);
+    }
+    if (rollback.input_port && !rollback.input_port_name.empty()) {
+      pulse_.set_source_port(device.index, rollback.input_port_name);
+    }
+    break;
+  }
+  if (rollback.profile && !rollback.profile_name.empty()) {
+    for (const auto& card : pulse_.state().cards) {
+      if (card.name == rollback.profile_card) {
+        pulse_.set_card_profile(card.index, rollback.profile_name);
+        break;
+      }
+    }
+  }
+  std::vector<bool> used(pulse_.state().inputs.size(), false);
+  for (const auto& stream : rollback.streams) {
+    for (std::size_t i = 0; i < pulse_.state().inputs.size(); ++i) {
+      const auto& input = pulse_.state().inputs[i];
+      if (used[i] || input.application != stream.application || input.name != stream.media) {
+        continue;
+      }
+      used[i] = true;
+      if (!stream.volumes.empty()) {
+        pulse_.set_input_volumes(input.index, stream.volumes);
+      }
+      pulse_.set_input_mute(input.index, stream.mute);
+      break;
+    }
+  }
+  clear_sound_journal();
+}
+
 void SoundPage::refresh() {
+  restore_sound_journal();
   Freeze freeze(freeze_);
   const PulseState& state = pulse_.state();
   if (!state.ready) {
@@ -674,6 +836,26 @@ void SoundPage::refresh() {
   profile_.set_visible(show_profile);
   if (profile_label_ != nullptr) {
     profile_label_->set_visible(show_profile);
+  }
+  if (card_group_ != nullptr) {
+    card_group_->set_visible(show_profile);
+  }
+  const bool pulse_up = state.ready && state.error.empty();
+  const bool have_input = pulse_up && !state.sources.empty();
+  input_.set_sensitive(have_input);
+  input_volume_.set_sensitive(have_input);
+  input_mute_.set_sensitive(have_input);
+  if (!have_input) {
+    input_port_.set_sensitive(false);
+  }
+  if (input_note_ != nullptr) {
+    if (have_input) {
+      input_note_->hide();
+    } else {
+      input_note_->set_text(pulse_up ? "No input device is connected."
+                                     : "PulseAudio is not available.");
+      input_note_->show();
+    }
   }
   update_apps();
 }

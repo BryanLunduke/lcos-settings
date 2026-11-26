@@ -31,6 +31,9 @@ class MainWindow : public Gtk::ApplicationWindow {
   void dump_pages(const std::string& directory);
   void show_page(const std::string& id);
   void mark_page(const std::string& id);
+  // Puts live, not-yet-kept settings back. Used for SIGTERM, SIGHUP, and
+  // session end, when there is no chance to ask.
+  void rollback_live_changes();
 
  private:
   enum class PrivKind { Off, Accounts, Locale, System };
@@ -66,6 +69,7 @@ class MainWindow : public Gtk::ApplicationWindow {
   enum class CloseChoice { Stay, Discard, Apply };
   CloseChoice confirm_close();
   bool on_key_press_event(GdkEventKey* event) override;
+  bool on_nav_key(GdkEventKey* event);
   bool page_marked(const NavItem& item) const;
   bool page_privileged(const NavItem& item) const;
   int nav_index(const std::string& id) const;

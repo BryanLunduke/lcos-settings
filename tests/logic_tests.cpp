@@ -2,6 +2,9 @@
 
 #include "logic/atomic_file.hpp"
 #include "logic/backdrop.hpp"
+#include "logic/font_spec.hpp"
+#include "logic/rollback_journal.hpp"
+#include "logic/scroll_guard.hpp"
 #include "logic/button_layout.hpp"
 #include "logic/confirm.hpp"
 #include "logic/display_layout.hpp"
@@ -1015,6 +1018,91 @@ void test_qa_helpers() {
   EXPECT(taken.size() == 2);
 }
 
+void test_review_round() {
+  const auto fractional = lcos::parse_font_spec("Sans 10.5");
+  EXPECT(fractional.parsed);
+  EXPECT(fractional.family == "Sans");
+  EXPECT(std::fabs(fractional.size - 10.5) < 0.001);
+  EXPECT(lcos::format_font_spec(fractional.family, fractional.size) == "Sans 10.5");
+  const auto bold = lcos::parse_font_spec("Sans Bold 9");
+  EXPECT(bold.family == "Sans Bold");
+  EXPECT(std::fabs(bold.size - 9) < 0.001);
+  EXPECT(lcos::format_font_spec("Sans Bold", 9) == "Sans Bold 9");
+  const auto comma = lcos::parse_font_spec("Nimbus Sans, 11.25");
+  EXPECT(comma.family == "Nimbus Sans");
+  EXPECT(std::fabs(comma.size - 11.25) < 0.001);
+  const auto whole = lcos::parse_font_spec("Monospace 10");
+  EXPECT(lcos::format_font_spec(whole.family, whole.size) == "Monospace 10");
+  EXPECT(!lcos::parse_font_spec("Sans").parsed);
+
+  EXPECT(lcos::scroll_event_should_block_change(false));
+  EXPECT(!lcos::scroll_event_should_block_change(true));
+  EXPECT(!lcos::scroll_guard_connects_after_default());
+
+  lcos::JournalEntry entry;
+  entry.channel = "xsettings";
+  entry.property = "/Gtk/FontName";
+  entry.page = "appearance";
+  entry.type = lcos::JournalType::String;
+  entry.s = "Sans 10.5";
+  lcos::JournalEntry missing;
+  missing.channel = "xfce4-desktop";
+  missing.property = "/backdrop/screen0/monitorVGA/workspace0/last-image";
+  missing.page = "desktop";
+  missing.type = lcos::JournalType::Absent;
+  lcos::JournalEntry color;
+  color.channel = "xfce4-desktop";
+  color.property = "/backdrop/rgba1";
+  color.type = lcos::JournalType::Doubles;
+  color.doubles = {0.1, 0.2, 0.25, 1};
+  lcos::JournalEntry names;
+  names.channel = "xfce4-notifyd";
+  names.property = "/applications/muted_applications";
+  names.type = lcos::JournalType::Strings;
+  names.strings = {"A,B", "line\ntwo"};
+  const std::string journal = lcos::format_rollback_journal({entry, missing, color, names});
+  std::vector<lcos::JournalEntry> parsed;
+  std::string error;
+  EXPECT(lcos::parse_rollback_journal(journal, parsed, &error));
+  EXPECT(error.empty());
+  EXPECT(parsed.size() == 4);
+  EXPECT(parsed[0].s == "Sans 10.5");
+  EXPECT(parsed[0].page == "appearance");
+  EXPECT(parsed[1].type == lcos::JournalType::Absent);
+  EXPECT(parsed[2].doubles.size() == 4);
+  EXPECT(std::fabs(parsed[2].doubles[2] - 0.25) < 1e-9);
+  EXPECT(parsed[3].strings.size() == 2);
+  EXPECT(parsed[3].strings[0] == "A,B");
+  EXPECT(parsed[3].strings[1] == "line\ntwo");
+  EXPECT(!lcos::parse_rollback_journal("not a journal\n", parsed, &error));
+  EXPECT(!lcos::parse_rollback_journal("lcos-rollback 1\n2\nonly-one\n", parsed, &error));
+
+  lcos::SoundRollback sound;
+  sound.output_volume = true;
+  sound.output_name = "alsa_output.pci";
+  sound.output_volumes = {40000, 41000};
+  sound.input_mute_set = true;
+  sound.input_mute = true;
+  sound.profile = true;
+  sound.profile_card = "alsa_card.pci";
+  sound.profile_name = "output:analog-stereo+input:analog-stereo";
+  lcos::SoundRollbackStream stream;
+  stream.application = "Mousepad";
+  stream.media = "Playback";
+  stream.volumes = {32000};
+  sound.streams.push_back(stream);
+  lcos::SoundRollback sound_back;
+  EXPECT(lcos::parse_sound_rollback(lcos::format_sound_rollback(sound), sound_back, &error));
+  EXPECT(sound_back.output_volume);
+  EXPECT(sound_back.output_volumes.size() == 2);
+  EXPECT(sound_back.output_volumes[1] == 41000u);
+  EXPECT(sound_back.input_mute_set && sound_back.input_mute);
+  EXPECT(sound_back.profile_card == "alsa_card.pci");
+  EXPECT(sound_back.streams.size() == 1);
+  EXPECT(sound_back.streams[0].application == "Mousepad");
+  EXPECT(sound_back.any());
+}
+
 int main() {
   test_backdrop_power_mime();
   test_names();
@@ -1027,6 +1115,7 @@ int main() {
   test_themes_and_xkb();
   test_redesign_helpers();
   test_qa_helpers();
+  test_review_round();
   if (failures != 0) {
     std::cerr << failures << " logic check(s) failed\n";
     return 1;

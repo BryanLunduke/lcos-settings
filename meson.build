@@ -43,6 +43,8 @@ logic_lib = static_library(
     'src/logic/locales.cpp',
     'src/logic/atomic_file.cpp',
     'src/logic/helper_status.cpp',
+    'src/logic/font_spec.cpp',
+    'src/logic/rollback_journal.cpp',
   ),
   include_directories: lcos_inc,
   dependencies: glib_dep,

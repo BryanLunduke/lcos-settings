@@ -19,6 +19,17 @@ void prepare_opacity(Gtk::Scale& scale) {
   scale.set_digits(0);
   scale.set_value_pos(Gtk::POS_RIGHT);
   scale.set_hexpand(true);
+  scale.get_style_context()->add_class("lcos-scale");
+}
+
+void widen_caption(Gtk::Label* caption) {
+  if (caption == nullptr) {
+    return;
+  }
+  caption->set_line_wrap(false);
+  caption->set_width_chars(36);
+  caption->set_max_width_chars(40);
+  caption->set_size_request(248, -1);
 }
 
 }  // namespace
@@ -43,6 +54,7 @@ WindowTweaksPage::WindowTweaksPage(XfconfStore& store)
   placement_ratio_.set_increments(1, 10);
   placement_ratio_.set_digits(0);
   placement_ratio_.set_value_pos(Gtk::POS_RIGHT);
+  placement_ratio_.get_style_context()->add_class("lcos-scale");
   for (Gtk::Scale* scale :
        {&frame_opacity_, &inactive_opacity_, &move_opacity_, &resize_opacity_, &popup_opacity_}) {
     prepare_opacity(*scale);
@@ -115,7 +127,7 @@ WindowTweaksPage::WindowTweaksPage(XfconfStore& store)
   auto* placement = make_vbox(8);
   placement->set_border_width(0);
   FormGrid ratio(260);
-  ratio.add("Minimum size for smart placement", placement_ratio_);
+  widen_caption(ratio.add("Minimum size for smart placement", placement_ratio_));
   placement->pack_start(ratio.grid(), Gtk::PACK_SHRINK);
   auto* where = make_vbox(4);
   where->pack_start(*make_label("By default, place windows"), Gtk::PACK_SHRINK);
@@ -133,11 +145,11 @@ WindowTweaksPage::WindowTweaksPage(XfconfStore& store)
     compositor_options_->pack_start(*check, Gtk::PACK_SHRINK);
   }
   FormGrid opacity(240);
-  opacity.add("Opacity of window decorations", frame_opacity_);
-  opacity.add("Opacity of inactive windows", inactive_opacity_);
-  opacity.add("Opacity of windows during move", move_opacity_);
-  opacity.add("Opacity of windows during resize", resize_opacity_);
-  opacity.add("Opacity of popup windows", popup_opacity_);
+  widen_caption(opacity.add("Opacity of window decorations", frame_opacity_));
+  widen_caption(opacity.add("Opacity of inactive windows", inactive_opacity_));
+  widen_caption(opacity.add("Opacity of windows during move", move_opacity_));
+  widen_caption(opacity.add("Opacity of windows during resize", resize_opacity_));
+  widen_caption(opacity.add("Opacity of popup windows", popup_opacity_));
   compositor_options_->pack_start(opacity.grid(), Gtk::PACK_SHRINK);
   compositor->pack_start(*compositor_options_, Gtk::PACK_SHRINK);
   notebook_.append_page(*make_page_scroll(*compositor), "Compositor");

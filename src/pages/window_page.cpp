@@ -260,6 +260,7 @@ WindowPage::WindowPage(XfconfStore& store, Gtk::Window& parent)
       return;
     }
     store_.set_bool(kChannel, "/general/raise_on_focus", raise_on_focus_.get_active());
+    raise_delay_.set_sensitive(raise_on_focus_.get_active());
   });
   raise_delay_.signal_value_changed().connect([this] {
     if (freeze_ > 0) {
@@ -334,6 +335,7 @@ void WindowPage::load() {
   focus_new_.set_active(store_.get_bool(kChannel, "/general/focus_new", true));
   raise_on_focus_.set_active(store_.get_bool(kChannel, "/general/raise_on_focus", false));
   raise_delay_.set_value(store_.get_int(kChannel, "/general/raise_delay", 250));
+  raise_delay_.set_sensitive(raise_on_focus_.get_active());
   raise_on_click_.set_active(store_.get_bool(kChannel, "/general/raise_on_click", true));
   snap_border_.set_active(store_.get_bool(kChannel, "/general/snap_to_border", true));
   snap_windows_.set_active(store_.get_bool(kChannel, "/general/snap_to_windows", false));

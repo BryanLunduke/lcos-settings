@@ -76,7 +76,7 @@ class AppearancePage : public SettingsPage {
   std::string light_xfwm_;
   Gtk::Dialog* fonts_dialog_ = nullptr;
   sigc::connection cards_idle_;
-  int shown_font_size_ = 10;
+  double shown_font_size_ = 10;
 };
 
 }  // namespace lcos
