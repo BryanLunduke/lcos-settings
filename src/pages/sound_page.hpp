@@ -4,6 +4,7 @@
 
 #include "backends/pulse_client.hpp"
 #include "backends/xfconf_store.hpp"
+#include "logic/rollback_journal.hpp"
 #include "logic/sound_edit.hpp"
 #include "pages/settings_page.hpp"
 
@@ -23,6 +24,7 @@ namespace lcos {
 class SoundPage : public SettingsPage {
  public:
   SoundPage(XfconfStore& store, PulseClient& pulse);
+  ~SoundPage() override;
   Glib::ustring title() const override { return "Sound"; }
   Glib::ustring summary() const override {
     return "Output, input, and application volume.";
@@ -77,6 +79,10 @@ class SoundPage : public SettingsPage {
   void refresh();
   void update_apps();
   void take_snapshot();
+  void save_sound_journal() const;
+  void restore_sound_journal();
+  static void clear_sound_journal();
+  static std::string sound_journal_path();
   void touch(SoundField field, std::uint32_t stream = 0);
   static std::string combo_key(const std::vector<std::pair<std::string, std::string>>& rows);
   const PaDevice* selected_sink() const;
@@ -99,8 +105,10 @@ class SoundPage : public SettingsPage {
   DeviceSnap output_snapshot_;
   DeviceSnap input_snapshot_;
   std::string profile_snapshot_;
+  std::string profile_card_name_;
   std::uint32_t profile_card_ = 0;
   bool have_profile_card_ = false;
+  bool journal_checked_ = false;
   std::vector<StreamSnap> stream_snapshot_;
   std::map<std::uint32_t, AppRow> app_rows_;
 
@@ -117,6 +125,8 @@ class SoundPage : public SettingsPage {
   Gtk::CheckButton input_mute_;
   Gtk::ComboBoxText profile_;
   Gtk::Box* apps_ = nullptr;
+  Gtk::Widget* card_group_ = nullptr;
+  Gtk::Label* input_note_ = nullptr;
   Gtk::Label* status_ = nullptr;
   Gtk::CheckButton event_sounds_;
   Gtk::CheckButton input_feedback_;

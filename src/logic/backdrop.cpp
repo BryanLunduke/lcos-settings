@@ -20,6 +20,20 @@ std::string backdrop_property(int screen, const std::string& monitor, int worksp
   return out;
 }
 
+double preview_monitor_aspect(int width, int height) {
+  constexpr double kFourThree = 4.0 / 3.0;
+  constexpr double kSixteenNine = 16.0 / 9.0;
+  constexpr double kSixteenTen = 16.0 / 10.0;
+  if (width <= 0 || height <= 0) {
+    return kSixteenTen;
+  }
+  const double aspect = static_cast<double>(width) / static_cast<double>(height);
+  if (aspect + 1e-9 < kFourThree || aspect > kSixteenNine + 1e-9) {
+    return kSixteenTen;
+  }
+  return aspect;
+}
+
 bool is_backdrop_image(const std::string& filename) {
   const auto dot = filename.rfind('.');
   if (dot == std::string::npos || dot + 1 >= filename.size()) {

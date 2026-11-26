@@ -2,9 +2,12 @@
 
 #include "pages/appearance_page.hpp"
 
+#include "logic/font_spec.hpp"
 #include "logic/helper_status.hpp"
 #include "logic/themes.hpp"
 #include "ui_util.hpp"
+
+#include <cmath>
 
 #include <pango/pangocairo.h>
 
@@ -36,25 +39,6 @@ bool name_is_contrast(const std::string& text) {
     c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   }
   return lower.find("contrast") != std::string::npos;
-}
-
-void split_font(const std::string& spec, std::string& family, int& size) {
-  size = 10;
-  family = spec;
-  const auto space = spec.rfind(' ');
-  if (space == std::string::npos || space == 0) {
-    return;
-  }
-  try {
-    size = std::stoi(spec.substr(space + 1));
-    family = spec.substr(0, space);
-  } catch (const std::exception&) {
-    family = spec;
-    size = 10;
-  }
-  if (size < 6 || size > 96) {
-    size = 10;
-  }
 }
 
 class StyleSwatch : public Gtk::DrawingArea {
@@ -513,8 +497,7 @@ void AppearancePage::load() {
   header_buttons_.set_active(store_.get_bool("xsettings", "/Gtk/DialogsUseHeader", false));
   const int scale = store_.get_int("xsettings", "/Gdk/WindowScalingFactor", 1);
   window_scale_.set_active_id(scale >= 2 ? "2" : "1");
-  std::string family;
-  split_font(font_.get_font_name(), family, shown_font_size_);
+  shown_font_size_ = parse_font_spec(font_.get_font_name()).size;
   if (gtk != "LCOS Clearlooks Dark" && !xfwm.empty() && xfwm != "LCOS Clearlooks Dark") {
     light_xfwm_ = xfwm;
   }
@@ -618,18 +601,14 @@ void AppearancePage::schedule_cards() {
 }
 
 void AppearancePage::set_default_family(const std::string& family) {
-  font_.set_font_name(family + " " + std::to_string(shown_font_size_));
+  font_.set_font_name(format_font_spec(family, shown_font_size_));
 }
 
 void AppearancePage::set_default_size(int size) {
   shown_font_size_ = size;
-  std::string family;
-  int ignored = 10;
-  split_font(font_.get_font_name(), family, ignored);
-  if (family.empty()) {
-    family = "Sans";
-  }
-  font_.set_font_name(family + " " + std::to_string(size));
+  const FontSpec spec = parse_font_spec(font_.get_font_name());
+  const std::string family = spec.family.empty() ? "Sans" : spec.family;
+  font_.set_font_name(format_font_spec(family, size));
 }
 
 void AppearancePage::show_font_dialog() {
@@ -720,10 +699,9 @@ void AppearancePage::rebuild_cards() {
     icon_cards_.insert(*card, -1);
   }
 
-  std::string family;
-  int size = 10;
-  split_font(font_.get_font_name(), family, size);
-  shown_font_size_ = size;
+  const FontSpec current = parse_font_spec(font_.get_font_name());
+  const std::string family = current.family;
+  shown_font_size_ = current.size;
   std::vector<std::string> families;
   auto add_family = [&](const std::string& name) {
     if (name.empty()) {
@@ -794,7 +772,7 @@ void AppearancePage::rebuild_cards() {
     if (font_size_buttons_[i] == nullptr) {
       continue;
     }
-    if (sizes[i] == shown_font_size_) {
+    if (std::fabs(static_cast<double>(sizes[i]) - shown_font_size_) < 0.05) {
       font_size_buttons_[i]->get_style_context()->add_class("lcos-on");
     } else {
       font_size_buttons_[i]->get_style_context()->remove_class("lcos-on");

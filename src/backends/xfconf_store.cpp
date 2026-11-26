@@ -2,10 +2,16 @@
 
 #include "xfconf_store.hpp"
 
+#include "logic/atomic_file.hpp"
+
 #include <xfconf/xfconf.h>
+
+#include <glib.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 
 namespace lcos {
 namespace {
@@ -138,6 +144,7 @@ bool XfconfStore::init(std::string* error) {
     return false;
   }
   ready_ = true;
+  restore_journal();
   return true;
 }
 
@@ -282,6 +289,7 @@ void XfconfStore::remember(const std::string& channel, const std::string& prop) 
   saved.page = edit_page_;
   last_edit_page_ = edit_page_;
   originals_.emplace(key, std::move(saved));
+  sync_journal();
   changed.emit();
 }
 
@@ -497,6 +505,7 @@ void XfconfStore::revert_channels(const std::vector<std::string>& channels) {
       return;
     }
     originals_.clear();
+    sync_journal();
     return;
   }
   const bool previous = tracking_;
@@ -525,6 +534,7 @@ void XfconfStore::revert_channels(const std::vector<std::string>& channels) {
     write(saved.channel, saved.prop, saved.value, false);
   }
   tracking_ = previous;
+  sync_journal();
   changed.emit();
 }
 
@@ -533,6 +543,7 @@ void XfconfStore::drop_originals() {
     return;
   }
   originals_.clear();
+  sync_journal();
   changed.emit();
 }
 
@@ -547,6 +558,7 @@ void XfconfStore::drop_channel(const std::string& channel) {
     }
   }
   if (removed) {
+    sync_journal();
     changed.emit();
   }
 }
@@ -580,6 +592,7 @@ void XfconfStore::revert_page(const std::string& page_id) {
   }
   tracking_ = previous;
   last_edit_page_ = page_id;
+  sync_journal();
   changed.emit();
 }
 
@@ -598,6 +611,7 @@ void XfconfStore::drop_page(const std::string& page_id) {
   }
   if (removed) {
     last_edit_page_ = page_id;
+    sync_journal();
     changed.emit();
   }
 }
@@ -609,6 +623,7 @@ void XfconfStore::commit_property(const std::string& channel, const std::string&
   }
   last_edit_page_ = found->second.page;
   originals_.erase(found);
+  sync_journal();
   changed.emit();
 }
 
@@ -635,6 +650,174 @@ std::vector<std::string> XfconfStore::dirty_pages() const {
     }
   }
   return pages;
+}
+
+void XfconfStore::set_journal_path(std::string path) { journal_path_ = std::move(path); }
+
+std::string XfconfStore::journal_path() const {
+  if (!journal_path_.empty()) {
+    return journal_path_;
+  }
+  const char* dir = g_get_user_config_dir();
+  const std::string root = dir != nullptr && dir[0] != '\0' ? dir : "/tmp";
+  return root + "/lcos-settings/rollback.journal";
+}
+
+JournalEntry XfconfStore::entry_from(const Saved& saved) {
+  JournalEntry entry;
+  entry.channel = saved.channel;
+  entry.property = saved.prop;
+  entry.page = saved.page;
+  switch (saved.value.type) {
+    case PropType::Absent:
+      entry.type = JournalType::Absent;
+      break;
+    case PropType::Bool:
+      entry.type = JournalType::Bool;
+      entry.b = saved.value.b;
+      break;
+    case PropType::Int:
+      entry.type = JournalType::Int;
+      entry.i = saved.value.i;
+      break;
+    case PropType::Uint:
+      entry.type = JournalType::Uint;
+      entry.u = saved.value.u;
+      break;
+    case PropType::Double:
+      entry.type = JournalType::Double;
+      entry.d = saved.value.d;
+      break;
+    case PropType::String:
+      entry.type = JournalType::String;
+      entry.s = saved.value.s;
+      break;
+    case PropType::Ints:
+      entry.type = JournalType::Ints;
+      entry.ints = saved.value.ints;
+      break;
+    case PropType::Doubles:
+      entry.type = JournalType::Doubles;
+      entry.doubles = saved.value.doubles;
+      break;
+    case PropType::Strings:
+      entry.type = JournalType::Strings;
+      entry.strings = saved.value.strings;
+      break;
+  }
+  return entry;
+}
+
+XfconfStore::Saved XfconfStore::saved_from(const JournalEntry& entry) {
+  Saved saved;
+  saved.channel = entry.channel;
+  saved.prop = entry.property;
+  saved.page = entry.page;
+  switch (entry.type) {
+    case JournalType::Absent:
+      saved.value.type = PropType::Absent;
+      break;
+    case JournalType::Bool:
+      saved.value.type = PropType::Bool;
+      saved.value.b = entry.b;
+      break;
+    case JournalType::Int:
+      saved.value.type = PropType::Int;
+      saved.value.i = entry.i;
+      break;
+    case JournalType::Uint:
+      saved.value.type = PropType::Uint;
+      saved.value.u = entry.u;
+      break;
+    case JournalType::Double:
+      saved.value.type = PropType::Double;
+      saved.value.d = entry.d;
+      break;
+    case JournalType::String:
+      saved.value.type = PropType::String;
+      saved.value.s = entry.s;
+      break;
+    case JournalType::Ints:
+      saved.value.type = PropType::Ints;
+      saved.value.ints = entry.ints;
+      break;
+    case JournalType::Doubles:
+      saved.value.type = PropType::Doubles;
+      saved.value.doubles = entry.doubles;
+      break;
+    case JournalType::Strings:
+      saved.value.type = PropType::Strings;
+      saved.value.strings = entry.strings;
+      break;
+  }
+  return saved;
+}
+
+void XfconfStore::sync_journal() {
+  if (journal_quiet_) {
+    return;
+  }
+  const std::string path = journal_path();
+  if (originals_.empty()) {
+    ::unlink(path.c_str());
+    return;
+  }
+  std::vector<JournalEntry> entries;
+  entries.reserve(originals_.size());
+  for (const auto& item : originals_) {
+    entries.push_back(entry_from(item.second));
+  }
+  const auto slash = path.find_last_of('/');
+  if (slash != std::string::npos) {
+    g_mkdir_with_parents(path.substr(0, slash).c_str(), 0700);
+  }
+  ReplaceRequest request;
+  request.mode_if_new = 0600;
+  std::string error;
+  replace_regular_file(path, format_rollback_journal(entries), request, &error);
+}
+
+bool XfconfStore::restore_journal() {
+  if (!ready_) {
+    return false;
+  }
+  const std::string path = journal_path();
+  std::ifstream in(path);
+  if (!in) {
+    return false;
+  }
+  const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  if (text.empty()) {
+    ::unlink(path.c_str());
+    return false;
+  }
+  std::vector<JournalEntry> entries;
+  std::string error;
+  if (!parse_rollback_journal(text, entries, &error)) {
+    g_warning("rollback journal: %s", error.c_str());
+    const std::string bad = path + ".bad";
+    ::rename(path.c_str(), bad.c_str());
+    return false;
+  }
+  if (entries.empty()) {
+    ::unlink(path.c_str());
+    return false;
+  }
+  journal_quiet_ = true;
+  originals_.clear();
+  for (const auto& entry : entries) {
+    if (entry.channel.empty() || entry.property.empty()) {
+      continue;
+    }
+    originals_[key_of(entry.channel, entry.property)] = saved_from(entry);
+  }
+  const bool previous = tracking_;
+  tracking_ = false;
+  revert_session();
+  tracking_ = previous;
+  journal_quiet_ = false;
+  ::unlink(path.c_str());
+  return true;
 }
 
 bool XfconfStore::channel_touched(const std::string& channel) const {

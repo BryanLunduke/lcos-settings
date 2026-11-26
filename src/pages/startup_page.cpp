@@ -133,7 +133,6 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   show_suspend_.set_label("Show Suspend");
   show_hibernate_.set_label("Show Hibernate");
   show_switch_user_.set_label("Show Switch user");
-  lock_before_sleep_.set_label("Lock the screen before sleep");
   gnome_.set_label("Launch GNOME services on startup");
   kde_.set_label("Launch KDE services on startup");
   tcp_.set_label("Manage remote applications");
@@ -207,7 +206,6 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   general->pack_start(show_suspend_, Gtk::PACK_SHRINK);
   general->pack_start(show_hibernate_, Gtk::PACK_SHRINK);
   general->pack_start(show_switch_user_, Gtk::PACK_SHRINK);
-  general->pack_start(lock_before_sleep_, Gtk::PACK_SHRINK);
   session_page->pack_start(*make_frame("Logout", *general), Gtk::PACK_SHRINK);
 
   class NameColumns : public Gtk::TreeModel::ColumnRecord {
@@ -272,7 +270,6 @@ StartupPage::StartupPage(XfconfStore& store, PrivSession& session, Gtk::Window& 
   bind(show_suspend_, "/shutdown/ShowSuspend", true);
   bind(show_hibernate_, "/shutdown/ShowHibernate", true);
   bind(show_switch_user_, "/shutdown/ShowSwitchUser", true);
-  bind(lock_before_sleep_, "/shutdown/LockScreen", true);
   bind(gnome_, "/compat/LaunchGNOME", false);
   bind(kde_, "/compat/LaunchKDE", false);
   bind(tcp_, "/security/EnableTcp", false);

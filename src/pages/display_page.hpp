@@ -8,6 +8,7 @@
 #include "pages/settings_page.hpp"
 
 #include <gdk/gdk.h>
+#include <gdkmm/display.h>
 #include <gtkmm/button.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/comboboxtext.h>
@@ -49,6 +50,7 @@ class DisplayPage : public SettingsPage {
   bool on_button_release(GdkEventButton* event);
 
   void load_hardware();
+  void on_monitors_changed();
   static GdkFilterReturn screen_filter(GdkXEvent* xevent, GdkEvent* event, gpointer data);
   void rebuild_output_combo();
   void show_selected();
@@ -87,6 +89,9 @@ class DisplayPage : public SettingsPage {
   bool confirming_ = false;
   bool alive_ = true;
   sigc::connection paint_idle_;
+  sigc::connection monitor_added_;
+  sigc::connection monitor_removed_;
+  sigc::connection monitors_changed_;
   bool screen_watch_ = false;
   bool hardware_changed_ = false;
   GdkWindow* root_window_ = nullptr;

@@ -2,6 +2,8 @@
 #ifndef LCOS_XFCONF_STORE_HPP
 #define LCOS_XFCONF_STORE_HPP
 
+#include "logic/rollback_journal.hpp"
+
 #include <map>
 #include <string>
 #include <utility>
@@ -104,6 +106,13 @@ class XfconfStore {
   // not restore whatever it was at the start of the visit.
   void commit_property(const std::string& channel, const std::string& prop);
   bool session_dirty() const { return !originals_.empty(); }
+  // Live writes are journaled so a kill, SIGTERM, or the next start can put
+  // them back. Tests can point this at a temporary file. An empty path uses
+  // ~/.config/lcos-settings/rollback.journal.
+  void set_journal_path(std::string path);
+  std::string journal_path() const;
+  // Puts a journal left by a killed process back into xfconf.
+  bool restore_journal();
   bool channel_touched(const std::string& channel) const;
   bool page_dirty(const std::string& page_id) const;
   std::vector<std::string> dirty_pages() const;
@@ -122,9 +131,14 @@ class XfconfStore {
   bool write(const std::string& channel, const std::string& prop,
              const PropValue& value, bool track);
   void* channel_of(const std::string& name) const;
+  void sync_journal();
+  static JournalEntry entry_from(const Saved& saved);
+  static Saved saved_from(const JournalEntry& entry);
 
   bool ready_ = false;
   bool tracking_ = true;
+  bool journal_quiet_ = false;
+  std::string journal_path_;
   std::string edit_page_;
   std::string last_edit_page_;
   mutable std::map<std::string, void*> channels_;

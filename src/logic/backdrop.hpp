@@ -13,6 +13,11 @@ std::string backdrop_property(int screen, const std::string& monitor, int worksp
 
 bool is_backdrop_image(const std::string& filename);
 
+// Shape of the wallpaper monitor preview. The real width/height ratio is
+// used when it sits between 4:3 and 16:9, inclusive. Wider, taller, or
+// unknown screens use 16:10 so the drawing stays a normal monitor.
+double preview_monitor_aspect(int width, int height);
+
 }  // namespace lcos
 
 #endif

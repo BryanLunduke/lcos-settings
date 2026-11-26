@@ -426,7 +426,8 @@ void MainWindow::build_sidebar() {
     }
     auto* row = Gtk::manage(new Gtk::ListBoxRow());
     row->get_style_context()->add_class("lcos-nav");
-    row->set_can_focus(false);
+    row->set_can_focus(true);
+    row->set_focus_on_click(true);
     auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 9));
     line->set_margin_top(0);
     line->set_margin_bottom(0);
@@ -465,10 +466,14 @@ void MainWindow::build_sidebar() {
         row->set_tooltip_text(tip);
       }
     });
+    row->signal_key_press_event().connect(
+        [this](GdkEventKey* event) { return on_nav_key(event); }, false);
     sidebar_.append(*row);
     rows_.push_back(row);
   }
   sidebar_.set_can_focus(true);
+  sidebar_.signal_key_press_event().connect(
+      [this](GdkEventKey* event) { return on_nav_key(event); }, false);
   search_empty_ = Gtk::manage(new Gtk::Label("No matching settings"));
   search_empty_->set_halign(Gtk::ALIGN_START);
   search_empty_->set_xalign(0);
@@ -477,35 +482,48 @@ void MainWindow::build_sidebar() {
   search_empty_->get_style_context()->add_class("lcos-faint");
   search_empty_->set_no_show_all(true);
   search_empty_->hide();
-  sidebar_.signal_key_press_event().connect([this](GdkEventKey* event) {
-    int delta = 0;
-    if (event->keyval == GDK_KEY_Up || event->keyval == GDK_KEY_KP_Up) {
-      delta = -1;
-    } else if (event->keyval == GDK_KEY_Down || event->keyval == GDK_KEY_KP_Down) {
-      delta = 1;
-    } else if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter ||
-               event->keyval == GDK_KEY_space) {
-      return true;
-    } else {
-      return false;
-    }
-    if (rows_.empty()) {
-      return true;
-    }
-    int index = current_index_ < 0 ? 0 : current_index_;
-    for (int step = 0; step < static_cast<int>(rows_.size()); ++step) {
-      index = (index + delta + static_cast<int>(rows_.size())) % static_cast<int>(rows_.size());
-      if (index < 0) {
-        continue;
-      }
-      auto* candidate = rows_[static_cast<std::size_t>(index)];
-      if (candidate != nullptr && candidate->get_visible() && candidate->get_selectable()) {
-        sidebar_.select_row(*candidate);
-        break;
-      }
-    }
+}
+
+bool MainWindow::on_nav_key(GdkEventKey* event) {
+  if (event == nullptr) {
+    return false;
+  }
+  int delta = 0;
+  if (event->keyval == GDK_KEY_Up || event->keyval == GDK_KEY_KP_Up) {
+    delta = -1;
+  } else if (event->keyval == GDK_KEY_Down || event->keyval == GDK_KEY_KP_Down) {
+    delta = 1;
+  } else if (event->keyval == GDK_KEY_Home || event->keyval == GDK_KEY_KP_Home) {
+    delta = -static_cast<int>(rows_.size());
+  } else if (event->keyval == GDK_KEY_End || event->keyval == GDK_KEY_KP_End) {
+    delta = static_cast<int>(rows_.size());
+  } else if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter ||
+             event->keyval == GDK_KEY_space) {
     return true;
-  });
+  } else {
+    return false;
+  }
+  if (rows_.empty()) {
+    return true;
+  }
+  int index = current_index_ < 0 ? 0 : current_index_;
+  if (delta <= -static_cast<int>(rows_.size())) {
+    index = 0;
+    delta = 1;
+  } else if (delta >= static_cast<int>(rows_.size())) {
+    index = static_cast<int>(rows_.size()) - 1;
+    delta = -1;
+  }
+  for (int step = 0; step < static_cast<int>(rows_.size()); ++step) {
+    index = (index + delta + static_cast<int>(rows_.size())) % static_cast<int>(rows_.size());
+    auto* candidate = rows_[static_cast<std::size_t>(index)];
+    if (candidate != nullptr && candidate->get_visible() && candidate->get_selectable()) {
+      sidebar_.select_row(*candidate);
+      candidate->grab_focus();
+      break;
+    }
+  }
+  return true;
 }
 
 void MainWindow::load_icons() {
@@ -815,7 +833,8 @@ MainWindow::CloseChoice MainWindow::confirm_close() {
       count == 1 ? "Discard 1 change?" : "Discard " + std::to_string(count) + " changes?";
   Gtk::MessageDialog dialog(*this, title, false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_NONE, true);
   dialog.set_title("LCOS Command Center");
-  dialog.set_secondary_text("Cancel restores changes. OK and Apply keep them.");
+  dialog.set_secondary_text(
+      "Keep editing returns to this window. Discard puts the changes back. Apply and close keeps them.");
   dialog.add_button("Keep editing", Gtk::RESPONSE_CANCEL);
   dialog.add_button("Discard", Gtk::RESPONSE_REJECT);
   dialog.add_button("Apply and close", Gtk::RESPONSE_OK);
@@ -1060,8 +1079,40 @@ void MainWindow::revert_and_close() {
 }
 
 bool MainWindow::on_delete_event(GdkEventAny*) {
+  if (closing_) {
+    return false;
+  }
   close_revert();
   return true;
+}
+
+void MainWindow::rollback_live_changes() {
+  if (closing_) {
+    return;
+  }
+  if (privileged_.busy()) {
+    privileged_.cancel();
+    privileged_.wait_until_idle();
+  }
+  privileged_.revert();
+  const bool displays = store_.channel_touched("displays");
+  DisplayPage* display = nullptr;
+  for (const auto& item : nav_) {
+    if (display == nullptr) {
+      display = dynamic_cast<DisplayPage*>(item.page);
+    }
+    item.page->revert_page();
+  }
+  const bool uncommitted_display = display != nullptr && display->uncommitted_hardware();
+  store_.revert_session();
+  if (displays && !uncommitted_display) {
+    store_.set_string_untracked("displays", "/Schemes/Apply", "Default");
+  }
+  if (display != nullptr) {
+    display->restore_session_hardware();
+  }
+  dirty_ids_.clear();
+  closing_ = true;
 }
 
 void MainWindow::dump_pages(const std::string& directory) {
