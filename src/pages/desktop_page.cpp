@@ -217,8 +217,9 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
   left->set_margin_end(2);
   left_scroll->add(*left);
 
-  preview_.set_hexpand(false);
-  preview_.set_halign(Gtk::ALIGN_START);
+  // The drawing area is the column. The monitor itself is centered in paint.
+  preview_.set_hexpand(true);
+  preview_.set_halign(Gtk::ALIGN_FILL);
   preview_.set_size_request(276, 186);
   preview_.signal_draw().connect([this](const Cairo::RefPtr<Cairo::Context>& context) {
     paint_preview(context);
@@ -229,7 +230,9 @@ DesktopPage::DesktopPage(XfconfStore& store, XrandrBackend& randr)
   image_caption_->set_line_wrap(false);
   image_caption_->set_ellipsize(Pango::ELLIPSIZE_END);
   image_caption_->set_max_width_chars(28);
-  image_caption_->set_xalign(0);
+  image_caption_->set_hexpand(true);
+  image_caption_->set_halign(Gtk::ALIGN_CENTER);
+  image_caption_->set_xalign(0.5);
   image_caption_->get_style_context()->add_class("lcos-dim");
   left->pack_start(*image_caption_, Gtk::PACK_SHRINK);
 
@@ -1107,7 +1110,7 @@ void DesktopPage::paint_preview(const Cairo::RefPtr<Cairo::Context>& cr) {
     screen_h = avail_h;
     screen_w = screen_h * box.aspect;
   }
-  const double screen_x = std::max(12.0, (width - screen_w) / 2.0);
+  const double screen_x = std::max(10.0, (width - screen_w) / 2.0);
   const double screen_y = 12;
   cr->set_source_rgb(0.20, 0.22, 0.25);
   rounded_rect(cr, screen_x - 10, screen_y - 10, screen_w + 20, screen_h + 20, 8);
