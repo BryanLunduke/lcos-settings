@@ -13,16 +13,65 @@
 #include <algorithm>
 #include <fstream>
 
+#include <gtkmm/grid.h>
 #include <gtkmm/label.h>
 #include <gtkmm/scrolledwindow.h>
 
 namespace lcos {
+namespace {
+
+// Name in the shared caption column, slider the same width as Output and
+// Input volume, value on the right. The device combo and Mute share one
+// trailing width so every stream row lines up.
+Gtk::Widget* make_stream_row(const Glib::RefPtr<Gtk::SizeGroup>& tails, const Glib::ustring& name,
+                             Gtk::Scale& scale, Gtk::ComboBoxText* device, Gtk::CheckButton& mute) {
+  configure_scale(scale);
+  guard_scroll_unless_focused(scale);
+  scale.set_valign(Gtk::ALIGN_CENTER);
+  auto* grid = Gtk::manage(new Gtk::Grid());
+  grid->set_column_spacing(12);
+  grid->set_hexpand(true);
+  auto* label = make_label(name);
+  label->set_size_request(kFormLabelWidth, -1);
+  label->set_ellipsize(Pango::ELLIPSIZE_END);
+  label->set_halign(Gtk::ALIGN_START);
+  label->set_valign(Gtk::ALIGN_CENTER);
+  label->set_xalign(0);
+  auto* tail = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+  tail->set_halign(Gtk::ALIGN_END);
+  tail->set_valign(Gtk::ALIGN_CENTER);
+  if (device != nullptr) {
+    device->set_valign(Gtk::ALIGN_CENTER);
+    tail->pack_start(*device, Gtk::PACK_SHRINK);
+  }
+  mute.set_valign(Gtk::ALIGN_CENTER);
+  tail->pack_end(mute, Gtk::PACK_SHRINK);
+  tails->add_widget(*tail);
+  grid->attach(*label, 0, 0, 1, 1);
+  grid->attach(scale, 1, 0, 1, 1);
+  grid->attach(*tail, 2, 0, 1, 1);
+  return grid;
+}
+
+Gtk::Widget* volume_with_tail(const Glib::RefPtr<Gtk::SizeGroup>& tails, Gtk::Scale& scale) {
+  configure_scale(scale);
+  guard_scroll_unless_focused(scale);
+  auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
+  auto* spacer = Gtk::manage(new Gtk::Box());
+  tails->add_widget(*spacer);
+  line->pack_start(scale, Gtk::PACK_EXPAND_WIDGET);
+  line->pack_start(*spacer, Gtk::PACK_SHRINK);
+  return line;
+}
+
+}  // namespace
 
 SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
     : store_(store),
       pulse_(pulse),
       output_volume_(Gtk::ORIENTATION_HORIZONTAL),
       input_volume_(Gtk::ORIENTATION_HORIZONTAL) {
+  stream_tail_ = Gtk::SizeGroup::create(Gtk::SIZE_GROUP_HORIZONTAL);
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
   auto* page = make_vbox(4);
@@ -49,7 +98,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   FormGrid out_form;
   out_form.add("Device", output_);
   output_port_label_ = out_form.add("Port", output_port_);
-  out_form.add("Volume", output_volume_);
+  out_form.add("Volume", *volume_with_tail(stream_tail_, output_volume_));
   out_form.add_control(output_mute_);
   out->pack_start(out_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Output", *out), Gtk::PACK_SHRINK);
@@ -58,13 +107,16 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   FormGrid in_form;
   in_form.add("Device", input_);
   input_port_label_ = in_form.add("Port", input_port_);
-  in_form.add("Volume", input_volume_);
+  in_form.add("Volume", *volume_with_tail(stream_tail_, input_volume_));
   in_form.add_control(input_mute_);
   input_meter_.set_mode(Gtk::LEVEL_BAR_MODE_CONTINUOUS);
   input_meter_.set_min_value(0);
   input_meter_.set_max_value(1);
   input_meter_.set_value(0);
   input_meter_.set_hexpand(true);
+  input_meter_.set_valign(Gtk::ALIGN_CENTER);
+  input_meter_.set_size_request(-1, 16);
+  input_meter_.get_style_context()->add_class("lcos-meter");
   meter_value_ = make_label("0%");
   meter_value_->set_width_chars(4);
   auto* meter_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
@@ -1037,19 +1089,15 @@ void SoundPage::update_apps() {
     auto found = app_rows_.find(input.index);
     if (found == app_rows_.end()) {
       AppRow row;
-      row.row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
-      auto* name = make_label(input.application);
-      name->set_size_request(160, -1);
-      name->set_ellipsize(Pango::ELLIPSIZE_END);
       row.scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
       row.scale->set_range(0, 150);
       row.scale->set_digits(0);
       row.scale->set_value(input.volume_percent);
-      row.scale->set_hexpand(true);
       row.mute = Gtk::manage(new Gtk::CheckButton("Mute"));
       row.mute->set_active(input.mute);
       row.device = Gtk::manage(new Gtk::ComboBoxText());
       cap_combo_width(*row.device);
+      row.row = make_stream_row(stream_tail_, input.application, *row.scale, row.device, *row.mute);
       const std::uint32_t index = input.index;
       row.scale->signal_value_changed().connect([this, index] {
         if (freeze_ > 0) {
@@ -1100,10 +1148,6 @@ void SoundPage::update_apps() {
         refresh();
         return false;
       });
-      row.row->pack_start(*name, Gtk::PACK_SHRINK);
-      row.row->pack_start(*row.scale, Gtk::PACK_EXPAND_WIDGET);
-      row.row->pack_start(*row.device, Gtk::PACK_SHRINK);
-      row.row->pack_start(*row.mute, Gtk::PACK_SHRINK);
       apps_->pack_start(*row.row, Gtk::PACK_SHRINK);
       app_rows_.emplace(index, row);
     } else if (!found->second.dragging) {
@@ -1178,17 +1222,13 @@ void SoundPage::update_captures() {
     auto found = capture_rows_.find(capture.index);
     if (found == capture_rows_.end()) {
       AppRow row;
-      row.row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
-      auto* name = make_label(capture.application);
-      name->set_size_request(160, -1);
-      name->set_ellipsize(Pango::ELLIPSIZE_END);
       row.scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
       row.scale->set_range(0, 150);
       row.scale->set_digits(0);
       row.scale->set_value(capture.volume_percent);
-      row.scale->set_hexpand(true);
       row.mute = Gtk::manage(new Gtk::CheckButton("Mute"));
       row.mute->set_active(capture.mute);
+      row.row = make_stream_row(stream_tail_, capture.application, *row.scale, nullptr, *row.mute);
       const std::uint32_t index = capture.index;
       row.scale->signal_value_changed().connect([this, index] {
         if (freeze_ > 0) {
@@ -1227,9 +1267,6 @@ void SoundPage::update_captures() {
         refresh();
         return false;
       });
-      row.row->pack_start(*name, Gtk::PACK_SHRINK);
-      row.row->pack_start(*row.scale, Gtk::PACK_EXPAND_WIDGET);
-      row.row->pack_start(*row.mute, Gtk::PACK_SHRINK);
       recording_->pack_start(*row.row, Gtk::PACK_SHRINK);
       capture_rows_.emplace(index, row);
     } else if (!found->second.dragging) {
@@ -1296,41 +1333,32 @@ void SoundPage::show_sample() {
     apps_->remove(*child);
   }
   app_rows_.clear();
-  auto* playback = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
-  auto* playback_name = make_label("Music");
-  playback_name->set_size_request(160, -1);
-  auto* playback_scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
-  playback_scale->set_range(0, 150);
-  playback_scale->set_digits(0);
-  playback_scale->set_value(80);
-  playback_scale->set_hexpand(true);
-  auto* playback_device = Gtk::manage(new Gtk::ComboBoxText());
-  playback_device->append("alsa_output.built_in", "Built-in Audio");
-  playback_device->append("alsa_output.headset", "USB Headset");
-  playback_device->set_active(0);
-  cap_combo_width(*playback_device);
-  playback->pack_start(*playback_name, Gtk::PACK_SHRINK);
-  playback->pack_start(*playback_scale, Gtk::PACK_EXPAND_WIDGET);
-  playback->pack_start(*playback_device, Gtk::PACK_SHRINK);
-  playback->pack_start(*Gtk::manage(new Gtk::CheckButton("Mute")), Gtk::PACK_SHRINK);
-  apps_->pack_start(*playback, Gtk::PACK_SHRINK);
+  const char* apps[][3] = {{"Music", "80", "0"}, {"Web Browser", "35", "1"}};
+  for (const auto& app : apps) {
+    auto* scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+    scale->set_range(0, 150);
+    scale->set_digits(0);
+    scale->set_value(std::stod(app[1]));
+    auto* device = Gtk::manage(new Gtk::ComboBoxText());
+    device->append("alsa_output.built_in", "Built-in Audio");
+    device->append("alsa_output.headset", "USB Headset");
+    device->set_active(std::stoi(app[2]));
+    cap_combo_width(*device);
+    auto* mute = Gtk::manage(new Gtk::CheckButton("Mute"));
+    apps_->pack_start(*make_stream_row(stream_tail_, app[0], *scale, device, *mute), Gtk::PACK_SHRINK);
+  }
   apps_->show_all();
   for (auto* child : recording_->get_children()) {
     recording_->remove(*child);
   }
   capture_rows_.clear();
-  auto* record = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
-  auto* record_name = make_label("Voice");
-  record_name->set_size_request(160, -1);
   auto* record_scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
   record_scale->set_range(0, 150);
   record_scale->set_digits(0);
   record_scale->set_value(60);
-  record_scale->set_hexpand(true);
-  record->pack_start(*record_name, Gtk::PACK_SHRINK);
-  record->pack_start(*record_scale, Gtk::PACK_EXPAND_WIDGET);
-  record->pack_start(*Gtk::manage(new Gtk::CheckButton("Mute")), Gtk::PACK_SHRINK);
-  recording_->pack_start(*record, Gtk::PACK_SHRINK);
+  auto* record_mute = Gtk::manage(new Gtk::CheckButton("Mute"));
+  recording_->pack_start(*make_stream_row(stream_tail_, "Voice", *record_scale, nullptr, *record_mute),
+                         Gtk::PACK_SHRINK);
   recording_->show_all();
 }
 

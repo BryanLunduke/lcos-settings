@@ -13,6 +13,8 @@
 #include <gtkmm/comboboxtext.h>
 #include <gtkmm/levelbar.h>
 #include <gtkmm/scale.h>
+#include <gtkmm/sizegroup.h>
+#include <gtkmm/widget.h>
 
 #include <cstdint>
 #include <map>
@@ -59,7 +61,7 @@ class SoundPage : public SettingsPage {
     std::string port;
   };
   struct AppRow {
-    Gtk::Box* row = nullptr;
+    Gtk::Widget* row = nullptr;
     Gtk::Scale* scale = nullptr;
     Gtk::CheckButton* mute = nullptr;
     Gtk::ComboBoxText* device = nullptr;
@@ -134,6 +136,7 @@ class SoundPage : public SettingsPage {
   Gtk::Scale input_volume_;
   Gtk::CheckButton input_mute_;
   Gtk::ComboBoxText profile_;
+  Glib::RefPtr<Gtk::SizeGroup> stream_tail_;
   Gtk::Box* apps_ = nullptr;
   Gtk::Box* recording_ = nullptr;
   Gtk::LevelBar input_meter_;
