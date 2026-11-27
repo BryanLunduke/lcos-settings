@@ -40,6 +40,17 @@ struct PaInput {
   std::vector<std::uint32_t> channel_volumes;
 };
 
+struct PaCapture {
+  std::uint32_t index = 0;
+  std::uint32_t source = 0;
+  std::string name;
+  std::string application;
+  int channels = 2;
+  int volume_percent = 0;
+  bool mute = false;
+  std::vector<std::uint32_t> channel_volumes;
+};
+
 struct PaCard {
   std::uint32_t index = 0;
   std::string name;
@@ -56,6 +67,7 @@ struct PulseState {
   std::vector<PaDevice> sinks;
   std::vector<PaDevice> sources;
   std::vector<PaInput> inputs;
+  std::vector<PaCapture> captures;
   std::vector<PaCard> cards;
 };
 
@@ -73,6 +85,8 @@ class PulseClient {
   void connect();
   const PulseState& state() const { return state_; }
   sigc::signal<void> changed;
+  // Microphone peak, 0 to 1. Separate from changed so the meter does not rebuild the page.
+  sigc::signal<void, float> peak;
 
   void set_sink_volume(std::uint32_t index, int percent);
   void set_sink_volumes(std::uint32_t index, const std::vector<std::uint32_t>& volumes);
@@ -89,6 +103,11 @@ class PulseClient {
   void set_input_volume(std::uint32_t index, int percent);
   void set_input_volumes(std::uint32_t index, const std::vector<std::uint32_t>& volumes);
   void set_input_mute(std::uint32_t index, bool mute);
+  void move_input_to_sink(std::uint32_t index, const std::string& sink_name);
+  void set_capture_volume(std::uint32_t index, int percent);
+  void set_capture_volumes(std::uint32_t index, const std::vector<std::uint32_t>& volumes);
+  void set_capture_mute(std::uint32_t index, bool mute);
+  void set_peak_source(const std::string& source_name);
   void set_card_profile(std::uint32_t index, const std::string& profile);
 
   // Used by the callbacks in the implementation file.
@@ -98,7 +117,9 @@ class PulseClient {
   void add_sink(PaDevice device);
   void add_source(PaDevice device);
   void add_input(PaInput input);
+  void add_capture(PaCapture capture);
   void add_card(PaCard card);
+  void note_peak(float level);
   void list_finished();
 
  private:
@@ -106,6 +127,7 @@ class PulseClient {
   const PaDevice* find_sink(std::uint32_t index) const;
   const PaDevice* find_source(std::uint32_t index) const;
   const PaInput* find_input(std::uint32_t index) const;
+  const PaCapture* find_capture(std::uint32_t index) const;
 
   struct Impl;
   Impl* impl_ = nullptr;

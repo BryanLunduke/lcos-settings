@@ -21,6 +21,8 @@ xi_dep = dependency('xi')
 glib_dep = dependency('glib-2.0')
 sigc_dep = dependency('sigc++-2.0')
 libcrypt_dep = dependency('libcrypt')
+cups_dep = dependency('cups')
+nm_dep = dependency('libnm')
 
 lcos_inc = include_directories('src')
 
@@ -45,6 +47,11 @@ logic_lib = static_library(
     'src/logic/helper_status.cpp',
     'src/logic/font_spec.cpp',
     'src/logic/rollback_journal.cpp',
+    'src/logic/printers.cpp',
+    'src/logic/bluetooth_model.cpp',
+    'src/logic/panel_model.cpp',
+    'src/logic/network_model.cpp',
+    'src/logic/updates_status.cpp',
   ),
   include_directories: lcos_inc,
   dependencies: glib_dep,
@@ -57,6 +64,9 @@ backend_sources = files(
   'src/backends/pulse_client.cpp',
   'src/backends/upower_client.cpp',
   'src/backends/priv_client.cpp',
+  'src/backends/cups_client.cpp',
+  'src/backends/nm_client.cpp',
+  'src/backends/bluez_client.cpp',
 )
 
 page_sources = files(
@@ -78,12 +88,17 @@ page_sources = files(
   'src/pages/language_page.cpp',
   'src/pages/users_page.cpp',
   'src/pages/startup_page.cpp',
+  'src/pages/printers_page.cpp',
+  'src/pages/network_page.cpp',
+  'src/pages/bluetooth_page.cpp',
+  'src/pages/panel_page.cpp',
+  'src/pages/updates_page.cpp',
   'src/main_window.cpp',
   'src/application.cpp',
   'src/display_minimal.cpp',
 )
 
-app_deps = [gtkmm_dep, xfconf_dep, pulse_dep, pulse_glib_dep, x11_dep, xrandr_dep, xi_dep, glib_dep]
+app_deps = [gtkmm_dep, xfconf_dep, pulse_dep, pulse_glib_dep, x11_dep, xrandr_dep, xi_dep, glib_dep, cups_dep, nm_dep]
 
 lcos_settings_priv = executable(
   'lcos-settings-priv',
@@ -120,7 +135,7 @@ session_tests = executable(
   backend_sources,
   link_with: logic_lib,
   include_directories: lcos_inc,
-  dependencies: [xfconf_dep, pulse_dep, pulse_glib_dep, x11_dep, xrandr_dep, xi_dep, glib_dep, sigc_dep],
+  dependencies: [xfconf_dep, pulse_dep, pulse_glib_dep, x11_dep, xrandr_dep, xi_dep, glib_dep, sigc_dep, cups_dep, nm_dep],
 )
 
 test('logic', logic_tests, args: [], env: ['LCOS_SOURCE_ROOT=' + meson.current_source_dir()])

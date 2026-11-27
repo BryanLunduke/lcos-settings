@@ -50,17 +50,22 @@ const TileSpec kTiles[] = {
     {"window-manager", "Window Manager", "preferences-system-windows", "Look and Feel"},
     {"window-tweaks", "Window Manager Tweaks", "preferences-system", "Look and Feel"},
     {"notifications", "Notifications", "preferences-system-notifications", "Look and Feel"},
+    {"panel", "Panel", "preferences-desktop-apps", "Look and Feel"},
     {"display", "Display", "preferences-desktop-display", "Hardware"},
     {"sound", "Sound", "audio-volume-high", "Hardware"},
+    {"printers", "Printers", "printer", "Hardware"},
     {"power", "Power", "battery", "Hardware"},
     {"keyboard", "Keyboard", "preferences-desktop-keyboard", "Hardware"},
     {"mouse", "Mouse", "input-mouse", "Hardware"},
     {"removable-media", "Removable Drives and Media", "drive-removable-media", "Hardware"},
+    {"network", "Network", "network-wired", "Network"},
+    {"bluetooth", "Bluetooth", "bluetooth", "Network"},
     {"date-time", "Date and Time", "appointment-soon", "System"},
     {"language", "Language", "preferences-desktop-locale", "System"},
     {"users", "Users", "system-users", "System"},
     {"startup", "Startup", "system-run", "System"},
     {"default-software", "Default Software", "preferences-other", "System"},
+    {"updates", "Updates", "software-update-available", "System"},
     {"accessibility", "Accessibility", "preferences-desktop-accessibility", "System"},
 };
 
@@ -231,10 +236,6 @@ struct ToolSpec {
 };
 
 const ToolSpec kTools[] = {
-    {"Network", "network-wired", "nm-connection-editor", "nm-connection-editor"},
-    {"Bluetooth", "bluetooth", "blueman-manager", "blueman-manager"},
-    {"Printers", "printer", "system-config-printer", "system-config-printer"},
-    {"Panel Preferences", "preferences-system", "xfce4-panel", "xfce4-panel --preferences"},
     {"Advanced sound", "audio-volume-high", "pavucontrol", "pavucontrol"},
     {"Settings Editor", "gtk-preferences", "xfce4-settings-editor", "xfce4-settings-editor"},
 };
@@ -417,7 +418,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   hero->pack_start(*hero_row, Gtk::PACK_SHRINK);
   page->pack_start(*hero, Gtk::PACK_SHRINK);
 
-  const char* sections[] = {"Look and Feel", "Hardware", "System"};
+  const char* sections[] = {"Look and Feel", "Hardware", "Network", "System"};
   for (const char* section : sections) {
     auto* tiles = Gtk::manage(new Gtk::FlowBox());
     tiles->set_hexpand(true);

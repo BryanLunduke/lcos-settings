@@ -7,11 +7,14 @@ separate XFCE dialog: Display, Desktop, Appearance, Window Manager (including
 title-bar button layout), Window Manager Tweaks, Keyboard, Mouse, Accessibility,
 Notifications, Power (including a screen saver and lock group), Sound,
 Removable Drives and Media, Default Software, Date and Time, Language, Users,
-and Startup (including the logout dialog).
+Startup (including the logout dialog), Panel, Printers, Network, Bluetooth,
+and Updates.
 
-Network, Bluetooth, printers, Panel Preferences, the advanced sound mixer, and
-Settings Editor stay separate programs. Overview shows a tile for each of those
-only when that program is installed.
+Overview opens those pages in Command Center. Adding a printer still opens
+system-config-printer. Network, Bluetooth, Panel, and Sound keep an Advanced
+button for nm-connection-editor, blueman-manager, xfce4-panel, and pavucontrol.
+Settings Editor stays a separate program, and Overview shows that tile only
+when it is installed. The advanced sound tile stays as well.
 
 The window width is fixed, so the section list stays put. The height can still
 change, down to 480px. On an 800×600 screen the width is the work area (the

@@ -4,6 +4,7 @@
 
 #include "pages/accessibility_page.hpp"
 #include "pages/appearance_page.hpp"
+#include "pages/bluetooth_page.hpp"
 #include "pages/datetime_page.hpp"
 #include "pages/desktop_page.hpp"
 #include "pages/display_page.hpp"
@@ -11,12 +12,16 @@
 #include "pages/language_page.hpp"
 #include "pages/media_page.hpp"
 #include "pages/mouse_page.hpp"
+#include "pages/network_page.hpp"
 #include "pages/notifications_page.hpp"
+#include "pages/panel_page.hpp"
+#include "pages/printers_page.hpp"
 #include "pages/overview_page.hpp"
 #include "pages/power_page.hpp"
 #include "pages/software_page.hpp"
 #include "pages/sound_page.hpp"
 #include "pages/startup_page.hpp"
+#include "pages/updates_page.hpp"
 #include "pages/users_page.hpp"
 #include "pages/window_page.hpp"
 #include "pages/window_tweaks_page.hpp"
@@ -177,6 +182,11 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* users = Gtk::manage(new UsersPage(privileged_, *this));
   auto* startup = Gtk::manage(new StartupPage(store_, privileged_, *this));
   auto* software = Gtk::manage(new SoftwarePage());
+  auto* printers = Gtk::manage(new PrintersPage());
+  auto* network = Gtk::manage(new NetworkPage());
+  auto* bluetooth = Gtk::manage(new BluetoothPage());
+  auto* panel = Gtk::manage(new PanelPage(store_));
+  auto* updates = Gtk::manage(new UpdatesPage());
   auto* overview = Gtk::manage(new OverviewPage(
       *appearance, *sound, *users, pulse_, privileged_,
       [this](const std::string& id) { show_page(id); },
@@ -189,17 +199,22 @@ MainWindow::MainWindow(XfconfStore& store)
       {"window-manager", "Window Manager", "preferences-system-windows", "focus shortcuts title bar button layout theme placement", "Look and Feel", PrivKind::Off, windows},
       {"window-tweaks", "Window Manager Tweaks", "preferences-system", "compositor cycling focus accessibility zoom placement tweaks", "Look and Feel", PrivKind::Off, tweaks},
       {"notifications", "Notifications", "preferences-system-notifications", "notify theme position log applications", "Look and Feel", PrivKind::Off, notifications},
+      {"panel", "Panel", "preferences-desktop-apps", "xfce panel position size autohide length opacity plugins", "Look and Feel", PrivKind::Off, panel},
       {"display", "Display", "preferences-desktop-display", "resolution refresh scale rotation mirror extend monitor primary reflection", "Hardware", PrivKind::Off, display},
-      {"sound", "Sound", "audio-volume-high", "volume mute output input microphone profile", "Hardware", PrivKind::Off, sound},
+      {"sound", "Sound", "audio-volume-high", "volume mute output input microphone profile stream recording meter", "Hardware", PrivKind::Off, sound},
+      {"printers", "Printers", "printer", "cups queue default pause test page jobs", "Hardware", PrivKind::Off, printers},
       {"power", "Power", "battery", "battery sleep lid blank brightness lock screensaver", "Hardware", PrivKind::Off, power},
       {"keyboard", "Keyboard", "preferences-desktop-keyboard", "layout repeat shortcut model compose", "Hardware", PrivKind::Off, keyboard},
       {"mouse", "Mouse", "input-mouse", "pointer touchpad scrolling cursor speed", "Hardware", PrivKind::Off, mouse},
       {"removable-media", "Removable Drives and Media", "drive-removable-media", "usb camera mount cd dvd printer tablet", "Hardware", PrivKind::Off, media},
+      {"network", "Network", "network-wired", "wired wifi vpn ipv4 dhcp connection password networkmanager", "Network", PrivKind::Off, network},
+      {"bluetooth", "Bluetooth", "bluetooth", "adapter pair trust discover bluez", "Network", PrivKind::Off, bluetooth},
       {"date-time", "Date and Time", "appointment-soon", "clock timezone ntp calendar", "System", PrivKind::System, datetime},
       {"language", "Language", "preferences-desktop-locale", "locale region format language", "System", PrivKind::Locale, language},
       {"users", "Users", "system-users", "account password autologin real name picture administrator", "System", PrivKind::Accounts, users},
       {"startup", "Startup", "system-run", "autostart session login logout suspend hibernate switch user", "System", PrivKind::Off, startup},
       {"default-software", "Default Software", "preferences-other", "browser mail terminal mime utilities", "System", PrivKind::Off, software},
+      {"updates", "Updates", "software-update-available", "lcos-updates packages upgrade check", "System", PrivKind::Off, updates},
       {"accessibility", "Accessibility", "preferences-desktop-accessibility", "keyboard mouse assistive sticky keys", "System", PrivKind::Off, accessibility},
   };
 
@@ -531,6 +546,8 @@ void MainWindow::load_icons() {
   for (std::size_t i = 0; i < nav_images_.size() && i < nav_.size(); ++i) {
     if (auto pixbuf = load_named_icon(nav_[i].icon, 24, scale)) {
       nav_images_[i]->set(Gdk::Cairo::create_surface_from_pixbuf(pixbuf, scale));
+    } else {
+      nav_images_[i]->clear();
     }
   }
   if (auto find = load_named_icon("edit-find", 16, scale)) {
@@ -539,6 +556,8 @@ void MainWindow::load_icons() {
   if (current_index_ >= 0 && current_index_ < static_cast<int>(nav_.size())) {
     if (auto pixbuf = load_named_icon(nav_[static_cast<std::size_t>(current_index_)].icon, 48, scale)) {
       heading_icon_.set(Gdk::Cairo::create_surface_from_pixbuf(pixbuf, scale));
+    } else {
+      heading_icon_.clear();
     }
   }
 }

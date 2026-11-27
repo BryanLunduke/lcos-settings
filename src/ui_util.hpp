@@ -9,6 +9,8 @@
 #include <gtkmm/combobox.h>
 #include <gtkmm/container.h>
 #include <gtkmm/dialog.h>
+#include <gtkmm/messagedialog.h>
+#include <glibmm/spawn.h>
 #include <gtkmm/entry.h>
 #include <gtkmm/frame.h>
 #include <gtkmm/grid.h>
@@ -418,6 +420,38 @@ struct Freeze {
   explicit Freeze(int& depth) : depth(depth) { ++depth; }
   ~Freeze() { --depth; }
 };
+
+inline void report_error(Gtk::Widget& owner, const Glib::ustring& title, const std::string& message) {
+  auto* parent = dynamic_cast<Gtk::Window*>(owner.get_toplevel());
+  Gtk::MessageDialog alert(title, false, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+  if (parent != nullptr && parent != dynamic_cast<Gtk::Window*>(&owner)) {
+    alert.set_transient_for(*parent);
+  }
+  alert.set_secondary_text(message);
+  alert.run();
+}
+
+inline void launch_program(Gtk::Widget& owner, const std::string& command) {
+  try {
+    Glib::spawn_command_line_async(command);
+  } catch (const Glib::Error& error) {
+    report_error(owner, "Could not open that settings program", error.what());
+  }
+}
+
+inline bool confirm_action(Gtk::Widget& owner, const Glib::ustring& title, const Glib::ustring& message,
+                           const Glib::ustring& action) {
+  auto* parent = dynamic_cast<Gtk::Window*>(owner.get_toplevel());
+  Gtk::MessageDialog dialog(title, false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_NONE, true);
+  if (parent != nullptr && parent != dynamic_cast<Gtk::Window*>(&owner)) {
+    dialog.set_transient_for(*parent);
+  }
+  dialog.set_secondary_text(message);
+  dialog.add_button("_Cancel", Gtk::RESPONSE_CANCEL);
+  dialog.add_button(action, Gtk::RESPONSE_OK);
+  dialog.set_default_response(Gtk::RESPONSE_CANCEL);
+  return dialog.run() == Gtk::RESPONSE_OK;
+}
 
 }  // namespace lcos
 
