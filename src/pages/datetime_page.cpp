@@ -96,7 +96,7 @@ DateTimePage::DateTimePage(XfconfStore& store, PrivSession& session, Gtk::Window
   prepare_page_scroll(*zone_scroll);
   zone_scroll->set_shadow_type(Gtk::SHADOW_IN);
   zone_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-  zone_scroll->set_size_request(-1, 180);
+  zone_scroll->set_size_request(-1, 108);
   zone_scroll->add(zones_view_);
   zone_box->pack_start(*zone_scroll, Gtk::PACK_SHRINK);
   auto* set_zone = Gtk::manage(new Gtk::Button("_Set time zone", true));

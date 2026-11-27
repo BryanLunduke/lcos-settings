@@ -8,6 +8,7 @@
 #include <pulse/pulseaudio.h>
 
 #include <algorithm>
+#include <cstring>
 #include <utility>
 
 namespace lcos {
@@ -129,6 +130,57 @@ void input_cb(pa_context*, const pa_sink_input_info* info, int eol, void* user) 
   self->add_input(std::move(input));
 }
 
+void capture_cb(pa_context*, const pa_source_output_info* info, int eol, void* user) {
+  auto* self = static_cast<PulseClient*>(user);
+  if (eol != 0) {
+    self->list_finished();
+    return;
+  }
+  if (info == nullptr) {
+    return;
+  }
+  PaCapture capture;
+  capture.index = info->index;
+  capture.source = info->source;
+  capture.name = info->name != nullptr ? info->name : "Recording";
+  capture.channels = std::max(1, static_cast<int>(info->volume.channels));
+  capture.volume_percent = volume_to_percent(pa_cvolume_max(&info->volume));
+  capture.mute = info->mute != 0;
+  for (uint8_t channel = 0; channel < info->volume.channels; ++channel) {
+    capture.channel_volumes.push_back(info->volume.values[channel]);
+  }
+  if (info->proplist != nullptr) {
+    const char* app = pa_proplist_gets(info->proplist, PA_PROP_APPLICATION_NAME);
+    if (app != nullptr) {
+      capture.application = app;
+    }
+  }
+  if (capture.application.empty()) {
+    capture.application = capture.name;
+  }
+  self->add_capture(std::move(capture));
+}
+
+void peak_cb(pa_stream* stream, size_t, void* user) {
+  auto* self = static_cast<PulseClient*>(user);
+  const void* data = nullptr;
+  size_t bytes = 0;
+  while (pa_stream_peek(stream, &data, &bytes) == 0 && bytes > 0) {
+    float level = 0;
+    if (data != nullptr && bytes >= sizeof(float)) {
+      std::memcpy(&level, data, sizeof(float));
+    }
+    pa_stream_drop(stream);
+    if (level < 0) {
+      level = 0;
+    }
+    if (level > 1) {
+      level = 1;
+    }
+    self->note_peak(level);
+  }
+}
+
 void card_cb(pa_context*, const pa_card_info* info, int eol, void* user) {
   auto* self = static_cast<PulseClient*>(user);
   if (eol != 0) {
@@ -218,11 +270,19 @@ pa_cvolume volume_from_channels(const std::vector<std::uint32_t>& volumes) {
 struct PulseClient::Impl {
   pa_glib_mainloop* loop = nullptr;
   pa_context* context = nullptr;
+  pa_stream* peak = nullptr;
+  std::string peak_source;
 };
 
 PulseClient::PulseClient() : impl_(new Impl) {}
 
 PulseClient::~PulseClient() {
+  if (impl_->peak != nullptr) {
+    pa_stream_set_read_callback(impl_->peak, nullptr, nullptr);
+    pa_stream_disconnect(impl_->peak);
+    pa_stream_unref(impl_->peak);
+    impl_->peak = nullptr;
+  }
   if (impl_->context != nullptr) {
     // Drop callbacks before disconnect so a synchronous TERMINATED event
     // cannot call back into a client that is already going away.
@@ -286,6 +346,10 @@ void PulseClient::add_source(PaDevice device) {
   incoming_.sources.push_back(std::move(device));
 }
 void PulseClient::add_input(PaInput input) { incoming_.inputs.push_back(std::move(input)); }
+void PulseClient::add_capture(PaCapture capture) {
+  incoming_.captures.push_back(std::move(capture));
+}
+void PulseClient::note_peak(float level) { peak.emit(level); }
 void PulseClient::add_card(PaCard card) { incoming_.cards.push_back(std::move(card)); }
 
 void PulseClient::list_finished() {
@@ -320,11 +384,12 @@ void PulseClient::refresh() {
   }
   refreshing_ = true;
   incoming_ = {};
-  pending_ = 5;
+  pending_ = 6;
   unref_op(pa_context_get_server_info(impl_->context, server_cb, this));
   unref_op(pa_context_get_sink_info_list(impl_->context, sink_cb, this));
   unref_op(pa_context_get_source_info_list(impl_->context, source_cb, this));
   unref_op(pa_context_get_sink_input_info_list(impl_->context, input_cb, this));
+  unref_op(pa_context_get_source_output_info_list(impl_->context, capture_cb, this));
   unref_op(pa_context_get_card_info_list(impl_->context, card_cb, this));
 }
 
@@ -350,6 +415,15 @@ const PaInput* PulseClient::find_input(std::uint32_t index) const {
   for (const auto& input : state_.inputs) {
     if (input.index == index) {
       return &input;
+    }
+  }
+  return nullptr;
+}
+
+const PaCapture* PulseClient::find_capture(std::uint32_t index) const {
+  for (const auto& capture : state_.captures) {
+    if (capture.index == index) {
+      return &capture;
     }
   }
   return nullptr;
@@ -450,6 +524,71 @@ void PulseClient::set_input_mute(std::uint32_t index, bool mute) {
     return;
   }
   unref_op(pa_context_set_sink_input_mute(impl_->context, index, mute ? 1 : 0, nullptr, nullptr));
+}
+
+void PulseClient::move_input_to_sink(std::uint32_t index, const std::string& sink_name) {
+  if (impl_->context == nullptr || sink_name.empty()) {
+    return;
+  }
+  unref_op(pa_context_move_sink_input_by_name(impl_->context, index, sink_name.c_str(), nullptr, nullptr));
+}
+
+void PulseClient::set_capture_volume(std::uint32_t index, int percent) {
+  const PaCapture* capture = find_capture(index);
+  if (capture == nullptr) {
+    return;
+  }
+  set_capture_volumes(index, scale_channel_volumes(capture->channel_volumes, percent));
+}
+
+void PulseClient::set_capture_volumes(std::uint32_t index, const std::vector<std::uint32_t>& volumes) {
+  if (impl_->context == nullptr || volumes.empty()) {
+    return;
+  }
+  const pa_cvolume volume = volume_from_channels(volumes);
+  unref_op(pa_context_set_source_output_volume(impl_->context, index, &volume, nullptr, nullptr));
+}
+
+void PulseClient::set_capture_mute(std::uint32_t index, bool mute) {
+  if (impl_->context == nullptr) {
+    return;
+  }
+  unref_op(pa_context_set_source_output_mute(impl_->context, index, mute ? 1 : 0, nullptr, nullptr));
+}
+
+void PulseClient::set_peak_source(const std::string& source_name) {
+  if (source_name == impl_->peak_source && impl_->peak != nullptr) {
+    return;
+  }
+  impl_->peak_source = source_name;
+  if (impl_->peak != nullptr) {
+    pa_stream_set_read_callback(impl_->peak, nullptr, nullptr);
+    pa_stream_disconnect(impl_->peak);
+    pa_stream_unref(impl_->peak);
+    impl_->peak = nullptr;
+  }
+  if (source_name.empty() || impl_->context == nullptr ||
+      pa_context_get_state(impl_->context) != PA_CONTEXT_READY) {
+    return;
+  }
+  pa_sample_spec spec;
+  spec.format = PA_SAMPLE_FLOAT32NE;
+  spec.rate = 25;
+  spec.channels = 1;
+  pa_buffer_attr attr;
+  std::memset(&attr, 0, sizeof(attr));
+  attr.fragsize = sizeof(float);
+  attr.maxlength = static_cast<std::uint32_t>(-1);
+  impl_->peak = pa_stream_new(impl_->context, "LCOS input meter", &spec, nullptr);
+  if (impl_->peak == nullptr) {
+    return;
+  }
+  pa_stream_set_read_callback(impl_->peak, peak_cb, this);
+  const pa_stream_flags_t flags = static_cast<pa_stream_flags_t>(PA_STREAM_PEAK_DETECT | PA_STREAM_ADJUST_LATENCY);
+  if (pa_stream_connect_record(impl_->peak, source_name.c_str(), &attr, flags) < 0) {
+    pa_stream_unref(impl_->peak);
+    impl_->peak = nullptr;
+  }
 }
 
 void PulseClient::set_card_profile(std::uint32_t index, const std::string& profile) {

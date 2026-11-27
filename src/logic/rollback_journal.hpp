@@ -40,6 +40,8 @@ struct SoundRollbackStream {
   std::string media;
   bool mute = false;
   std::vector<unsigned> volumes;
+  // Playback output to put the stream back on. Empty leaves the device alone.
+  std::string sink;
 };
 
 struct SoundRollback {
@@ -65,6 +67,7 @@ struct SoundRollback {
   std::string profile_card;
   std::string profile_name;
   std::vector<SoundRollbackStream> streams;
+  std::vector<SoundRollbackStream> captures;
 
   bool any() const;
 };

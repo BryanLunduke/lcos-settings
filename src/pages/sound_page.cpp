@@ -3,6 +3,7 @@
 #include "pages/sound_page.hpp"
 
 #include "logic/atomic_file.hpp"
+#include "logic/sample.hpp"
 #include "logic/themes.hpp"
 #include "ui_util.hpp"
 
@@ -12,16 +13,65 @@
 #include <algorithm>
 #include <fstream>
 
+#include <gtkmm/grid.h>
 #include <gtkmm/label.h>
 #include <gtkmm/scrolledwindow.h>
 
 namespace lcos {
+namespace {
+
+// Name in the shared caption column, slider the same width as Output and
+// Input volume, value on the right. The device combo and Mute share one
+// trailing width so every stream row lines up.
+Gtk::Widget* make_stream_row(const Glib::RefPtr<Gtk::SizeGroup>& tails, const Glib::ustring& name,
+                             Gtk::Scale& scale, Gtk::ComboBoxText* device, Gtk::CheckButton& mute) {
+  configure_scale(scale);
+  guard_scroll_unless_focused(scale);
+  scale.set_valign(Gtk::ALIGN_CENTER);
+  auto* grid = Gtk::manage(new Gtk::Grid());
+  grid->set_column_spacing(12);
+  grid->set_hexpand(true);
+  auto* label = make_label(name);
+  label->set_size_request(kFormLabelWidth, -1);
+  label->set_ellipsize(Pango::ELLIPSIZE_END);
+  label->set_halign(Gtk::ALIGN_START);
+  label->set_valign(Gtk::ALIGN_CENTER);
+  label->set_xalign(0);
+  auto* tail = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+  tail->set_halign(Gtk::ALIGN_END);
+  tail->set_valign(Gtk::ALIGN_CENTER);
+  if (device != nullptr) {
+    device->set_valign(Gtk::ALIGN_CENTER);
+    tail->pack_start(*device, Gtk::PACK_SHRINK);
+  }
+  mute.set_valign(Gtk::ALIGN_CENTER);
+  tail->pack_end(mute, Gtk::PACK_SHRINK);
+  tails->add_widget(*tail);
+  grid->attach(*label, 0, 0, 1, 1);
+  grid->attach(scale, 1, 0, 1, 1);
+  grid->attach(*tail, 2, 0, 1, 1);
+  return grid;
+}
+
+Gtk::Widget* volume_with_tail(const Glib::RefPtr<Gtk::SizeGroup>& tails, Gtk::Scale& scale) {
+  configure_scale(scale);
+  guard_scroll_unless_focused(scale);
+  auto* line = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
+  auto* spacer = Gtk::manage(new Gtk::Box());
+  tails->add_widget(*spacer);
+  line->pack_start(scale, Gtk::PACK_EXPAND_WIDGET);
+  line->pack_start(*spacer, Gtk::PACK_SHRINK);
+  return line;
+}
+
+}  // namespace
 
 SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
     : store_(store),
       pulse_(pulse),
       output_volume_(Gtk::ORIENTATION_HORIZONTAL),
       input_volume_(Gtk::ORIENTATION_HORIZONTAL) {
+  stream_tail_ = Gtk::SizeGroup::create(Gtk::SIZE_GROUP_HORIZONTAL);
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
   auto* page = make_vbox(4);
@@ -29,9 +79,9 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
-  status_ = make_label("Connecting to PulseAudio…");
-  status_->set_line_wrap(true);
-  page->pack_start(*status_, Gtk::PACK_SHRINK);
+  page->pack_start(*make_empty_state("audio-volume-muted", "Connecting to PulseAudio…", &status_),
+                   Gtk::PACK_SHRINK);
+  page->set_margin_bottom(16);
 
   auto tune = [](Gtk::Scale& scale) {
     scale.set_range(0, 150);
@@ -48,7 +98,7 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   FormGrid out_form;
   out_form.add("Device", output_);
   output_port_label_ = out_form.add("Port", output_port_);
-  out_form.add("Volume", output_volume_);
+  out_form.add("Volume", *volume_with_tail(stream_tail_, output_volume_));
   out_form.add_control(output_mute_);
   out->pack_start(out_form.grid(), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Output", *out), Gtk::PACK_SHRINK);
@@ -57,8 +107,22 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   FormGrid in_form;
   in_form.add("Device", input_);
   input_port_label_ = in_form.add("Port", input_port_);
-  in_form.add("Volume", input_volume_);
+  in_form.add("Volume", *volume_with_tail(stream_tail_, input_volume_));
   in_form.add_control(input_mute_);
+  input_meter_.set_mode(Gtk::LEVEL_BAR_MODE_CONTINUOUS);
+  input_meter_.set_min_value(0);
+  input_meter_.set_max_value(1);
+  input_meter_.set_value(0);
+  input_meter_.set_hexpand(true);
+  input_meter_.set_valign(Gtk::ALIGN_CENTER);
+  input_meter_.set_size_request(-1, 16);
+  input_meter_.get_style_context()->add_class("lcos-meter");
+  meter_value_ = make_label("0%");
+  meter_value_->set_width_chars(4);
+  auto* meter_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+  meter_row->pack_start(input_meter_, Gtk::PACK_EXPAND_WIDGET);
+  meter_row->pack_start(*meter_value_, Gtk::PACK_SHRINK);
+  in_form.add("Input level", *meter_row);
   in->pack_start(in_form.grid(), Gtk::PACK_SHRINK);
   input_note_ = make_note("PulseAudio is not available.");
   input_note_->set_no_show_all(true);
@@ -81,6 +145,15 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
 
   apps_ = make_vbox(6);
   page->pack_start(*make_frame("Applications", *apps_), Gtk::PACK_SHRINK);
+  recording_ = make_vbox(6);
+  page->pack_start(*make_frame("Recording", *recording_), Gtk::PACK_SHRINK);
+  auto* actions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  actions->get_style_context()->add_class("lcos-actions");
+  auto* advanced = Gtk::manage(new Gtk::Button("Advanced…"));
+  advanced->set_tooltip_text("Open the volume control");
+  advanced->signal_clicked().connect([this] { launch_program(*this, "pavucontrol"); });
+  actions->pack_end(*advanced, Gtk::PACK_SHRINK);
+  page->pack_start(*actions, Gtk::PACK_SHRINK);
 
   auto* events = make_vbox(8);
   event_sounds_.set_label("Event sounds");
@@ -236,6 +309,18 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   }
 
   pulse_.changed.connect(sigc::mem_fun(*this, &SoundPage::refresh));
+  pulse_.peak.connect([this](float level) {
+    if (level < 0) {
+      level = 0;
+    }
+    if (level > 1) {
+      level = 1;
+    }
+    input_meter_.set_value(level);
+    if (meter_value_ != nullptr) {
+      meter_value_->set_text(std::to_string(static_cast<int>(level * 100.0f + 0.5f)) + "%");
+    }
+  });
   pulse_.connect();
   show_all();
 }
@@ -282,6 +367,9 @@ void SoundPage::touch(SoundField field, std::uint32_t stream) {
       break;
     case SoundField::Stream:
       edit_.streams.insert(stream);
+      break;
+    case SoundField::Capture:
+      edit_.captures.insert(stream);
       break;
   }
   if (!sound_dirty_) {
@@ -352,12 +440,32 @@ void SoundPage::take_snapshot() {
     StreamSnap snap;
     snap.application = input.application;
     snap.media_name = input.name;
+    snap.sink = sink_name_for(input.sink);
     snap.index = input.index;
     snap.volumes = input.channel_volumes;
     snap.mute = input.mute;
     stream_snapshot_.push_back(std::move(snap));
   }
+  capture_snapshot_.clear();
+  for (const auto& capture : state.captures) {
+    StreamSnap snap;
+    snap.application = capture.application;
+    snap.media_name = capture.name;
+    snap.index = capture.index;
+    snap.volumes = capture.channel_volumes;
+    snap.mute = capture.mute;
+    capture_snapshot_.push_back(std::move(snap));
+  }
   have_snapshot_ = true;
+}
+
+std::string SoundPage::sink_name_for(std::uint32_t index) const {
+  for (const auto& device : pulse_.state().sinks) {
+    if (device.index == index) {
+      return device.name;
+    }
+  }
+  return {};
 }
 
 bool SoundPage::discard_pending() {
@@ -373,7 +481,7 @@ std::string SoundPage::pending_detail() const {
     return {};
   }
   const bool levels = edit_.output_volume || edit_.input_volume || edit_.output_mute ||
-                      edit_.input_mute || !edit_.streams.empty();
+                      edit_.input_mute || !edit_.streams.empty() || !edit_.captures.empty();
   const bool route = edit_.output_device || edit_.input_device || edit_.output_port ||
                      edit_.input_port || edit_.profile;
   if (edit_.profile && !levels) {
@@ -502,11 +610,39 @@ void SoundPage::revert_page() {
         }
       }
     }
-    if (match == nullptr || snap.volumes.empty() || edit_.streams.count(snap.index) == 0) {
+    if (match == nullptr || edit_.streams.count(snap.index) == 0) {
       continue;
     }
-    pulse_.set_input_volumes(match->index, snap.volumes);
+    if (!snap.volumes.empty()) {
+      pulse_.set_input_volumes(match->index, snap.volumes);
+    }
     pulse_.set_input_mute(match->index, snap.mute);
+    if (!snap.sink.empty()) {
+      pulse_.move_input_to_sink(match->index, snap.sink);
+    }
+  }
+  std::vector<bool> capture_used(pulse_.state().captures.size(), false);
+  for (const auto& snap : capture_snapshot_) {
+    const PaCapture* match = nullptr;
+    for (std::size_t i = 0; i < pulse_.state().captures.size(); ++i) {
+      const auto& capture = pulse_.state().captures[i];
+      if (capture_used[i] || edit_.captures.count(snap.index) == 0) {
+        continue;
+      }
+      if (capture.index == snap.index ||
+          (capture.application == snap.application && capture.name == snap.media_name)) {
+        match = &capture;
+        capture_used[i] = true;
+        break;
+      }
+    }
+    if (match == nullptr) {
+      continue;
+    }
+    if (!snap.volumes.empty()) {
+      pulse_.set_capture_volumes(match->index, snap.volumes);
+    }
+    pulse_.set_capture_mute(match->index, snap.mute);
   }
   edit_ = {};
   have_snapshot_ = false;
@@ -592,7 +728,19 @@ void SoundPage::save_sound_journal() const {
     stream.media = snap.media_name;
     stream.mute = snap.mute;
     stream.volumes = snap.volumes;
+    stream.sink = snap.sink;
     rollback.streams.push_back(std::move(stream));
+  }
+  for (const auto& snap : capture_snapshot_) {
+    if (edit_.captures.count(snap.index) == 0) {
+      continue;
+    }
+    SoundRollbackStream stream;
+    stream.application = snap.application;
+    stream.media = snap.media_name;
+    stream.mute = snap.mute;
+    stream.volumes = snap.volumes;
+    rollback.captures.push_back(std::move(stream));
   }
   const std::string path = sound_journal_path();
   const auto slash = path.find_last_of('/');
@@ -679,6 +827,24 @@ void SoundPage::restore_sound_journal() {
         pulse_.set_input_volumes(input.index, stream.volumes);
       }
       pulse_.set_input_mute(input.index, stream.mute);
+      if (!stream.sink.empty()) {
+        pulse_.move_input_to_sink(input.index, stream.sink);
+      }
+      break;
+    }
+  }
+  std::vector<bool> capture_used(pulse_.state().captures.size(), false);
+  for (const auto& stream : rollback.captures) {
+    for (std::size_t i = 0; i < pulse_.state().captures.size(); ++i) {
+      const auto& capture = pulse_.state().captures[i];
+      if (capture_used[i] || capture.application != stream.application || capture.name != stream.media) {
+        continue;
+      }
+      capture_used[i] = true;
+      if (!stream.volumes.empty()) {
+        pulse_.set_capture_volumes(capture.index, stream.volumes);
+      }
+      pulse_.set_capture_mute(capture.index, stream.mute);
       break;
     }
   }
@@ -687,15 +853,22 @@ void SoundPage::restore_sound_journal() {
 
 void SoundPage::refresh() {
   restore_sound_journal();
-  Freeze freeze(freeze_);
   const PulseState& state = pulse_.state();
+  if (!state.ready && settings_sample()) {
+    show_sample();
+    return;
+  }
+  Freeze freeze(freeze_);
   if (!state.ready) {
-    status_->set_text(state.error.empty() ? "Waiting for PulseAudio…"
-                                           : "PulseAudio: " + state.error);
-    status_->show();
+    status_->set_text(state.error.empty() ? "PulseAudio is not available." : state.error);
+    if (auto* banner = status_->get_parent()) {
+      banner->show();
+    }
   } else {
     status_->set_text("");
-    status_->hide();
+    if (auto* banner = status_->get_parent()) {
+      banner->hide();
+    }
   }
 
   std::vector<std::pair<std::string, std::string>> sink_rows;
@@ -838,7 +1011,11 @@ void SoundPage::refresh() {
     profile_label_->set_visible(show_profile);
   }
   if (card_group_ != nullptr) {
-    card_group_->set_visible(show_profile);
+    if (show_profile) {
+      card_group_->show_all();
+    } else {
+      card_group_->hide();
+    }
   }
   const bool pulse_up = state.ready && state.error.empty();
   const bool have_input = pulse_up && !state.sources.empty();
@@ -857,7 +1034,17 @@ void SoundPage::refresh() {
       input_note_->show();
     }
   }
+  const std::string peak_name = source != nullptr ? source->name : std::string();
+  if (peak_name != peak_source_) {
+    peak_source_ = peak_name;
+    pulse_.set_peak_source(peak_name);
+  }
+  if (peak_name.empty() && meter_value_ != nullptr) {
+    input_meter_.set_value(0);
+    meter_value_->set_text("0%");
+  }
   update_apps();
+  update_captures();
 }
 
 void SoundPage::update_apps() {
@@ -902,17 +1089,15 @@ void SoundPage::update_apps() {
     auto found = app_rows_.find(input.index);
     if (found == app_rows_.end()) {
       AppRow row;
-      row.row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
-      auto* name = make_label(input.application);
-      name->set_size_request(160, -1);
-      name->set_ellipsize(Pango::ELLIPSIZE_END);
       row.scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
       row.scale->set_range(0, 150);
       row.scale->set_digits(0);
       row.scale->set_value(input.volume_percent);
-      row.scale->set_hexpand(true);
       row.mute = Gtk::manage(new Gtk::CheckButton("Mute"));
       row.mute->set_active(input.mute);
+      row.device = Gtk::manage(new Gtk::ComboBoxText());
+      cap_combo_width(*row.device);
+      row.row = make_stream_row(stream_tail_, input.application, *row.scale, row.device, *row.mute);
       const std::uint32_t index = input.index;
       row.scale->signal_value_changed().connect([this, index] {
         if (freeze_ > 0) {
@@ -936,6 +1121,18 @@ void SoundPage::update_apps() {
         touch(SoundField::Stream, index);
         pulse_.set_input_mute(index, row_at->second.mute->get_active());
       });
+      row.device->signal_changed().connect([this, index] {
+        if (freeze_ > 0) {
+          return;
+        }
+        auto row_at = app_rows_.find(index);
+        if (row_at == app_rows_.end() || row_at->second.device == nullptr ||
+            row_at->second.device->get_active_id().empty()) {
+          return;
+        }
+        touch(SoundField::Stream, index);
+        pulse_.move_input_to_sink(index, row_at->second.device->get_active_id());
+      });
       row.scale->signal_button_press_event().connect([this, index](GdkEventButton*) {
         auto row_at = app_rows_.find(index);
         if (row_at != app_rows_.end()) {
@@ -951,17 +1148,218 @@ void SoundPage::update_apps() {
         refresh();
         return false;
       });
-      row.row->pack_start(*name, Gtk::PACK_SHRINK);
-      row.row->pack_start(*row.scale, Gtk::PACK_EXPAND_WIDGET);
-      row.row->pack_start(*row.mute, Gtk::PACK_SHRINK);
       apps_->pack_start(*row.row, Gtk::PACK_SHRINK);
       app_rows_.emplace(index, row);
     } else if (!found->second.dragging) {
       found->second.scale->set_value(input.volume_percent);
       found->second.mute->set_active(input.mute);
     }
+    auto live_row = found == app_rows_.end() ? app_rows_.find(input.index) : found;
+    AppRow* row = live_row == app_rows_.end() ? nullptr : &live_row->second;
+    if (row->device != nullptr) {
+      std::string key;
+      for (const auto& device : pulse_.state().sinks) {
+        key += device.name;
+        key.push_back('\n');
+      }
+      if (key != row->device->get_name()) {
+        row->device->remove_all();
+        for (const auto& device : pulse_.state().sinks) {
+          row->device->append(device.name, device.description);
+        }
+        row->device->set_name(key);
+      }
+      const std::string sink = sink_name_for(input.sink);
+      if (!sink.empty() && row->device->get_active_id() != sink) {
+        row->device->set_active_id(sink);
+      }
+    }
   }
   apps_->show_all();
+}
+
+void SoundPage::update_captures() {
+  const auto& captures = pulse_.state().captures;
+  std::map<std::uint32_t, const PaCapture*> live;
+  for (const auto& capture : captures) {
+    live[capture.index] = &capture;
+  }
+  std::vector<std::uint32_t> gone;
+  for (const auto& entry : capture_rows_) {
+    if (live.count(entry.first) == 0 && !entry.second.dragging) {
+      gone.push_back(entry.first);
+    }
+  }
+  for (const std::uint32_t index : gone) {
+    auto found = capture_rows_.find(index);
+    if (found == capture_rows_.end()) {
+      continue;
+    }
+    recording_->remove(*found->second.row);
+    capture_rows_.erase(found);
+  }
+  if (captures.empty() && capture_rows_.empty()) {
+    if (recording_->get_children().empty()) {
+      auto* note = make_label(pulse_.state().ready ? "No application is recording."
+                                                   : "PulseAudio is not available.");
+      recording_->pack_start(*note, Gtk::PACK_SHRINK);
+      recording_->show_all();
+    }
+    return;
+  }
+  for (auto* child : recording_->get_children()) {
+    bool keep = false;
+    for (const auto& entry : capture_rows_) {
+      if (entry.second.row == child) {
+        keep = true;
+      }
+    }
+    if (!keep) {
+      recording_->remove(*child);
+    }
+  }
+  for (const auto& capture : captures) {
+    auto found = capture_rows_.find(capture.index);
+    if (found == capture_rows_.end()) {
+      AppRow row;
+      row.scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+      row.scale->set_range(0, 150);
+      row.scale->set_digits(0);
+      row.scale->set_value(capture.volume_percent);
+      row.mute = Gtk::manage(new Gtk::CheckButton("Mute"));
+      row.mute->set_active(capture.mute);
+      row.row = make_stream_row(stream_tail_, capture.application, *row.scale, nullptr, *row.mute);
+      const std::uint32_t index = capture.index;
+      row.scale->signal_value_changed().connect([this, index] {
+        if (freeze_ > 0) {
+          return;
+        }
+        auto row_at = capture_rows_.find(index);
+        if (row_at == capture_rows_.end()) {
+          return;
+        }
+        touch(SoundField::Capture, index);
+        pulse_.set_capture_volume(index, static_cast<int>(row_at->second.scale->get_value()));
+      });
+      row.mute->signal_toggled().connect([this, index] {
+        if (freeze_ > 0) {
+          return;
+        }
+        auto row_at = capture_rows_.find(index);
+        if (row_at == capture_rows_.end()) {
+          return;
+        }
+        touch(SoundField::Capture, index);
+        pulse_.set_capture_mute(index, row_at->second.mute->get_active());
+      });
+      row.scale->signal_button_press_event().connect([this, index](GdkEventButton*) {
+        auto row_at = capture_rows_.find(index);
+        if (row_at != capture_rows_.end()) {
+          row_at->second.dragging = true;
+        }
+        return false;
+      });
+      row.scale->signal_button_release_event().connect([this, index](GdkEventButton*) {
+        auto row_at = capture_rows_.find(index);
+        if (row_at != capture_rows_.end()) {
+          row_at->second.dragging = false;
+        }
+        refresh();
+        return false;
+      });
+      recording_->pack_start(*row.row, Gtk::PACK_SHRINK);
+      capture_rows_.emplace(index, row);
+    } else if (!found->second.dragging) {
+      found->second.scale->set_value(capture.volume_percent);
+      found->second.mute->set_active(capture.mute);
+    }
+  }
+  recording_->show_all();
+}
+
+void SoundPage::show_sample() {
+  Freeze freeze(freeze_);
+  status_->set_text("");
+  if (auto* banner = status_->get_parent()) {
+    banner->hide();
+  }
+  output_.remove_all();
+  output_.append("alsa_output.built_in", "Built-in Audio");
+  output_.append("alsa_output.headset", "USB Headset");
+  output_.set_active(0);
+  input_.remove_all();
+  input_.append("alsa_input.built_in", "Built-in Microphone");
+  input_.set_active(0);
+  input_.set_sensitive(true);
+  output_port_.remove_all();
+  output_port_.append("analog-output-speaker", "Speakers");
+  output_port_.append("analog-output-headphones", "Headphones");
+  output_port_.set_active(0);
+  output_port_.set_visible(true);
+  input_port_.remove_all();
+  input_port_.append("analog-input-mic", "Microphone");
+  input_port_.set_active(0);
+  input_port_.set_visible(true);
+  if (output_port_label_ != nullptr) {
+    output_port_label_->show();
+  }
+  if (input_port_label_ != nullptr) {
+    input_port_label_->show();
+  }
+  output_volume_.set_value(70);
+  input_volume_.set_value(55);
+  output_mute_.set_active(false);
+  input_mute_.set_active(false);
+  input_volume_.set_sensitive(true);
+  input_mute_.set_sensitive(true);
+  profile_.remove_all();
+  profile_.append("output:analog-stereo+input:analog-stereo", "Analog Stereo Duplex");
+  profile_.set_active(0);
+  profile_.show();
+  if (profile_label_ != nullptr) {
+    profile_label_->show();
+  }
+  if (card_group_ != nullptr) {
+    card_group_->show_all();
+  }
+  input_meter_.set_value(0.42);
+  if (meter_value_ != nullptr) {
+    meter_value_->set_text("42%");
+  }
+  if (input_note_ != nullptr) {
+    input_note_->hide();
+  }
+  for (auto* child : apps_->get_children()) {
+    apps_->remove(*child);
+  }
+  app_rows_.clear();
+  const char* apps[][3] = {{"Music", "80", "0"}, {"Web Browser", "35", "1"}};
+  for (const auto& app : apps) {
+    auto* scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+    scale->set_range(0, 150);
+    scale->set_digits(0);
+    scale->set_value(std::stod(app[1]));
+    auto* device = Gtk::manage(new Gtk::ComboBoxText());
+    device->append("alsa_output.built_in", "Built-in Audio");
+    device->append("alsa_output.headset", "USB Headset");
+    device->set_active(std::stoi(app[2]));
+    cap_combo_width(*device);
+    auto* mute = Gtk::manage(new Gtk::CheckButton("Mute"));
+    apps_->pack_start(*make_stream_row(stream_tail_, app[0], *scale, device, *mute), Gtk::PACK_SHRINK);
+  }
+  apps_->show_all();
+  for (auto* child : recording_->get_children()) {
+    recording_->remove(*child);
+  }
+  capture_rows_.clear();
+  auto* record_scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+  record_scale->set_range(0, 150);
+  record_scale->set_digits(0);
+  record_scale->set_value(60);
+  auto* record_mute = Gtk::manage(new Gtk::CheckButton("Mute"));
+  recording_->pack_start(*make_stream_row(stream_tail_, "Voice", *record_scale, nullptr, *record_mute),
+                         Gtk::PACK_SHRINK);
+  recording_->show_all();
 }
 
 }  // namespace lcos

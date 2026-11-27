@@ -60,6 +60,8 @@ PropValue from_gvalue(const GValue* value) {
           out.strings.emplace_back(text != nullptr ? text : "");
         } else if (!as_double && !as_string && G_VALUE_HOLDS_INT(element)) {
           out.ints.push_back(g_value_get_int(element));
+        } else if (!as_double && !as_string && G_VALUE_HOLDS_UINT(element)) {
+          out.ints.push_back(static_cast<int>(g_value_get_uint(element)));
         }
       }
     }

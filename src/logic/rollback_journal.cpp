@@ -356,7 +356,8 @@ bool parse_rollback_journal(const std::string& text, std::vector<JournalEntry>& 
 
 bool SoundRollback::any() const {
   return output_device || output_volume || output_mute_set || output_port || input_device ||
-         input_volume || input_mute_set || input_port || profile || !streams.empty();
+         input_volume || input_mute_set || input_port || profile || !streams.empty() ||
+         !captures.empty();
 }
 
 std::string format_sound_rollback(const SoundRollback& rollback) {
@@ -383,6 +384,12 @@ std::string format_sound_rollback(const SoundRollback& rollback) {
   out << "streams\t" << rollback.streams.size() << '\n';
   for (const auto& stream : rollback.streams) {
     out << "stream\t" << encode(stream.application) << '\t' << encode(stream.media) << '\t'
+        << (stream.mute ? '1' : '0') << '\t' << volumes_text(stream.volumes) << '\t'
+        << encode(stream.sink) << '\n';
+  }
+  out << "captures\t" << rollback.captures.size() << '\n';
+  for (const auto& stream : rollback.captures) {
+    out << "capture\t" << encode(stream.application) << '\t' << encode(stream.media) << '\t'
         << (stream.mute ? '1' : '0') << '\t' << volumes_text(stream.volumes) << '\n';
   }
   return out.str();
@@ -398,6 +405,7 @@ bool parse_sound_rollback(const std::string& text, SoundRollback& rollback, std:
     return false;
   }
   int expect_streams = -1;
+  int expect_captures = -1;
   for (std::size_t i = 1; i < lines.size(); ++i) {
     const auto fields = split_char(lines[i], '\t');
     if (fields.empty()) {
@@ -482,7 +490,26 @@ bool parse_sound_rollback(const std::string& text, SoundRollback& rollback, std:
             !volumes_from(fields[4], stream.volumes)) {
           return false;
         }
+        if (fields.size() >= 6 && !decode(fields[5], stream.sink, error)) {
+          return false;
+        }
         rollback.streams.push_back(std::move(stream));
+      } else if (key == "captures") {
+        if (fields.size() < 2) {
+          return false;
+        }
+        expect_captures = std::stoi(fields[1]);
+        if (expect_captures < 0) {
+          return false;
+        }
+      } else if (key == "capture") {
+        SoundRollbackStream stream;
+        if (fields.size() < 5 || !decode(fields[1], stream.application, error) ||
+            !decode(fields[2], stream.media, error) || !flag(3, stream.mute) ||
+            !volumes_from(fields[4], stream.volumes)) {
+          return false;
+        }
+        rollback.captures.push_back(std::move(stream));
       } else {
         if (error != nullptr) {
           *error = "Sound rollback has an unknown record.";
@@ -499,6 +526,12 @@ bool parse_sound_rollback(const std::string& text, SoundRollback& rollback, std:
   if (expect_streams >= 0 && static_cast<int>(rollback.streams.size()) != expect_streams) {
     if (error != nullptr) {
       *error = "Sound rollback is missing a stream.";
+    }
+    return false;
+  }
+  if (expect_captures >= 0 && static_cast<int>(rollback.captures.size()) != expect_captures) {
+    if (error != nullptr) {
+      *error = "Sound rollback is missing a recording.";
     }
     return false;
   }

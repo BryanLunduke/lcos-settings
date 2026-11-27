@@ -3,7 +3,12 @@
 #include "logic/atomic_file.hpp"
 #include "logic/backdrop.hpp"
 #include "logic/font_spec.hpp"
+#include "logic/bluetooth_model.hpp"
+#include "logic/network_model.hpp"
+#include "logic/panel_model.hpp"
+#include "logic/printers.hpp"
 #include "logic/rollback_journal.hpp"
+#include "logic/updates_status.hpp"
 #include "logic/scroll_guard.hpp"
 #include "logic/button_layout.hpp"
 #include "logic/confirm.hpp"
@@ -1106,7 +1111,128 @@ void test_review_round() {
   EXPECT(sound_back.profile_card == "alsa_card.pci");
   EXPECT(sound_back.streams.size() == 1);
   EXPECT(sound_back.streams[0].application == "Mousepad");
+  EXPECT(sound_back.streams[0].sink.empty());
   EXPECT(sound_back.any());
+  sound.streams[0].sink = "alsa_output.pci";
+  lcos::SoundRollbackStream capture;
+  capture.application = "Recorder";
+  capture.media = "Capture";
+  capture.mute = true;
+  capture.volumes = {10000};
+  sound.captures.push_back(capture);
+  EXPECT(lcos::parse_sound_rollback(lcos::format_sound_rollback(sound), sound_back, &error));
+  EXPECT(sound_back.streams[0].sink == "alsa_output.pci");
+  EXPECT(sound_back.captures.size() == 1);
+  EXPECT(sound_back.captures[0].application == "Recorder");
+  EXPECT(sound_back.captures[0].mute);
+}
+
+void test_command_center_pages() {
+  lcos::PrinterRecord printer;
+  printer.name = "Office";
+  printer.ipp_state = 4;
+  printer.is_default = true;
+  EXPECT(lcos::printer_status_line(printer) == "Printing · Default");
+  printer.ipp_state = 5;
+  printer.reasons = "paused";
+  printer.paused = true;
+  printer.is_default = false;
+  EXPECT(lcos::printer_reasons_paused(printer.reasons));
+  EXPECT(lcos::printer_status_line(printer) == "Paused");
+  EXPECT(lcos::job_state_line(5) == "Printing");
+  EXPECT(lcos::job_state_line(7) == "Canceled");
+
+  EXPECT(lcos::bluetooth_device_icon("") == "bluetooth");
+  EXPECT(lcos::bluetooth_device_icon("phone") == "phone");
+  EXPECT(lcos::bluetooth_device_icon("audio-headset") == "audio-headphones");
+  EXPECT(lcos::bluetooth_device_icon("not-a-device") == "bluetooth");
+  lcos::BtDevice device;
+  device.connected = true;
+  device.trusted = true;
+  device.address = "AA:BB";
+  EXPECT(lcos::bluetooth_device_status(device).find("Connected") != std::string::npos);
+  EXPECT(lcos::bluetooth_device_status(device).find("Trusted") != std::string::npos);
+
+  EXPECT(lcos::edge_from_position("p=11;x=0;y=0") == lcos::PanelEdge::Bottom);
+  EXPECT(lcos::edge_from_position("p=2;x=0;y=0") == lcos::PanelEdge::Top);
+  EXPECT(lcos::edge_from_position("p=5;x=10;y=10") == lcos::PanelEdge::Left);
+  EXPECT(lcos::edge_from_position("p=8;x=0;y=0") == lcos::PanelEdge::Right);
+  EXPECT(lcos::position_for_edge(lcos::PanelEdge::Top) == "p=2;x=0;y=0");
+  EXPECT(lcos::clamp_panel_size(8) == 16);
+  EXPECT(lcos::clamp_panel_length(140) == 100);
+  EXPECT(lcos::clamp_panel_opacity(-3) == 0);
+  EXPECT(lcos::clamp_panel_autohide(9) == 2);
+  const std::vector<int> ids = {1, 2, 3};
+  const auto shifted = lcos::shift_plugin(ids, 0, 1);
+  EXPECT(shifted.ok);
+  EXPECT(shifted.ids[0] == 2 && shifted.ids[1] == 1);
+  EXPECT(!lcos::shift_plugin(ids, 0, -1).ok);
+  const auto dropped = lcos::drop_plugin(ids, 1);
+  EXPECT(dropped.ok && dropped.ids.size() == 2 && dropped.ids[0] == 1 && dropped.ids[1] == 3);
+  EXPECT(lcos::allocate_plugin_id(ids) == 4);
+  bool offered_pager = false;
+  for (const auto& choice : lcos::panel_plugin_choices()) {
+    if (choice.first == "pager") {
+      offered_pager = true;
+    }
+  }
+  EXPECT(!offered_pager);
+  EXPECT(lcos::panel_plugin_title("tasklist") == "Window Buttons");
+
+  EXPECT(lcos::ipv4_host_ok("192.168.1.20"));
+  EXPECT(!lcos::ipv4_host_ok("192.168.1.256"));
+  EXPECT(!lcos::ipv4_host_ok("10.0.0"));
+  std::string host;
+  int prefix = 0;
+  EXPECT(lcos::ipv4_cidr_ok("10.1.2.3/24", &host, &prefix));
+  EXPECT(host == "10.1.2.3" && prefix == 24);
+  lcos::Ipv4Edit manual;
+  manual.method = "manual";
+  manual.address = "192.168.1.20";
+  manual.prefix = 24;
+  manual.gateway = "192.168.1.1";
+  manual.dns = "1.1.1.1, 8.8.8.8";
+  EXPECT(lcos::ipv4_edit_error(manual).empty());
+  manual.gateway = "nope";
+  EXPECT(!lcos::ipv4_edit_error(manual).empty());
+  manual.method = "auto";
+  EXPECT(lcos::ipv4_edit_error(manual).empty());
+  lcos::NetLink link;
+  link.kind = "wifi";
+  link.iface = "wlan0";
+  link.state = 100;
+  link.detail = "LCOS";
+  EXPECT(lcos::link_status_text(link).find("Connected") != std::string::npos);
+  EXPECT(lcos::connection_type_label("802-11-wireless") == "Wi-Fi");
+
+  const char* openvpn =
+      "client\nremote vpn.example 1194 udp\nca /etc/openvpn/ca.crt\n<ca>\nLINE\n</ca>\nauth-user-pass\n";
+  const lcos::VpnFile ovpn = lcos::parse_vpn_file(openvpn, "office.ovpn");
+  EXPECT(ovpn.kind == lcos::VpnKind::OpenVpn);
+  EXPECT(ovpn.openvpn.remote == "vpn.example");
+  EXPECT(ovpn.openvpn.port == 1194);
+  EXPECT(ovpn.openvpn.proto == "udp");
+  EXPECT(ovpn.openvpn.ca == "/etc/openvpn/ca.crt");
+  EXPECT(ovpn.openvpn.ca_pem == "LINE");
+  EXPECT(ovpn.openvpn.user_pass);
+  const char* wireguard =
+      "[Interface]\nPrivateKey = abc=\nAddress = 10.8.0.2/32, fd00::2/128\nDNS = 1.1.1.1\n"
+      "[Peer]\nPublicKey = def=\nEndpoint = vpn.example:51820\nAllowedIPs = 0.0.0.0/0\n";
+  const lcos::VpnFile wg = lcos::parse_vpn_file(wireguard, "tunnel.conf");
+  EXPECT(wg.kind == lcos::VpnKind::WireGuard);
+  EXPECT(wg.wireguard.private_key == "abc=");
+  EXPECT(wg.wireguard.addresses.size() == 2);
+  EXPECT(wg.wireguard.peers.size() == 1);
+  EXPECT(wg.wireguard.peers[0].endpoint == "vpn.example:51820");
+  EXPECT(lcos::parse_vpn_file("hello\n", "notes.txt").kind == lcos::VpnKind::Unknown);
+  EXPECT(lcos::vpn_connection_name("/tmp/Office Net.ovpn") == "Office Net");
+
+  const auto status = lcos::parse_update_status("last-check: 1700000000\navailable: 4\n");
+  EXPECT(status.present);
+  EXPECT(status.last_check == 1700000000);
+  EXPECT(status.available == 4);
+  EXPECT(!lcos::parse_update_status("not a status\n").present);
+  EXPECT(lcos::update_status_path("/home/me/.cache") == "/home/me/.cache/lcos-updates/status");
 }
 
 int main() {
@@ -1122,6 +1248,7 @@ int main() {
   test_redesign_helpers();
   test_qa_helpers();
   test_review_round();
+  test_command_center_pages();
   if (failures != 0) {
     std::cerr << failures << " logic check(s) failed\n";
     return 1;

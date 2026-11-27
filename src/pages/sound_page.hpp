@@ -11,7 +11,10 @@
 #include <gtkmm/box.h>
 #include <gtkmm/checkbutton.h>
 #include <gtkmm/comboboxtext.h>
+#include <gtkmm/levelbar.h>
 #include <gtkmm/scale.h>
+#include <gtkmm/sizegroup.h>
+#include <gtkmm/widget.h>
 
 #include <cstdint>
 #include <map>
@@ -46,6 +49,7 @@ class SoundPage : public SettingsPage {
   struct StreamSnap {
     std::string application;
     std::string media_name;
+    std::string sink;
     std::uint32_t index = 0;
     std::vector<std::uint32_t> volumes;
     bool mute = false;
@@ -57,9 +61,10 @@ class SoundPage : public SettingsPage {
     std::string port;
   };
   struct AppRow {
-    Gtk::Box* row = nullptr;
+    Gtk::Widget* row = nullptr;
     Gtk::Scale* scale = nullptr;
     Gtk::CheckButton* mute = nullptr;
+    Gtk::ComboBoxText* device = nullptr;
     bool dragging = false;
   };
 
@@ -73,11 +78,15 @@ class SoundPage : public SettingsPage {
     InputVolume,
     InputMute,
     Profile,
-    Stream
+    Stream,
+    Capture
   };
 
   void refresh();
+  void show_sample();
   void update_apps();
+  void update_captures();
+  std::string sink_name_for(std::uint32_t index) const;
   void take_snapshot();
   void save_sound_journal() const;
   void restore_sound_journal();
@@ -110,7 +119,10 @@ class SoundPage : public SettingsPage {
   bool have_profile_card_ = false;
   bool journal_checked_ = false;
   std::vector<StreamSnap> stream_snapshot_;
+  std::vector<StreamSnap> capture_snapshot_;
   std::map<std::uint32_t, AppRow> app_rows_;
+  std::map<std::uint32_t, AppRow> capture_rows_;
+  std::string peak_source_;
 
   Gtk::ComboBoxText output_;
   Gtk::ComboBoxText output_port_;
@@ -124,7 +136,11 @@ class SoundPage : public SettingsPage {
   Gtk::Scale input_volume_;
   Gtk::CheckButton input_mute_;
   Gtk::ComboBoxText profile_;
+  Glib::RefPtr<Gtk::SizeGroup> stream_tail_;
   Gtk::Box* apps_ = nullptr;
+  Gtk::Box* recording_ = nullptr;
+  Gtk::LevelBar input_meter_;
+  Gtk::Label* meter_value_ = nullptr;
   Gtk::Widget* card_group_ = nullptr;
   Gtk::Label* input_note_ = nullptr;
   Gtk::Label* status_ = nullptr;

@@ -4,6 +4,7 @@
 
 #include "pages/accessibility_page.hpp"
 #include "pages/appearance_page.hpp"
+#include "pages/bluetooth_page.hpp"
 #include "pages/datetime_page.hpp"
 #include "pages/desktop_page.hpp"
 #include "pages/display_page.hpp"
@@ -11,12 +12,16 @@
 #include "pages/language_page.hpp"
 #include "pages/media_page.hpp"
 #include "pages/mouse_page.hpp"
+#include "pages/network_page.hpp"
 #include "pages/notifications_page.hpp"
+#include "pages/panel_page.hpp"
+#include "pages/printers_page.hpp"
 #include "pages/overview_page.hpp"
 #include "pages/power_page.hpp"
 #include "pages/software_page.hpp"
 #include "pages/sound_page.hpp"
 #include "pages/startup_page.hpp"
+#include "pages/updates_page.hpp"
 #include "pages/users_page.hpp"
 #include "pages/window_page.hpp"
 #include "pages/window_tweaks_page.hpp"
@@ -47,12 +52,48 @@
 namespace lcos {
 namespace {
 
-// Narrow enough to match the mockup, wide enough for a wrapped
-// "Removable Drives and Media" plus the icon.
-constexpr int kSidebarWidth = 220;
+// Wide enough for "Window Manager Tweaks" on one line. Longer names,
+// such as "Removable Drives and Media", ellipsize instead of wrapping.
+constexpr int kSidebarWidth = 252;
 constexpr int kSidebarMinWidth = 64;
 constexpr int kWindowMinWidth = 760;
 constexpr int kWindowMinHeight = 480;
+
+// Gives the sidebar a fixed column. A normal box lets a wide page shrink
+// that column until the names ellipsize.
+class MainSplit : public Gtk::Box {
+ public:
+  MainSplit() : Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0) {}
+
+  void set_wide(bool wide) {
+    if (wide_ == wide) {
+      return;
+    }
+    wide_ = wide;
+    queue_resize();
+  }
+
+ protected:
+  void on_size_allocate(Gtk::Allocation& allocation) override {
+    set_allocation(allocation);
+    const auto kids = get_children();
+    if (kids.size() != 2) {
+      Gtk::Box::on_size_allocate(allocation);
+      return;
+    }
+    const int side_w = std::min(allocation.get_width(), wide_ ? kSidebarWidth : kSidebarMinWidth);
+    Gtk::Allocation side = allocation;
+    side.set_width(side_w);
+    Gtk::Allocation main = allocation;
+    main.set_x(allocation.get_x() + side_w);
+    main.set_width(std::max(0, allocation.get_width() - side_w));
+    kids[0]->size_allocate(side);
+    kids[1]->size_allocate(main);
+  }
+
+ private:
+  bool wide_ = true;
+};
 
 // Minimum width is the icon rail. Natural width is the labelled sidebar.
 // A size request of 220 would stop the window from shrinking back to 760.
@@ -70,7 +111,9 @@ class SideChrome : public Gtk::Box {
 
  protected:
   void get_preferred_width_vfunc(int& minimum_width, int& natural_width) const override {
-    minimum_width = kSidebarMinWidth;
+    // The labelled width is also the minimum. A smaller minimum lets a wide
+    // page crush the names down to an ellipsis.
+    minimum_width = wide_ ? kSidebarWidth : kSidebarMinWidth;
     natural_width = wide_ ? kSidebarWidth : kSidebarMinWidth;
   }
 
@@ -110,31 +153,12 @@ std::vector<Glib::RefPtr<Gdk::Pixbuf>> source_tree_app_icons() {
 }
 
 Glib::RefPtr<Gdk::Pixbuf> load_named_icon(const std::string& name, int size, int scale) {
-  auto legacy = Gtk::IconTheme::create();
-  legacy->set_custom_theme("AdwaitaLegacy");
-  auto fallback = Gtk::IconTheme::get_default();
-  const std::string aliases[] = {name, name == "input-mouse" ? "preferences-desktop-peripherals" : "",
-                                 name == "preferences-other" ? "applications-other" : "",
-                                 name == "battery" ? "battery-full-charged" : ""};
-  for (const auto& candidate : aliases) {
-    if (candidate.empty()) {
-      continue;
-    }
-    const Glib::RefPtr<Gtk::IconTheme> themes[] = {legacy, fallback};
-  for (const auto& theme : themes) {
-      if (!theme) {
-        continue;
-      }
-      try {
-        auto pixbuf = theme->load_icon(candidate, size, scale, Gtk::ICON_LOOKUP_FORCE_SIZE);
-        if (pixbuf) {
-          return pixbuf;
-        }
-      } catch (const Glib::Error&) {
-      }
-    }
+  auto pixbuf = load_legacy_pixbuf(name, size * std::max(1, scale));
+  if (pixbuf && scale > 1 &&
+      (pixbuf->get_width() > size * scale + 2 || pixbuf->get_width() < size)) {
+    pixbuf = pixbuf->scale_simple(size * scale, size * scale, Gdk::INTERP_HYPER);
   }
-  return {};
+  return pixbuf;
 }
 
 }  // namespace
@@ -177,6 +201,11 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* users = Gtk::manage(new UsersPage(privileged_, *this));
   auto* startup = Gtk::manage(new StartupPage(store_, privileged_, *this));
   auto* software = Gtk::manage(new SoftwarePage());
+  auto* printers = Gtk::manage(new PrintersPage());
+  auto* network = Gtk::manage(new NetworkPage());
+  auto* bluetooth = Gtk::manage(new BluetoothPage());
+  auto* panel = Gtk::manage(new PanelPage(store_));
+  auto* updates = Gtk::manage(new UpdatesPage());
   auto* overview = Gtk::manage(new OverviewPage(
       *appearance, *sound, *users, pulse_, privileged_,
       [this](const std::string& id) { show_page(id); },
@@ -189,32 +218,43 @@ MainWindow::MainWindow(XfconfStore& store)
       {"window-manager", "Window Manager", "preferences-system-windows", "focus shortcuts title bar button layout theme placement", "Look and Feel", PrivKind::Off, windows},
       {"window-tweaks", "Window Manager Tweaks", "preferences-system", "compositor cycling focus accessibility zoom placement tweaks", "Look and Feel", PrivKind::Off, tweaks},
       {"notifications", "Notifications", "preferences-system-notifications", "notify theme position log applications", "Look and Feel", PrivKind::Off, notifications},
+      {"panel", "Panel", "org.xfce.panel", "xfce panel position size autohide length opacity plugins", "Look and Feel", PrivKind::Off, panel},
       {"display", "Display", "preferences-desktop-display", "resolution refresh scale rotation mirror extend monitor primary reflection", "Hardware", PrivKind::Off, display},
-      {"sound", "Sound", "audio-volume-high", "volume mute output input microphone profile", "Hardware", PrivKind::Off, sound},
+      {"sound", "Sound", "audio-volume-high", "volume mute output input microphone profile stream recording meter", "Hardware", PrivKind::Off, sound},
+      {"printers", "Printers", "printer", "cups queue default pause test page jobs", "Hardware", PrivKind::Off, printers},
       {"power", "Power", "battery", "battery sleep lid blank brightness lock screensaver", "Hardware", PrivKind::Off, power},
       {"keyboard", "Keyboard", "preferences-desktop-keyboard", "layout repeat shortcut model compose", "Hardware", PrivKind::Off, keyboard},
       {"mouse", "Mouse", "input-mouse", "pointer touchpad scrolling cursor speed", "Hardware", PrivKind::Off, mouse},
       {"removable-media", "Removable Drives and Media", "drive-removable-media", "usb camera mount cd dvd printer tablet", "Hardware", PrivKind::Off, media},
+      {"network", "Network", "network-wired", "wired wifi vpn ipv4 dhcp connection password networkmanager", "Network", PrivKind::Off, network},
+      {"bluetooth", "Bluetooth", "bluetooth", "adapter pair trust discover bluez", "Network", PrivKind::Off, bluetooth},
       {"date-time", "Date and Time", "appointment-soon", "clock timezone ntp calendar", "System", PrivKind::System, datetime},
       {"language", "Language", "preferences-desktop-locale", "locale region format language", "System", PrivKind::Locale, language},
       {"users", "Users", "system-users", "account password autologin real name picture administrator", "System", PrivKind::Accounts, users},
       {"startup", "Startup", "system-run", "autostart session login logout suspend hibernate switch user", "System", PrivKind::Off, startup},
       {"default-software", "Default Software", "preferences-other", "browser mail terminal mime utilities", "System", PrivKind::Off, software},
+      {"updates", "Updates", "software-update-available", "lcos-updates packages upgrade check", "System", PrivKind::Off, updates},
       {"accessibility", "Accessibility", "preferences-desktop-accessibility", "keyboard mouse assistive sticky keys", "System", PrivKind::Off, accessibility},
   };
 
   auto* root = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   add(*root);
-  auto* body = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+  auto* body = Gtk::manage(new MainSplit());
   prepare_page_scroll(side_scroll_);
+  side_scroll_.get_style_context()->remove_class("lcos-page");
+  side_scroll_.set_overlay_scrolling(true);
   side_scroll_.set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   side_scroll_.set_size_request(-1, -1);
-  side_scroll_.set_min_content_width(0);
+  side_scroll_.set_min_content_width(kSidebarWidth);
+  side_scroll_.set_hexpand(true);
+  sidebar_.set_hexpand(true);
   sidebar_.get_style_context()->add_class("lcos-sidebar");
   sidebar_.set_selection_mode(Gtk::SELECTION_BROWSE);
   auto* side = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+  side->set_hexpand(true);
   search_.get_style_context()->add_class("lcos-search");
   search_.set_placeholder_text("Search settings");
+  search_.set_hexpand(true);
   auto* side_box = Gtk::manage(new SideChrome());
   side_box->get_style_context()->add_class("lcos-sidebar");
   side_box->pack_start(search_, Gtk::PACK_SHRINK);
@@ -441,11 +481,9 @@ void MainWindow::build_sidebar() {
     label->set_valign(Gtk::ALIGN_CENTER);
     label->set_hexpand(true);
     label->set_xalign(0);
-    label->set_line_wrap(true);
-    label->set_line_wrap_mode(Pango::WRAP_WORD);
-    label->set_lines(2);
-    label->set_max_width_chars(16);
+    label->set_line_wrap(false);
     label->set_ellipsize(Pango::ELLIPSIZE_END);
+    label->set_max_width_chars(32);
     row_labels_.push_back(label);
     auto* dot = Gtk::manage(new Gtk::Label("●"));
     dot->get_style_context()->add_class("lcos-dot");
@@ -531,6 +569,8 @@ void MainWindow::load_icons() {
   for (std::size_t i = 0; i < nav_images_.size() && i < nav_.size(); ++i) {
     if (auto pixbuf = load_named_icon(nav_[i].icon, 24, scale)) {
       nav_images_[i]->set(Gdk::Cairo::create_surface_from_pixbuf(pixbuf, scale));
+    } else {
+      nav_images_[i]->clear();
     }
   }
   if (auto find = load_named_icon("edit-find", 16, scale)) {
@@ -539,6 +579,8 @@ void MainWindow::load_icons() {
   if (current_index_ >= 0 && current_index_ < static_cast<int>(nav_.size())) {
     if (auto pixbuf = load_named_icon(nav_[static_cast<std::size_t>(current_index_)].icon, 48, scale)) {
       heading_icon_.set(Gdk::Cairo::create_surface_from_pixbuf(pixbuf, scale));
+    } else {
+      heading_icon_.clear();
     }
   }
 }
@@ -714,6 +756,11 @@ void MainWindow::set_compact(bool compact) {
   side_scroll_.set_size_request(-1, -1);
   if (auto* chrome = dynamic_cast<SideChrome*>(side_chrome_)) {
     chrome->set_wide(!compact);
+  }
+  if (side_chrome_ != nullptr) {
+    if (auto* split = dynamic_cast<MainSplit*>(side_chrome_->get_parent())) {
+      split->set_wide(!compact);
+    }
   }
   for (auto* label : row_labels_) {
     label->set_visible(!compact);

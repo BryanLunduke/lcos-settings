@@ -21,10 +21,12 @@ struct SoundEdit {
   bool input_mute = false;
   bool profile = false;
   std::set<std::uint32_t> streams;
+  std::set<std::uint32_t> captures;
 
   bool any() const {
     return output_device || output_port || output_volume || output_mute || input_device ||
-           input_port || input_volume || input_mute || profile || !streams.empty();
+           input_port || input_volume || input_mute || profile || !streams.empty() ||
+           !captures.empty();
   }
 };
 

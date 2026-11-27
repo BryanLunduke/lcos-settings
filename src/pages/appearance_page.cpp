@@ -141,7 +141,6 @@ AppearancePage::AppearancePage(XfconfStore& store)
     : store_(store), size_buttons_(Gtk::ORIENTATION_HORIZONTAL, 0) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
-  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   auto* page = make_vbox(4);
   page->set_border_width(0);
   scroll->add(*page);
