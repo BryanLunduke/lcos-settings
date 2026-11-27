@@ -200,7 +200,7 @@ UsersPage::UsersPage(PrivSession& session, Gtk::Window& parent) : session_(sessi
   list_scroll->set_shadow_type(Gtk::SHADOW_IN);
   list_scroll->get_style_context()->add_class("lcos-users");
   list_.get_style_context()->add_class("lcos-users");
-  list_scroll->set_size_request(200, 220);
+  list_scroll->set_size_request(200, 96);
   list_scroll->set_hexpand(true);
   list_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   list_.set_selection_mode(Gtk::SELECTION_BROWSE);

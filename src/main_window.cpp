@@ -52,12 +52,48 @@
 namespace lcos {
 namespace {
 
-// Narrow enough to match the mockup, wide enough for a wrapped
-// "Removable Drives and Media" plus the icon.
-constexpr int kSidebarWidth = 220;
+// Wide enough for "Window Manager Tweaks" on one line. Longer names,
+// such as "Removable Drives and Media", ellipsize instead of wrapping.
+constexpr int kSidebarWidth = 252;
 constexpr int kSidebarMinWidth = 64;
 constexpr int kWindowMinWidth = 760;
 constexpr int kWindowMinHeight = 480;
+
+// Gives the sidebar a fixed column. A normal box lets a wide page shrink
+// that column until the names ellipsize.
+class MainSplit : public Gtk::Box {
+ public:
+  MainSplit() : Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0) {}
+
+  void set_wide(bool wide) {
+    if (wide_ == wide) {
+      return;
+    }
+    wide_ = wide;
+    queue_resize();
+  }
+
+ protected:
+  void on_size_allocate(Gtk::Allocation& allocation) override {
+    set_allocation(allocation);
+    const auto kids = get_children();
+    if (kids.size() != 2) {
+      Gtk::Box::on_size_allocate(allocation);
+      return;
+    }
+    const int side_w = std::min(allocation.get_width(), wide_ ? kSidebarWidth : kSidebarMinWidth);
+    Gtk::Allocation side = allocation;
+    side.set_width(side_w);
+    Gtk::Allocation main = allocation;
+    main.set_x(allocation.get_x() + side_w);
+    main.set_width(std::max(0, allocation.get_width() - side_w));
+    kids[0]->size_allocate(side);
+    kids[1]->size_allocate(main);
+  }
+
+ private:
+  bool wide_ = true;
+};
 
 // Minimum width is the icon rail. Natural width is the labelled sidebar.
 // A size request of 220 would stop the window from shrinking back to 760.
@@ -75,7 +111,9 @@ class SideChrome : public Gtk::Box {
 
  protected:
   void get_preferred_width_vfunc(int& minimum_width, int& natural_width) const override {
-    minimum_width = kSidebarMinWidth;
+    // The labelled width is also the minimum. A smaller minimum lets a wide
+    // page crush the names down to an ellipsis.
+    minimum_width = wide_ ? kSidebarWidth : kSidebarMinWidth;
     natural_width = wide_ ? kSidebarWidth : kSidebarMinWidth;
   }
 
@@ -180,7 +218,7 @@ MainWindow::MainWindow(XfconfStore& store)
       {"window-manager", "Window Manager", "preferences-system-windows", "focus shortcuts title bar button layout theme placement", "Look and Feel", PrivKind::Off, windows},
       {"window-tweaks", "Window Manager Tweaks", "preferences-system", "compositor cycling focus accessibility zoom placement tweaks", "Look and Feel", PrivKind::Off, tweaks},
       {"notifications", "Notifications", "preferences-system-notifications", "notify theme position log applications", "Look and Feel", PrivKind::Off, notifications},
-      {"panel", "Panel", "preferences-desktop", "xfce panel position size autohide length opacity plugins", "Look and Feel", PrivKind::Off, panel},
+      {"panel", "Panel", "org.xfce.panel", "xfce panel position size autohide length opacity plugins", "Look and Feel", PrivKind::Off, panel},
       {"display", "Display", "preferences-desktop-display", "resolution refresh scale rotation mirror extend monitor primary reflection", "Hardware", PrivKind::Off, display},
       {"sound", "Sound", "audio-volume-high", "volume mute output input microphone profile stream recording meter", "Hardware", PrivKind::Off, sound},
       {"printers", "Printers", "printer", "cups queue default pause test page jobs", "Hardware", PrivKind::Off, printers},
@@ -201,16 +239,22 @@ MainWindow::MainWindow(XfconfStore& store)
 
   auto* root = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   add(*root);
-  auto* body = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+  auto* body = Gtk::manage(new MainSplit());
   prepare_page_scroll(side_scroll_);
+  side_scroll_.get_style_context()->remove_class("lcos-page");
+  side_scroll_.set_overlay_scrolling(true);
   side_scroll_.set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   side_scroll_.set_size_request(-1, -1);
-  side_scroll_.set_min_content_width(0);
+  side_scroll_.set_min_content_width(kSidebarWidth);
+  side_scroll_.set_hexpand(true);
+  sidebar_.set_hexpand(true);
   sidebar_.get_style_context()->add_class("lcos-sidebar");
   sidebar_.set_selection_mode(Gtk::SELECTION_BROWSE);
   auto* side = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+  side->set_hexpand(true);
   search_.get_style_context()->add_class("lcos-search");
   search_.set_placeholder_text("Search settings");
+  search_.set_hexpand(true);
   auto* side_box = Gtk::manage(new SideChrome());
   side_box->get_style_context()->add_class("lcos-sidebar");
   side_box->pack_start(search_, Gtk::PACK_SHRINK);
@@ -437,11 +481,9 @@ void MainWindow::build_sidebar() {
     label->set_valign(Gtk::ALIGN_CENTER);
     label->set_hexpand(true);
     label->set_xalign(0);
-    label->set_line_wrap(true);
-    label->set_line_wrap_mode(Pango::WRAP_WORD);
-    label->set_lines(2);
-    label->set_max_width_chars(16);
+    label->set_line_wrap(false);
     label->set_ellipsize(Pango::ELLIPSIZE_END);
+    label->set_max_width_chars(32);
     row_labels_.push_back(label);
     auto* dot = Gtk::manage(new Gtk::Label("●"));
     dot->get_style_context()->add_class("lcos-dot");
@@ -714,6 +756,11 @@ void MainWindow::set_compact(bool compact) {
   side_scroll_.set_size_request(-1, -1);
   if (auto* chrome = dynamic_cast<SideChrome*>(side_chrome_)) {
     chrome->set_wide(!compact);
+  }
+  if (side_chrome_ != nullptr) {
+    if (auto* split = dynamic_cast<MainSplit*>(side_chrome_->get_parent())) {
+      split->set_wide(!compact);
+    }
   }
   for (auto* label : row_labels_) {
     label->set_visible(!compact);

@@ -24,13 +24,18 @@ Gtk::ListBoxRow* printer_row(const PrinterRecord& printer) {
   auto* name = make_label(printer.name);
   name->get_style_context()->add_class("lcos-strong");
   name->set_ellipsize(Pango::ELLIPSIZE_END);
-  auto* detail = make_label(printer_status_line(printer));
-  detail->get_style_context()->add_class("lcos-row-sub");
-  detail->set_ellipsize(Pango::ELLIPSIZE_END);
   text->pack_start(*name, Gtk::PACK_SHRINK);
-  text->pack_start(*detail, Gtk::PACK_SHRINK);
+  auto* badge = make_label(printer_status_line(printer));
+  badge->get_style_context()->add_class("lcos-badge");
+  badge->set_valign(Gtk::ALIGN_CENTER);
+  if (printer.paused || printer.ipp_state == 5) {
+    badge->get_style_context()->add_class("lcos-badge-paused");
+  } else if (printer.ipp_state == 4) {
+    badge->get_style_context()->add_class("lcos-badge-busy");
+  }
   box->pack_start(*icon, Gtk::PACK_SHRINK);
   box->pack_start(*text, Gtk::PACK_EXPAND_WIDGET);
+  box->pack_end(*badge, Gtk::PACK_SHRINK);
   row->add(*box);
   row->set_name(printer.name);
   return row;
@@ -86,6 +91,7 @@ PrintersPage::PrintersPage() : pause_("_Pause", true), remove_("_Remove", true),
   auto* queues = make_vbox(8);
   queues->pack_start(*list_scroll(printers_), Gtk::PACK_SHRINK);
   auto* actions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  actions->get_style_context()->add_class("lcos-actions");
   auto* set_default = Gtk::manage(new Gtk::Button("Set as _default", true));
   auto* test = Gtk::manage(new Gtk::Button("Print _test page", true));
   auto* add = Gtk::manage(new Gtk::Button("Add _printer…", true));

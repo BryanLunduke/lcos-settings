@@ -95,11 +95,13 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   page->pack_start(*make_frame("Applications", *apps_), Gtk::PACK_SHRINK);
   recording_ = make_vbox(6);
   page->pack_start(*make_frame("Recording", *recording_), Gtk::PACK_SHRINK);
+  auto* actions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  actions->get_style_context()->add_class("lcos-actions");
   auto* advanced = Gtk::manage(new Gtk::Button("Advanced…"));
-  advanced->set_halign(Gtk::ALIGN_START);
   advanced->set_tooltip_text("Open the volume control");
   advanced->signal_clicked().connect([this] { launch_program(*this, "pavucontrol"); });
-  page->pack_start(*advanced, Gtk::PACK_SHRINK);
+  actions->pack_end(*advanced, Gtk::PACK_SHRINK);
+  page->pack_start(*actions, Gtk::PACK_SHRINK);
 
   auto* events = make_vbox(8);
   event_sounds_.set_label("Event sounds");
@@ -957,7 +959,11 @@ void SoundPage::refresh() {
     profile_label_->set_visible(show_profile);
   }
   if (card_group_ != nullptr) {
-    card_group_->set_visible(show_profile);
+    if (show_profile) {
+      card_group_->show_all();
+    } else {
+      card_group_->hide();
+    }
   }
   const bool pulse_up = state.ready && state.error.empty();
   const bool have_input = pulse_up && !state.sources.empty();
@@ -1277,7 +1283,7 @@ void SoundPage::show_sample() {
     profile_label_->show();
   }
   if (card_group_ != nullptr) {
-    card_group_->show();
+    card_group_->show_all();
   }
   input_meter_.set_value(0.42);
   if (meter_value_ != nullptr) {

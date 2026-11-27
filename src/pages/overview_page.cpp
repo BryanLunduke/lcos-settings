@@ -50,7 +50,7 @@ const TileSpec kTiles[] = {
     {"window-manager", "Window Manager", "preferences-system-windows", "Look and Feel"},
     {"window-tweaks", "Window Manager Tweaks", "preferences-system", "Look and Feel"},
     {"notifications", "Notifications", "preferences-system-notifications", "Look and Feel"},
-    {"panel", "Panel", "preferences-desktop", "Look and Feel"},
+    {"panel", "Panel", "org.xfce.panel", "Look and Feel"},
     {"display", "Display", "preferences-desktop-display", "Hardware"},
     {"sound", "Sound", "audio-volume-high", "Hardware"},
     {"printers", "Printers", "printer", "Hardware"},
@@ -259,13 +259,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
         return false;
       },
       false);
-  auto* hero_row = Gtk::manage(new Gtk::FlowBox());
-  hero_row->set_selection_mode(Gtk::SELECTION_NONE);
-  hero_row->set_homogeneous(false);
-  hero_row->set_min_children_per_line(1);
-  hero_row->set_max_children_per_line(2);
-  hero_row->set_column_spacing(18);
-  hero_row->set_row_spacing(12);
+  auto* hero_row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 18));
   hero_row->set_hexpand(true);
   hero_row->set_halign(Gtk::ALIGN_FILL);
 
@@ -283,8 +277,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   kicker_ = Gtk::manage(new Gtk::Label());
   kicker_->set_halign(Gtk::ALIGN_FILL);
   kicker_->set_hexpand(true);
-  kicker_->set_line_wrap(true);
-  kicker_->set_lines(2);
+  kicker_->set_line_wrap(false);
   kicker_->set_ellipsize(Pango::ELLIPSIZE_END);
   kicker_->set_xalign(0);
   kicker_->get_style_context()->add_class("lcos-kicker");
@@ -300,8 +293,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   host_row->pack_start(*icon_image("computer", 16), Gtk::PACK_SHRINK);
   hostname_ = Gtk::manage(new Gtk::Label());
   hostname_->set_halign(Gtk::ALIGN_START);
-  hostname_->set_line_wrap(true);
-  hostname_->set_lines(2);
+  hostname_->set_line_wrap(false);
   hostname_->set_ellipsize(Pango::ELLIPSIZE_END);
   hostname_->set_hexpand(false);
   hostname_->get_style_context()->add_class("lcos-host");
@@ -334,8 +326,6 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
     (*values[i])->set_halign(Gtk::ALIGN_FILL);
     (*values[i])->set_hexpand(true);
     (*values[i])->set_line_wrap(false);
-    (*values[i])->set_line_wrap(true);
-    (*values[i])->set_lines(2);
     (*values[i])->set_ellipsize(Pango::ELLIPSIZE_END);
     (*values[i])->set_xalign(0);
     (*values[i])->get_style_context()->add_class("lcos-fact");
@@ -351,7 +341,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   copy_info_->signal_clicked().connect(sigc::mem_fun(*this, &OverviewPage::copy_system_info));
   info->pack_start(*copy_info_, Gtk::PACK_SHRINK);
   identity->pack_start(*info, Gtk::PACK_EXPAND_WIDGET);
-  hero_row->insert(*identity, -1);
+  hero_row->pack_start(*identity, Gtk::PACK_EXPAND_WIDGET);
 
   auto* quick = Gtk::manage(new Gtk::Grid());
   quick->set_column_spacing(10);
@@ -408,7 +398,7 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   vol->pack_start(volume_, Gtk::PACK_EXPAND_WIDGET);
   vol->pack_start(*volume_value_, Gtk::PACK_SHRINK);
   quick->attach(*vol, 0, 3, 2, 1);
-  hero_row->insert(*quick, -1);
+  hero_row->pack_start(*quick, Gtk::PACK_SHRINK);
   hero->pack_start(*hero_row, Gtk::PACK_SHRINK);
   page->pack_start(*hero, Gtk::PACK_SHRINK);
 
@@ -420,9 +410,10 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
     tiles->set_selection_mode(Gtk::SELECTION_NONE);
     tiles->set_min_children_per_line(2);
     tiles->set_max_children_per_line(6);
-    tiles->set_column_spacing(6);
-    tiles->set_row_spacing(6);
-    tiles->set_margin_top(12);
+    tiles->set_column_spacing(8);
+    tiles->set_row_spacing(4);
+    tiles->set_homogeneous(true);
+    tiles->set_margin_top(2);
     int column = 0;
     for (const auto& tile : kTiles) {
       if (std::string(tile.section) != section) {
@@ -458,7 +449,6 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
     }
     (void)column;
     auto* frame = make_frame(section, *tiles);
-    frame->set_margin_top(14);
     page->pack_start(*frame, Gtk::PACK_SHRINK);
   }
   auto* tools = Gtk::manage(new Gtk::FlowBox());
@@ -503,7 +493,6 @@ OverviewPage::OverviewPage(AppearancePage& appearance, SoundPage& sound, UsersPa
   }
   if (tool_count > 0) {
     auto* frame = make_frame("Other settings", *tools);
-    frame->set_margin_top(14);
     page->pack_start(*frame, Gtk::PACK_SHRINK);
   }
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());

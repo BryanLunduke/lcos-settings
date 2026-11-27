@@ -242,7 +242,6 @@ DisplayPage::DisplayPage(XfconfStore& store, XrandrBackend& randr, Gtk::Window& 
     : store_(store), randr_(randr), parent_(parent) {
   auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
   prepare_page_scroll(*scroll);
-  scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   auto* right = make_vbox(0);
   right->set_border_width(0);
   right->set_hexpand(true);

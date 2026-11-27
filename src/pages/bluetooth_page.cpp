@@ -70,6 +70,7 @@ BluetoothPage::BluetoothPage() : trusted_("_Trusted", true), scan_("_Scan", true
   devices->pack_start(*list_scroll, Gtk::PACK_SHRINK);
   devices->pack_start(trusted_, Gtk::PACK_SHRINK);
   auto* actions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  actions->get_style_context()->add_class("lcos-actions");
   auto* pair = Gtk::manage(new Gtk::Button("_Pair", true));
   auto* connect = Gtk::manage(new Gtk::Button("_Connect", true));
   auto* disconnect = Gtk::manage(new Gtk::Button("_Disconnect", true));

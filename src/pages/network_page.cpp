@@ -13,6 +13,28 @@
 namespace lcos {
 namespace {
 
+Gtk::Box* link_row(const char* icon, const char* caption, Gtk::Label** state) {
+  auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+  row->set_margin_top(2);
+  row->set_margin_bottom(2);
+  auto* image = Gtk::manage(new Gtk::Image());
+  image->set_pixel_size(16);
+  image->set_valign(Gtk::ALIGN_CENTER);
+  if (auto pixbuf = load_legacy_pixbuf(icon, 16)) {
+    image->set(pixbuf);
+  }
+  auto* title = make_label(caption);
+  title->set_size_request(64, -1);
+  *state = make_label("—");
+  (*state)->get_style_context()->add_class("lcos-strong");
+  (*state)->set_ellipsize(Pango::ELLIPSIZE_END);
+  (*state)->set_hexpand(true);
+  row->pack_start(*image, Gtk::PACK_SHRINK);
+  row->pack_start(*title, Gtk::PACK_SHRINK);
+  row->pack_start(**state, Gtk::PACK_EXPAND_WIDGET);
+  return row;
+}
+
 Gtk::ListBoxRow* connection_row(const NetConnection& connection) {
   auto* row = Gtk::manage(new Gtk::ListBoxRow());
   auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 1));
@@ -50,13 +72,9 @@ NetworkPage::NetworkPage()
   auto* banner = make_empty_state("network-wired", "Looking for NetworkManager…", &status_);
   page->pack_start(*banner, Gtk::PACK_SHRINK);
   page->set_margin_bottom(16);
-  wired_ = make_label("Wired: —");
-  wifi_ = make_label("Wi-Fi: —");
-  wired_->set_ellipsize(Pango::ELLIPSIZE_END);
-  wifi_->set_ellipsize(Pango::ELLIPSIZE_END);
   auto* links = make_vbox(4);
-  links->pack_start(*wired_, Gtk::PACK_SHRINK);
-  links->pack_start(*wifi_, Gtk::PACK_SHRINK);
+  links->pack_start(*link_row("network-wired", "Wired", &wired_), Gtk::PACK_SHRINK);
+  links->pack_start(*link_row("network-wireless", "Wi-Fi", &wifi_), Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Status", *links), Gtk::PACK_SHRINK);
 
   list_.set_selection_mode(Gtk::SELECTION_SINGLE);
@@ -100,6 +118,7 @@ NetworkPage::NetworkPage()
   form.add_full(*wifi_box_);
   editor_->pack_start(form.grid(), Gtk::PACK_SHRINK);
   auto* buttons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  buttons->get_style_context()->add_class("lcos-actions");
   auto* save = Gtk::manage(new Gtk::Button("_Save", true));
   auto* forget = Gtk::manage(new Gtk::Button("_Forget", true));
   auto* import_vpn = Gtk::manage(new Gtk::Button("Import _VPN…", true));
@@ -363,8 +382,8 @@ void NetworkPage::refresh(bool keep_form) {
     if (auto* banner = status_->get_parent()) {
       banner->show();
     }
-    wired_->set_text("Wired: unavailable");
-    wifi_->set_text("Wi-Fi: unavailable");
+    wired_->set_text("Unavailable");
+    wifi_->set_text("Unavailable");
     editor_->set_sensitive(false);
   } else {
     status_->set_text("");
@@ -375,18 +394,22 @@ void NetworkPage::refresh(bool keep_form) {
     bool saw_wifi = false;
     for (const auto& link : snapshot_.links) {
       if (link.kind == "wifi" && !saw_wifi) {
-        wifi_->set_text(link_status_text(link));
+        const std::string line = link_status_text(link);
+        const auto colon = line.find(": ");
+        wifi_->set_text(colon == std::string::npos ? line : line.substr(colon + 2));
         saw_wifi = true;
       } else if (link.kind != "wifi" && !saw_wired) {
-        wired_->set_text(link_status_text(link));
+        const std::string line = link_status_text(link);
+        const auto colon = line.find(": ");
+        wired_->set_text(colon == std::string::npos ? line : line.substr(colon + 2));
         saw_wired = true;
       }
     }
     if (!saw_wired) {
-      wired_->set_text("Wired: no device");
+      wired_->set_text("No device");
     }
     if (!saw_wifi) {
-      wifi_->set_text("Wi-Fi: no device");
+      wifi_->set_text("No device");
     }
     editor_->set_sensitive(true);
   }
@@ -398,8 +421,7 @@ void NetworkPage::refresh(bool keep_form) {
     plugins += "WireGuard import needs NetworkManager's WireGuard support.";
   }
   if (plugins.empty()) {
-    plugin_note_->set_text(
-        "VPN import uses the NetworkManager OpenVPN and WireGuard plugins when they are installed.");
+    plugin_note_->set_text("OpenVPN and WireGuard import need those NetworkManager plugins.");
   } else {
     plugin_note_->set_text(plugins);
   }

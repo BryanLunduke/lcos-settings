@@ -59,15 +59,23 @@ UpdatesPage::UpdatesPage() : check_("_Check for Updates", true) {
   page->set_margin_bottom(16);
   auto* banner = make_empty_state("software-update-available",
                                   "Check for Updates opens lcos-updates.", &status_);
+  banner->set_no_show_all(true);
   body->pack_start(*banner, Gtk::PACK_SHRINK);
+  auto* facts = make_vbox(4);
   checked_ = make_label("Last check: —");
   available_ = make_label("Available updates: —");
+  available_->get_style_context()->add_class("lcos-strong");
   checked_->set_line_wrap(true);
   available_->set_line_wrap(true);
-  body->pack_start(*checked_, Gtk::PACK_SHRINK);
-  body->pack_start(*available_, Gtk::PACK_SHRINK);
+  checked_->get_style_context()->add_class("lcos-note");
+  facts->pack_start(*available_, Gtk::PACK_SHRINK);
+  facts->pack_start(*checked_, Gtk::PACK_SHRINK);
+  body->pack_start(*facts, Gtk::PACK_SHRINK);
+  auto* actions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  actions->get_style_context()->add_class("lcos-actions");
   check_.set_halign(Gtk::ALIGN_START);
-  body->pack_start(check_, Gtk::PACK_SHRINK);
+  actions->pack_start(check_, Gtk::PACK_SHRINK);
+  body->pack_start(*actions, Gtk::PACK_SHRINK);
   page->pack_start(*make_frame("Software updates", *body), Gtk::PACK_SHRINK);
   check_.signal_clicked().connect([this] { launch_program(*this, "lcos-updates"); });
   show_all();
@@ -77,10 +85,14 @@ UpdatesPage::UpdatesPage() : check_("_Check for Updates", true) {
 void UpdatesPage::refresh() {
   const bool installed = program_installed("lcos-updates") || settings_sample();
   check_.set_sensitive(installed);
+  if (auto* banner = status_->get_parent()) {
+    banner->set_visible(!installed);
+  }
   if (!installed) {
     status_->set_text("lcos-updates is not installed.");
-  } else {
-    status_->set_text("Check for Updates opens lcos-updates.");
+    available_->set_text("");
+    checked_->set_text("");
+    return;
   }
   const UpdateSnapshot snapshot = read_status();
   if (!snapshot.present || snapshot.last_check < 0) {

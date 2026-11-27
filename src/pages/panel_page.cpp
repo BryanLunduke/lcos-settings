@@ -54,7 +54,7 @@ PanelPage::PanelPage(XfconfStore& store)
   opacity_.set_value(100);
   color_.set_use_alpha(false);
 
-  auto* layout = make_vbox(8);
+  auto* layout = make_vbox(4);
   FormGrid form;
   panel_caption_ = form.add("Panel", panel_);
   form.add("Position", position_);
@@ -73,12 +73,13 @@ PanelPage::PanelPage(XfconfStore& store)
   list_scroll->get_style_context()->add_class("lcos-list");
   list_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   list_scroll->set_shadow_type(Gtk::SHADOW_IN);
-  list_scroll->set_size_request(-1, 140);
+  list_scroll->set_size_request(-1, 40);
   list_scroll->set_propagate_natural_height(false);
   list_scroll->add(items_list_);
   auto* items = make_vbox(8);
   items->pack_start(*list_scroll, Gtk::PACK_SHRINK);
   auto* actions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+  actions->get_style_context()->add_class("lcos-actions");
   auto* up = Gtk::manage(new Gtk::Button("_Up", true));
   auto* down = Gtk::manage(new Gtk::Button("_Down", true));
   auto* remove = Gtk::manage(new Gtk::Button("_Remove", true));

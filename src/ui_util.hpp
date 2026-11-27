@@ -75,12 +75,18 @@ inline Glib::RefPtr<Gdk::Pixbuf> load_legacy_pixbuf(const std::string& name, int
   auto legacy = Gtk::IconTheme::create();
   legacy->set_custom_theme("AdwaitaLegacy");
   auto fallback = Gtk::IconTheme::get_default();
-  const Glib::RefPtr<Gtk::IconTheme> themes[] = {legacy, fallback};
-  for (const auto& theme : themes) {
-    if (!theme) {
-      continue;
-    }
-    for (const auto& candidate : names) {
+  Glib::RefPtr<Gtk::IconTheme> elementary = Gtk::IconTheme::create();
+  elementary->set_custom_theme("elementary-xfce");
+  Glib::RefPtr<Gtk::IconTheme> hicolor = Gtk::IconTheme::create();
+  hicolor->set_custom_theme("hicolor");
+  // Exact name in Adwaita Legacy first. elementary-xfce supplies glyphs that
+  // set does not ship, such as bluetooth and the XFCE panel.
+  const Glib::RefPtr<Gtk::IconTheme> themes[] = {legacy, elementary, hicolor, fallback};
+  for (const auto& candidate : names) {
+    for (const auto& theme : themes) {
+      if (!theme) {
+        continue;
+      }
       try {
         auto pixbuf = theme->load_icon(candidate, size, 1, Gtk::ICON_LOOKUP_FORCE_SIZE);
         if (pixbuf) {
@@ -110,10 +116,11 @@ inline Glib::RefPtr<Gdk::Pixbuf> load_legacy_pixbuf(const std::string& name, int
 inline Gtk::Box* make_empty_state(const char* icon_name, const Glib::ustring& text,
                                  Gtk::Label** label_out = nullptr) {
   auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
-  box->set_halign(Gtk::ALIGN_START);
+  box->set_halign(Gtk::ALIGN_CENTER);
   box->set_valign(Gtk::ALIGN_CENTER);
-  box->set_margin_top(10);
-  box->set_margin_bottom(6);
+  box->set_hexpand(true);
+  box->set_margin_top(22);
+  box->set_margin_bottom(18);
   box->get_style_context()->add_class("lcos-empty");
   auto* image = Gtk::manage(new Gtk::Image());
   image->set_pixel_size(32);
@@ -140,9 +147,7 @@ inline Gtk::Box* make_empty_state(const char* icon_name, const Glib::ustring& te
 inline void legacy_icon_candidates(const std::string& name, std::vector<std::string>& out) {
   out.clear();
   out.push_back(name);
-  if (name == "bluetooth") {
-    out.emplace_back("network-wireless");
-  } else if (name == "preferences-desktop-apps" || name == "panel") {
+  if (name == "org.xfce.panel" || name == "preferences-desktop-apps" || name == "panel") {
     out.emplace_back("preferences-desktop");
   } else if (name == "input-mouse") {
     out.emplace_back("preferences-desktop-peripherals");
@@ -226,11 +231,13 @@ inline Gtk::Box* make_vbox(int spacing = 8) {
 // when the contents do not fit. The minimum stays small so the window can
 // be about half the default height.
 inline void prepare_page_scroll(Gtk::ScrolledWindow& scroll) {
-  scroll.set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+  // Horizontal automatic lets a wide page scroll instead of squeezing the
+  // sidebar. Overlay drawing keeps the bar off pages that actually fit.
+  scroll.set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
   scroll.set_shadow_type(Gtk::SHADOW_NONE);
-  // A real trough, not an overlay bar. Overlay scrolling hid the bar on
-  // Clearlooks and the last lines looked clipped against the footer.
-  scroll.set_overlay_scrolling(false);
+  // Overlay bars take no width until the page actually overflows, so a page
+  // that fits stays clear and the sidebar keeps its label column.
+  scroll.set_overlay_scrolling(true);
   scroll.set_propagate_natural_height(false);
   scroll.set_propagate_natural_width(false);
   scroll.set_min_content_height(0);
@@ -387,7 +394,7 @@ inline void guard_scroll_tree(Gtk::Widget& widget) {
 inline Gtk::Box* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
   auto* frame = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   frame->get_style_context()->add_class("lcos-group");
-  frame->set_margin_top(12);
+  frame->set_margin_top(4);
   auto* head = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
   auto* label = Gtk::manage(new Gtk::Label(title));
   label->set_halign(Gtk::ALIGN_START);
@@ -412,7 +419,7 @@ class FormGrid {
   // The width argument is ignored so every page shares one caption column.
   explicit FormGrid(int = kFormLabelWidth) : label_width_(kFormLabelWidth) {
     grid_ = Gtk::manage(new Gtk::Grid());
-    grid_->set_row_spacing(6);
+    grid_->set_row_spacing(8);
     grid_->set_column_spacing(12);
     grid_->set_margin_top(2);
   }
