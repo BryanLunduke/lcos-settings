@@ -33,7 +33,7 @@ Description: LCOS Command Center, unified settings for LCOS
  LCOS Command Center is a GTK 3 settings window for the Lunduke Computer
  Operating System. It covers display, desktop, appearance, windows,
  notifications, removable media, accessibility, power, keyboard, mouse,
- sound, printers, network, bluetooth, panel, updates, date and time,
+ sound, printers, network, bluetooth, panel, date and time,
  language, users, startup, and default software.
  Privileged changes go through pkexec. The section list uses the Adwaita
  Legacy icons.

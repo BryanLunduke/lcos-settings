@@ -7,10 +7,10 @@ separate XFCE dialog: Display, Desktop, Appearance, Window Manager (including
 title-bar button layout), Window Manager Tweaks, Keyboard, Mouse, Accessibility,
 Notifications, Power (including a screen saver and lock group), Sound,
 Removable Drives and Media, Default Software, Date and Time, Language, Users,
-Startup (including the logout dialog), Panel, Printers, Network, Bluetooth,
-and Updates.
+Startup (including the logout dialog), Panel, Printers, Network, and Bluetooth.
 
-Overview opens those pages in Command Center. Adding a printer still opens
+Overview opens those pages in Command Center. lcos-updates stays a separate
+application in the LCOS menu. Adding a printer still opens
 system-config-printer. Network, Bluetooth, Panel, and Sound keep an Advanced
 button for nm-connection-editor, blueman-manager, xfce4-panel, and pavucontrol.
 Settings Editor stays a separate program, and Overview shows that tile only

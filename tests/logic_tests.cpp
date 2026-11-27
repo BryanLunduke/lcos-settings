@@ -8,7 +8,6 @@
 #include "logic/panel_model.hpp"
 #include "logic/printers.hpp"
 #include "logic/rollback_journal.hpp"
-#include "logic/updates_status.hpp"
 #include "logic/scroll_guard.hpp"
 #include "logic/button_layout.hpp"
 #include "logic/confirm.hpp"
@@ -1226,13 +1225,6 @@ void test_command_center_pages() {
   EXPECT(wg.wireguard.peers[0].endpoint == "vpn.example:51820");
   EXPECT(lcos::parse_vpn_file("hello\n", "notes.txt").kind == lcos::VpnKind::Unknown);
   EXPECT(lcos::vpn_connection_name("/tmp/Office Net.ovpn") == "Office Net");
-
-  const auto status = lcos::parse_update_status("last-check: 1700000000\navailable: 4\n");
-  EXPECT(status.present);
-  EXPECT(status.last_check == 1700000000);
-  EXPECT(status.available == 4);
-  EXPECT(!lcos::parse_update_status("not a status\n").present);
-  EXPECT(lcos::update_status_path("/home/me/.cache") == "/home/me/.cache/lcos-updates/status");
 }
 
 int main() {

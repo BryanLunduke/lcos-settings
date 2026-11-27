@@ -21,7 +21,6 @@
 #include "pages/software_page.hpp"
 #include "pages/sound_page.hpp"
 #include "pages/startup_page.hpp"
-#include "pages/updates_page.hpp"
 #include "pages/users_page.hpp"
 #include "pages/window_page.hpp"
 #include "pages/window_tweaks_page.hpp"
@@ -205,7 +204,6 @@ MainWindow::MainWindow(XfconfStore& store)
   auto* network = Gtk::manage(new NetworkPage());
   auto* bluetooth = Gtk::manage(new BluetoothPage());
   auto* panel = Gtk::manage(new PanelPage(store_));
-  auto* updates = Gtk::manage(new UpdatesPage());
   auto* overview = Gtk::manage(new OverviewPage(
       *appearance, *sound, *users, pulse_, privileged_,
       [this](const std::string& id) { show_page(id); },
@@ -233,7 +231,6 @@ MainWindow::MainWindow(XfconfStore& store)
       {"users", "Users", "system-users", "account password autologin real name picture administrator", "System", PrivKind::Accounts, users},
       {"startup", "Startup", "system-run", "autostart session login logout suspend hibernate switch user", "System", PrivKind::Off, startup},
       {"default-software", "Default Software", "preferences-other", "browser mail terminal mime utilities", "System", PrivKind::Off, software},
-      {"updates", "Updates", "software-update-available", "lcos-updates packages upgrade check", "System", PrivKind::Off, updates},
       {"accessibility", "Accessibility", "preferences-desktop-accessibility", "keyboard mouse assistive sticky keys", "System", PrivKind::Off, accessibility},
   };
 
