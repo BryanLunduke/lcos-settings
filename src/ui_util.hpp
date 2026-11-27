@@ -28,6 +28,9 @@
 #include <string>
 #include <vector>
 
+#include <gtkmm/icontheme.h>
+#include <gtkmm/image.h>
+
 #include <gtk/gtk.h>
 
 #include "logic/scroll_guard.hpp"
@@ -47,15 +50,113 @@ inline Gtk::Label* make_label(const Glib::ustring& text) {
   return label;
 }
 
-// Help text indented with the group body, not the page edge.
+// Help text indented with the group body. It wraps inside the page instead
+// of asking the window to grow, and stays dimmer than the controls.
 inline Gtk::Label* make_note(const Glib::ustring& text) {
   auto* label = make_label(text);
   label->set_line_wrap(true);
   label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
-  label->set_max_width_chars(72);
+  label->set_width_chars(24);
+  label->set_max_width_chars(56);
+  label->set_hexpand(true);
+  label->set_halign(Gtk::ALIGN_FILL);
   label->set_margin_start(12);
+  label->set_margin_end(12);
   label->get_style_context()->add_class("lcos-faint");
+  label->get_style_context()->add_class("lcos-note");
   return label;
+}
+
+inline void legacy_icon_candidates(const std::string& name, std::vector<std::string>& out);
+
+inline Glib::RefPtr<Gdk::Pixbuf> load_legacy_pixbuf(const std::string& name, int size) {
+  std::vector<std::string> names;
+  legacy_icon_candidates(name, names);
+  auto legacy = Gtk::IconTheme::create();
+  legacy->set_custom_theme("AdwaitaLegacy");
+  auto fallback = Gtk::IconTheme::get_default();
+  const Glib::RefPtr<Gtk::IconTheme> themes[] = {legacy, fallback};
+  for (const auto& theme : themes) {
+    if (!theme) {
+      continue;
+    }
+    for (const auto& candidate : names) {
+      try {
+        auto pixbuf = theme->load_icon(candidate, size, 1, Gtk::ICON_LOOKUP_FORCE_SIZE);
+        if (pixbuf) {
+          return pixbuf;
+        }
+      } catch (const Glib::Error&) {
+      }
+      try {
+        auto pixbuf = theme->load_icon(candidate, size, 1, Gtk::IconLookupFlags(0));
+        if (pixbuf) {
+          return pixbuf;
+        }
+      } catch (const Glib::Error&) {
+      }
+    }
+  }
+  if (legacy) {
+    try {
+      return legacy->load_icon("applications-system", size, 1, Gtk::ICON_LOOKUP_FORCE_SIZE);
+    } catch (const Glib::Error&) {
+    }
+  }
+  return {};
+}
+
+// One icon and one line, used when a service is missing or a list is empty.
+inline Gtk::Box* make_empty_state(const char* icon_name, const Glib::ustring& text,
+                                 Gtk::Label** label_out = nullptr) {
+  auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
+  box->set_halign(Gtk::ALIGN_START);
+  box->set_valign(Gtk::ALIGN_CENTER);
+  box->set_margin_top(10);
+  box->set_margin_bottom(6);
+  box->get_style_context()->add_class("lcos-empty");
+  auto* image = Gtk::manage(new Gtk::Image());
+  image->set_pixel_size(32);
+  if (auto pixbuf = load_legacy_pixbuf(icon_name, 32)) {
+    image->set(pixbuf);
+  }
+  auto* label = make_label(text);
+  label->set_line_wrap(true);
+  label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+  label->set_max_width_chars(48);
+  label->set_hexpand(true);
+  label->set_valign(Gtk::ALIGN_CENTER);
+  label->get_style_context()->add_class("lcos-note");
+  if (label_out != nullptr) {
+    *label_out = label;
+  }
+  box->pack_start(*image, Gtk::PACK_SHRINK);
+  box->pack_start(*label, Gtk::PACK_EXPAND_WIDGET);
+  return box;
+}
+
+// Names to try, in order, inside Adwaita Legacy before any other theme.
+// Adwaita Legacy 46 has no bluetooth glyph and no preferences-desktop-apps.
+inline void legacy_icon_candidates(const std::string& name, std::vector<std::string>& out) {
+  out.clear();
+  out.push_back(name);
+  if (name == "bluetooth") {
+    out.emplace_back("network-wireless");
+  } else if (name == "preferences-desktop-apps" || name == "panel") {
+    out.emplace_back("preferences-desktop");
+  } else if (name == "input-mouse") {
+    out.emplace_back("preferences-desktop-peripherals");
+  } else if (name == "preferences-other") {
+    out.emplace_back("applications-other");
+  } else if (name == "battery") {
+    out.emplace_back("battery-full-charged");
+  } else if (name == "software-update-available") {
+    out.emplace_back("system-software-update");
+  } else if (name == "printer") {
+    out.emplace_back("printer-printing");
+  } else if (name == "network-wired") {
+    out.emplace_back("preferences-system-network");
+  }
 }
 
 inline void prepare_dialog_box(Gtk::Box& box) {
@@ -88,7 +189,9 @@ inline void cap_combo_width(Gtk::ComboBox& combo) {
   for (auto* cell : combo.get_cells()) {
     if (auto* text = dynamic_cast<Gtk::CellRendererText*>(cell)) {
       text->property_ellipsize() = Pango::ELLIPSIZE_END;
-      text->property_width_chars() = 12;
+      // Wide enough for a normal label ("Automatic (DHCP)", "Built-in Audio").
+      // Longer names ellipsize at 24 characters.
+      text->property_width_chars() = 22;
       text->property_max_width_chars() = 24;
     }
   }
@@ -123,11 +226,11 @@ inline Gtk::Box* make_vbox(int spacing = 8) {
 // when the contents do not fit. The minimum stays small so the window can
 // be about half the default height.
 inline void prepare_page_scroll(Gtk::ScrolledWindow& scroll) {
-  scroll.set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
+  scroll.set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   scroll.set_shadow_type(Gtk::SHADOW_NONE);
-  // Overlay scrolling draws the bar on top of the page, so a trough is not
-  // reserved when the page already fits, and the window can still shrink.
-  scroll.set_overlay_scrolling(true);
+  // A real trough, not an overlay bar. Overlay scrolling hid the bar on
+  // Clearlooks and the last lines looked clipped against the footer.
+  scroll.set_overlay_scrolling(false);
   scroll.set_propagate_natural_height(false);
   scroll.set_propagate_natural_width(false);
   scroll.set_min_content_height(0);
@@ -284,7 +387,7 @@ inline void guard_scroll_tree(Gtk::Widget& widget) {
 inline Gtk::Box* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
   auto* frame = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
   frame->get_style_context()->add_class("lcos-group");
-  frame->set_margin_top(18);
+  frame->set_margin_top(12);
   auto* head = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
   auto* label = Gtk::manage(new Gtk::Label(title));
   label->set_halign(Gtk::ALIGN_START);
@@ -296,9 +399,9 @@ inline Gtk::Box* make_frame(const Glib::ustring& title, Gtk::Widget& child) {
   head->pack_start(*label, Gtk::PACK_SHRINK);
   head->pack_start(*rule, Gtk::PACK_EXPAND_WIDGET);
   child.set_margin_start(12);
-  child.set_margin_end(2);
-  child.set_margin_top(12);
-  child.set_margin_bottom(0);
+  child.set_margin_end(4);
+  child.set_margin_top(8);
+  child.set_margin_bottom(2);
   frame->pack_start(*head, Gtk::PACK_SHRINK);
   frame->pack_start(child, Gtk::PACK_SHRINK);
   return frame;
@@ -345,9 +448,16 @@ class FormGrid {
     const bool combo = dynamic_cast<Gtk::ComboBox*>(&widget) != nullptr;
     // Combos stay at their text width. Filling the column pushed the
     // arrangement list off the right edge of a 1100 px window.
-    const bool expand = !spin && !combo && (dynamic_cast<Gtk::Scale*>(&widget) != nullptr ||
-                                            dynamic_cast<Gtk::Entry*>(&widget) != nullptr ||
-                                            dynamic_cast<Gtk::Box*>(&widget) != nullptr);
+    if (auto* entry = dynamic_cast<Gtk::Entry*>(&widget)) {
+      if (!spin && entry->get_width_chars() < 18) {
+        entry->set_width_chars(26);
+      }
+    }
+    // Entries and spins stay at a text width. Scales use the rest of the
+    // column so every page shares one control edge.
+    const bool expand = !spin && !combo && dynamic_cast<Gtk::Entry*>(&widget) == nullptr &&
+                        (dynamic_cast<Gtk::Scale*>(&widget) != nullptr ||
+                         dynamic_cast<Gtk::Box*>(&widget) != nullptr);
     if (expand) {
       widget.set_hexpand(true);
       widget.set_halign(Gtk::ALIGN_FILL);

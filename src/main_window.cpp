@@ -115,31 +115,12 @@ std::vector<Glib::RefPtr<Gdk::Pixbuf>> source_tree_app_icons() {
 }
 
 Glib::RefPtr<Gdk::Pixbuf> load_named_icon(const std::string& name, int size, int scale) {
-  auto legacy = Gtk::IconTheme::create();
-  legacy->set_custom_theme("AdwaitaLegacy");
-  auto fallback = Gtk::IconTheme::get_default();
-  const std::string aliases[] = {name, name == "input-mouse" ? "preferences-desktop-peripherals" : "",
-                                 name == "preferences-other" ? "applications-other" : "",
-                                 name == "battery" ? "battery-full-charged" : ""};
-  for (const auto& candidate : aliases) {
-    if (candidate.empty()) {
-      continue;
-    }
-    const Glib::RefPtr<Gtk::IconTheme> themes[] = {legacy, fallback};
-  for (const auto& theme : themes) {
-      if (!theme) {
-        continue;
-      }
-      try {
-        auto pixbuf = theme->load_icon(candidate, size, scale, Gtk::ICON_LOOKUP_FORCE_SIZE);
-        if (pixbuf) {
-          return pixbuf;
-        }
-      } catch (const Glib::Error&) {
-      }
-    }
+  auto pixbuf = load_legacy_pixbuf(name, size * std::max(1, scale));
+  if (pixbuf && scale > 1 &&
+      (pixbuf->get_width() > size * scale + 2 || pixbuf->get_width() < size)) {
+    pixbuf = pixbuf->scale_simple(size * scale, size * scale, Gdk::INTERP_HYPER);
   }
-  return {};
+  return pixbuf;
 }
 
 }  // namespace
@@ -199,7 +180,7 @@ MainWindow::MainWindow(XfconfStore& store)
       {"window-manager", "Window Manager", "preferences-system-windows", "focus shortcuts title bar button layout theme placement", "Look and Feel", PrivKind::Off, windows},
       {"window-tweaks", "Window Manager Tweaks", "preferences-system", "compositor cycling focus accessibility zoom placement tweaks", "Look and Feel", PrivKind::Off, tweaks},
       {"notifications", "Notifications", "preferences-system-notifications", "notify theme position log applications", "Look and Feel", PrivKind::Off, notifications},
-      {"panel", "Panel", "preferences-desktop-apps", "xfce panel position size autohide length opacity plugins", "Look and Feel", PrivKind::Off, panel},
+      {"panel", "Panel", "preferences-desktop", "xfce panel position size autohide length opacity plugins", "Look and Feel", PrivKind::Off, panel},
       {"display", "Display", "preferences-desktop-display", "resolution refresh scale rotation mirror extend monitor primary reflection", "Hardware", PrivKind::Off, display},
       {"sound", "Sound", "audio-volume-high", "volume mute output input microphone profile stream recording meter", "Hardware", PrivKind::Off, sound},
       {"printers", "Printers", "printer", "cups queue default pause test page jobs", "Hardware", PrivKind::Off, printers},

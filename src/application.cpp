@@ -43,7 +43,14 @@ void install_css() {
       "flowboxchild.lcos-wallpaper.lcos-picked label.lcos-thumb-name {"
       "  color: @theme_text_color; }"
       "scale.lcos-scale trough { margin-top: 4px; margin-bottom: 4px; margin-right: 12px; }"
-      "scale.lcos-scale label { min-width: 2.6em; }");
+      "scale.lcos-scale label { min-width: 2.6em; }"
+      "label.lcos-note { font-size: 11.5px; }"
+      ".lcos-empty { margin-top: 4px; margin-bottom: 2px; }"
+      "scrolledwindow.lcos-page { padding-bottom: 2px; }"
+      "scrolledwindow.lcos-page scrollbar.vertical { min-width: 12px; }"
+      ".lcos-page button { min-height: 26px; }"
+      "button.lcos-tile { min-height: 88px; }"
+      ".lcos-group { margin-bottom: 2px; }");
   Gtk::StyleContext::add_provider_for_screen(screen, extra,
                                              GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 }

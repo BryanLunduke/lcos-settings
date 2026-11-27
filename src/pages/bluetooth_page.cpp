@@ -46,8 +46,8 @@ BluetoothPage::BluetoothPage() : trusted_("_Trusted", true), scan_("_Scan", true
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
-  status_ = make_note("Looking for Bluetooth…");
-  page->pack_start(*status_, Gtk::PACK_SHRINK);
+  page->pack_start(*make_empty_state("bluetooth", "Looking for Bluetooth…", &status_), Gtk::PACK_SHRINK);
+  page->set_margin_bottom(16);
   body_ = make_vbox(8);
 
   auto* adapter = make_vbox(8);
@@ -290,17 +290,26 @@ bool BluetoothPage::scan_tick() {
 void BluetoothPage::refresh() {
   const bool sample = settings_sample();
   snapshot_ = client_.snapshot(sample);
+  auto show_banner = [this](bool show) {
+    if (auto* banner = status_->get_parent()) {
+      if (show) {
+        banner->show();
+      } else {
+        banner->hide();
+      }
+    }
+  };
   if (!snapshot_.service) {
     status_->set_text(snapshot_.error.empty() ? "Bluetooth is not available." : snapshot_.error);
-    status_->show();
+    show_banner(true);
     body_->set_sensitive(false);
   } else if (!snapshot_.adapter) {
     status_->set_text("No Bluetooth adapter is available.");
-    status_->show();
+    show_banner(true);
     body_->set_sensitive(false);
   } else {
     status_->set_text("");
-    status_->hide();
+    show_banner(false);
     body_->set_sensitive(true);
   }
   rebuild();

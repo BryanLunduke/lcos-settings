@@ -77,8 +77,8 @@ PrintersPage::PrintersPage() : pause_("_Pause", true), remove_("_Remove", true),
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
-  status_ = make_note("Looking for CUPS…");
-  page->pack_start(*status_, Gtk::PACK_SHRINK);
+  page->pack_start(*make_empty_state("printer", "Looking for CUPS…", &status_), Gtk::PACK_SHRINK);
+  page->set_margin_bottom(16);
 
   body_ = make_vbox(8);
   printers_.set_selection_mode(Gtk::SELECTION_SINGLE);
@@ -245,14 +245,24 @@ void PrintersPage::refresh() {
   snapshot_ = cups_.snapshot(jobs_for, settings_sample());
   if (!snapshot_.available) {
     status_->set_text(snapshot_.error.empty() ? "CUPS is not running." : snapshot_.error);
-    status_->show();
+    if (auto* banner = status_->get_parent()) {
+      banner->show();
+    }
     if (body_ != nullptr) {
       body_->set_sensitive(false);
     }
+  } else if (snapshot_.printers.empty()) {
+    status_->set_text("No printers are configured.");
+    if (auto* banner = status_->get_parent()) {
+      banner->show();
+    }
+    if (body_ != nullptr) {
+      body_->set_sensitive(true);
+    }
   } else {
-    status_->set_text(snapshot_.printers.empty() ? "No printers are configured."
-                                                 : "CUPS is running.");
-    status_->show();
+    if (auto* banner = status_->get_parent()) {
+      banner->hide();
+    }
     if (body_ != nullptr) {
       body_->set_sensitive(true);
     }

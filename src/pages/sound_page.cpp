@@ -30,9 +30,9 @@ SoundPage::SoundPage(XfconfStore& store, PulseClient& pulse)
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
-  status_ = make_label("Connecting to PulseAudio…");
-  status_->set_line_wrap(true);
-  page->pack_start(*status_, Gtk::PACK_SHRINK);
+  page->pack_start(*make_empty_state("audio-volume-muted", "Connecting to PulseAudio…", &status_),
+                   Gtk::PACK_SHRINK);
+  page->set_margin_bottom(16);
 
   auto tune = [](Gtk::Scale& scale) {
     scale.set_range(0, 150);
@@ -806,12 +806,15 @@ void SoundPage::refresh() {
   }
   Freeze freeze(freeze_);
   if (!state.ready) {
-    status_->set_text(state.error.empty() ? "Waiting for PulseAudio…"
-                                           : "PulseAudio: " + state.error);
-    status_->show();
+    status_->set_text(state.error.empty() ? "PulseAudio is not available." : state.error);
+    if (auto* banner = status_->get_parent()) {
+      banner->show();
+    }
   } else {
     status_->set_text("");
-    status_->hide();
+    if (auto* banner = status_->get_parent()) {
+      banner->hide();
+    }
   }
 
   std::vector<std::pair<std::string, std::string>> sink_rows;
@@ -1234,7 +1237,9 @@ void SoundPage::update_captures() {
 void SoundPage::show_sample() {
   Freeze freeze(freeze_);
   status_->set_text("");
-  status_->hide();
+  if (auto* banner = status_->get_parent()) {
+    banner->hide();
+  }
   output_.remove_all();
   output_.append("alsa_output.built_in", "Built-in Audio");
   output_.append("alsa_output.headset", "USB Headset");

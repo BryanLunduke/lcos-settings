@@ -56,13 +56,14 @@ UpdatesPage::UpdatesPage() : check_("_Check for Updates", true) {
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
   auto* body = make_vbox(8);
-  status_ = make_note(
-      "LCOS checks for package updates with lcos-updates. Command Center does not install packages.");
+  page->set_margin_bottom(16);
+  auto* banner = make_empty_state("software-update-available",
+                                  "Check for Updates opens lcos-updates.", &status_);
+  body->pack_start(*banner, Gtk::PACK_SHRINK);
   checked_ = make_label("Last check: —");
   available_ = make_label("Available updates: —");
   checked_->set_line_wrap(true);
   available_->set_line_wrap(true);
-  body->pack_start(*status_, Gtk::PACK_SHRINK);
   body->pack_start(*checked_, Gtk::PACK_SHRINK);
   body->pack_start(*available_, Gtk::PACK_SHRINK);
   check_.set_halign(Gtk::ALIGN_START);
@@ -77,10 +78,9 @@ void UpdatesPage::refresh() {
   const bool installed = program_installed("lcos-updates") || settings_sample();
   check_.set_sensitive(installed);
   if (!installed) {
-    status_->set_text("lcos-updates is not installed. Command Center does not install packages itself.");
+    status_->set_text("lcos-updates is not installed.");
   } else {
-    status_->set_text(
-        "Check for Updates opens lcos-updates. Command Center does not install packages itself.");
+    status_->set_text("Check for Updates opens lcos-updates.");
   }
   const UpdateSnapshot snapshot = read_status();
   if (!snapshot.present || snapshot.last_check < 0) {

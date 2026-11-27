@@ -47,8 +47,9 @@ NetworkPage::NetworkPage()
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
-  status_ = make_note("Looking for NetworkManager…");
-  page->pack_start(*status_, Gtk::PACK_SHRINK);
+  auto* banner = make_empty_state("network-wired", "Looking for NetworkManager…", &status_);
+  page->pack_start(*banner, Gtk::PACK_SHRINK);
+  page->set_margin_bottom(16);
   wired_ = make_label("Wired: —");
   wifi_ = make_label("Wi-Fi: —");
   wired_->set_ellipsize(Pango::ELLIPSIZE_END);
@@ -63,7 +64,7 @@ NetworkPage::NetworkPage()
   list_scroll->get_style_context()->add_class("lcos-list");
   list_scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
   list_scroll->set_shadow_type(Gtk::SHADOW_IN);
-  list_scroll->set_size_request(-1, 120);
+  list_scroll->set_size_request(-1, 96);
   list_scroll->set_propagate_natural_height(false);
   list_scroll->add(list_);
 
@@ -108,11 +109,10 @@ NetworkPage::NetworkPage()
   buttons->pack_start(*import_vpn, Gtk::PACK_SHRINK);
   buttons->pack_end(*advanced, Gtk::PACK_SHRINK);
   editor_->pack_start(*buttons, Gtk::PACK_SHRINK);
-  plugin_note_ = make_note("VPN import uses the NetworkManager OpenVPN and WireGuard plugins when they are installed.");
+  plugin_note_ = make_note("OpenVPN and WireGuard import need those NetworkManager plugins.");
   editor_->pack_start(*plugin_note_, Gtk::PACK_SHRINK);
-  editor_->pack_start(
-      *make_note("DNS here belongs to the selected connection. Command Center does not change system DNS."),
-      Gtk::PACK_SHRINK);
+  editor_->pack_start(*make_note("DNS is saved with this connection, not as the system DNS."),
+                      Gtk::PACK_SHRINK);
 
   auto* saved = make_vbox(8);
   saved->pack_start(*list_scroll, Gtk::PACK_SHRINK);
@@ -360,12 +360,17 @@ void NetworkPage::refresh(bool keep_form) {
   snapshot_ = client_.snapshot(settings_sample());
   if (!snapshot_.available) {
     status_->set_text(snapshot_.error.empty() ? "NetworkManager is not running." : snapshot_.error);
+    if (auto* banner = status_->get_parent()) {
+      banner->show();
+    }
     wired_->set_text("Wired: unavailable");
     wifi_->set_text("Wi-Fi: unavailable");
     editor_->set_sensitive(false);
   } else {
     status_->set_text("");
-    status_->hide();
+    if (auto* banner = status_->get_parent()) {
+      banner->hide();
+    }
     bool saw_wired = false;
     bool saw_wifi = false;
     for (const auto& link : snapshot_.links) {

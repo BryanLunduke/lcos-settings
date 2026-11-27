@@ -50,7 +50,7 @@ const TileSpec kTiles[] = {
     {"window-manager", "Window Manager", "preferences-system-windows", "Look and Feel"},
     {"window-tweaks", "Window Manager Tweaks", "preferences-system", "Look and Feel"},
     {"notifications", "Notifications", "preferences-system-notifications", "Look and Feel"},
-    {"panel", "Panel", "preferences-desktop-apps", "Look and Feel"},
+    {"panel", "Panel", "preferences-desktop", "Look and Feel"},
     {"display", "Display", "preferences-desktop-display", "Hardware"},
     {"sound", "Sound", "audio-volume-high", "Hardware"},
     {"printers", "Printers", "printer", "Hardware"},
@@ -96,14 +96,8 @@ Glib::RefPtr<Gdk::Pixbuf> load_themed_icon(const char* name, int size) {
 }
 
 Glib::RefPtr<Gdk::Pixbuf> load_legacy_icon(const char* name, int size) {
-  auto legacy = Gtk::IconTheme::create();
-  legacy->set_custom_theme("AdwaitaLegacy");
-  try {
-    auto pixbuf = legacy->load_icon(name, size, 1, Gtk::ICON_LOOKUP_FORCE_SIZE);
-    if (pixbuf) {
-      return pixbuf;
-    }
-  } catch (const Glib::Error&) {
+  if (auto pixbuf = load_legacy_pixbuf(name, size)) {
+    return pixbuf;
   }
   return load_themed_icon(name, size);
 }

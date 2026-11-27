@@ -26,8 +26,9 @@ PanelPage::PanelPage(XfconfStore& store)
   scroll->add(*page);
   pack_start(*scroll, Gtk::PACK_EXPAND_WIDGET);
 
-  status_ = make_note("Looking for the panel…");
-  page->pack_start(*status_, Gtk::PACK_SHRINK);
+  page->pack_start(*make_empty_state("preferences-desktop", "Looking for the panel…", &status_),
+                   Gtk::PACK_SHRINK);
+  page->set_margin_bottom(16);
   body_ = make_vbox(8);
 
   panel_.append("0", "Panel 1");
@@ -257,11 +258,15 @@ void PanelPage::load() {
   panels_.clear();
   if (sample_) {
     panels_ = {0, 1};
-    status_->hide();
+    if (auto* banner = status_->get_parent()) {
+      banner->hide();
+    }
     body_->set_sensitive(true);
   } else if (!store_.available()) {
     status_->set_text("Panel settings are not available.");
-    status_->show();
+    if (auto* banner = status_->get_parent()) {
+      banner->show();
+    }
     body_->set_sensitive(false);
     panel_id_ = -1;
     return;
@@ -273,12 +278,16 @@ void PanelPage::load() {
     }
     if (panels_.empty()) {
       status_->set_text("No panel is configured.");
-      status_->show();
+      if (auto* banner = status_->get_parent()) {
+        banner->show();
+      }
       body_->set_sensitive(false);
       panel_id_ = -1;
       return;
     }
-    status_->hide();
+    if (auto* banner = status_->get_parent()) {
+      banner->hide();
+    }
     body_->set_sensitive(true);
   }
   Freeze freeze(freeze_);
