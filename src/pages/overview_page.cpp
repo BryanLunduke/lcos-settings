@@ -65,7 +65,6 @@ const TileSpec kTiles[] = {
     {"users", "Users", "system-users", "System"},
     {"startup", "Startup", "system-run", "System"},
     {"default-software", "Default Software", "preferences-other", "System"},
-    {"updates", "Updates", "software-update-available", "System"},
     {"accessibility", "Accessibility", "preferences-desktop-accessibility", "System"},
 };
 
