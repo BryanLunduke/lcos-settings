@@ -1,3 +1,10 @@
+lcos-settings (1.1.0-2) unstable; urgency=medium
+
+  * Add the Printers, Network, Bluetooth and Panel pages.
+  * Remove the Updates page.
+
+ -- LCOS <lcos@lunduke.com>  Fri, 27 Nov 2026 18:10:00 -0600
+
 lcos-settings (1.1.0-1) unstable; urgency=medium
 
   * First release of LCOS Command Center for LCOS 1.1.0.
